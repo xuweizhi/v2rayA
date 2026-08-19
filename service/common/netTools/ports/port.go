@@ -64,7 +64,9 @@ func IsPortOccupied(syntax []string) (occupied bool, sockets []*netstat.Socket, 
 	for p, protos := range req {
 		for _, proto := range protos {
 			for _, v := range m[proto][p] {
-				if proto == "udp" || v.State != netstat.Close {
+				// UDP 连接无状态，/proc/net/udp(6) 中 state 恒为 07(Close)，
+				// 对 udp/udp6 都必须视为占用；TCP 才跳过 Close 状态的 socket。
+				if proto == "udp" || proto == "udp6" || v.State != netstat.Close {
 					occupied = true
 					sockets = append(sockets, v)
 				}

@@ -3,10 +3,12 @@ package v2ray
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/v2rayA/v2rayA/common/cmds"
+	"github.com/v2rayA/v2rayA/common/netTools/ports"
 	"github.com/v2rayA/v2rayA/conf"
 	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/kernel/iptables"
@@ -240,15 +242,32 @@ func IsTransparentOn(setting *configure.Setting) bool {
 
 // waitForDnsPort polls the DNS module's listening port until it's ready or a timeout expires.
 // This ensures the v2raya-core DNS module is accepting queries before we apply firewall rules.
+// UDP dial 永远成功，无法判断监听是否存在，因此用 /proc 端口占用检查；
+// 若 DNS 模块绑定失败（如被未退出的旧 core 占用），这里会超时并阻止应用
+// 把 53 端口流量重定向到死端口的规则，避免全网 DNS 瘫痪。
 func waitForDnsPort(addr string, timeout time.Duration) error {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid dns addr %s: %w", addr, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("invalid dns addr %s: %w", addr, err)
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("udp", addr, 500*time.Millisecond)
-		if err == nil {
-			conn.Close()
+		occupied, _, e := ports.IsPortOccupied([]string{fmt.Sprintf("%d:udp", port)})
+		if e != nil {
+			// 非 Linux 平台等不支持 /proc 检查时退回 UDP dial（旧行为）
+			conn, e := net.DialTimeout("udp", addr, 500*time.Millisecond)
+			if e == nil {
+				conn.Close()
+				return nil
+			}
+		} else if occupied {
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("dns port %s not reachable within %v", addr, timeout)
+	return fmt.Errorf("dns port %s not listening within %v", addr, timeout)
 }

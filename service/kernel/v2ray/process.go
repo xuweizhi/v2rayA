@@ -196,7 +196,16 @@ func (p *Process) Close() error {
 		cancel()
 		err := p.template.Close()
 		if err != nil {
-			return err
+			log.Warn("Process.Close: template.Close: %v", err)
+		}
+		// 等待旧进程真正退出并释放端口。SIGKILL 后进程通常毫秒级退出，
+		// 但内存压力下可能短暂处于 D 状态（不可中断），若不等待就启动新 core，
+		// 新 core 绑定 52353/127.2.0.17:53 等端口时会 "address already in use"，
+		// 导致 DNS 模块静默失效而防火墙仍将 DNS 重定向到死端口。
+		select {
+		case <-p.done:
+		case <-time.After(10 * time.Second):
+			log.Warn("v2ray-core did not exit within 10s after cancel")
 		}
 	} else {
 		_, err := p.proc.Wait()
