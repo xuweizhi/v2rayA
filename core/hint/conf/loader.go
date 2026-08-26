@@ -19,6 +19,7 @@ import (
 	multiobs "github.com/v2rayA/v2raya-core/hint/app/observatory/multiobservatory"
 	hint_anytls "github.com/v2rayA/v2raya-core/hint/proxy/anytls"
 	hint_juicity "github.com/v2rayA/v2raya-core/hint/proxy/juicity"
+	hint_mieru "github.com/v2rayA/v2raya-core/hint/proxy/mieru"
 	hint_tuic "github.com/v2rayA/v2raya-core/hint/proxy/tuic"
 	xray_commander "github.com/xtls/xray-core/app/commander"
 	xray_proxyman "github.com/xtls/xray-core/app/proxyman"
@@ -89,6 +90,7 @@ type customOutboundJSON struct {
 var customProtocols = map[string]bool{
 	"anytls":  true,
 	"juicity": true,
+	"mieru":   true,
 	"tuic":    true,
 }
 
@@ -166,6 +168,14 @@ func buildCustomOutbounds(customs []customOutboundJSON) ([]*xray_core.OutboundHa
 			if c.Settings != nil {
 				if err := json.Unmarshal(c.Settings, &cfg); err != nil {
 					return nil, errors.New("invalid juicity settings for tag ", c.Tag).Base(err)
+				}
+			}
+			proxySettings = serial.ToTypedMessage(&cfg)
+		case "mieru":
+			var cfg hint_mieru.ClientConfig
+			if c.Settings != nil {
+				if err := json.Unmarshal(c.Settings, &cfg); err != nil {
+					return nil, errors.New("invalid mieru settings for tag ", c.Tag).Base(err)
 				}
 			}
 			proxySettings = serial.ToTypedMessage(&cfg)

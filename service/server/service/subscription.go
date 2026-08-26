@@ -162,7 +162,7 @@ func ResolveSubscriptionWithClient(source string, client *http.Client) (infos []
 		c.Timeout = 30 * time.Second
 	}
 
-	res, err := httpClient.HttpGetUsingSpecificClient(client, source)
+	res, err := httpClient.HttpGetUsingSpecificClientWithUA(client, source, "clash-verge")
 	if err != nil {
 		return
 	}
@@ -176,7 +176,13 @@ func ResolveSubscriptionWithClient(source string, client *http.Client) (infos []
 	if err != nil {
 		raw, _ = common.Base64URLDecode(string(b))
 	}
-	infos, status, err = ResolveByLines(raw)
+	// Many providers serve a full Clash YAML to clash-capable clients and a
+	// reduced node list to others. Parse the YAML form when present.
+	if isClashYAML(raw) {
+		infos, status, err = resolveClashYAML(raw)
+	} else {
+		infos, status, err = ResolveByLines(raw)
+	}
 	if err != nil {
 		return nil, "", err
 	}

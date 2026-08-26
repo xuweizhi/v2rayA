@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package v2raya.proxy.mieru;
+option go_package = "github.com/v2rayA/v2raya-core/hint/proxy/mieru";
+
+message ClientConfig {
+  // Server address in "host:port" format
+  string address = 1;
+  // Username
+  string username = 2;
+  // Password
+  string password = 3;
+  // Transport protocol: TCP (only TCP is supported for now)
+  string transport = 4;
+}
