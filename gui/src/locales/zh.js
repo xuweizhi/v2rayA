@@ -131,6 +131,9 @@ export default {
     clear: "清空",
     copyDest: "点击复制",
     note: "解析自核心连接日志，每 3 秒刷新。",
+    searchPlaceholder: "搜索域名 / 来源 / 出站",
+    createRule: "创建规则",
+    domainPattern: "域名匹配",
   },
   operations: {
     tproxyWhiteIpGroups: "直通白名单IP组",

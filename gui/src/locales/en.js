@@ -132,6 +132,9 @@ export default {
     clear: "Clear",
     copyDest: "Click to copy",
     note: "Parsed from core connection logs; refreshed every 3s.",
+    searchPlaceholder: "Search host / source / outbound",
+    createRule: "Create Rule",
+    domainPattern: "Domain Pattern",
   },
   operations: {
     name: "Operations",
