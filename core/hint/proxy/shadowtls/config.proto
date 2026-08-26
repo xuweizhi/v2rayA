@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package v2raya.proxy.shadowtls;
+option go_package = "github.com/v2rayA/v2raya-core/hint/proxy/shadowtls";
+
+message ClientConfig {
+  // Server address in "host:port" format
+  string address = 1;
+  // Password
+  string password = 2;
+  // Protocol version: 1, 2 or 3 (default 3)
+  int32 version = 3;
+  // TLS SNI override (defaults to the server host)
+  string sni = 4;
+  // Skip certificate verification
+  bool insecure = 5;
+}

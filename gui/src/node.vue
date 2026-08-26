@@ -189,6 +189,15 @@
             <i class="iconfont icon-chakandaorujilu" />
             <span>{{ $t("operations.detectRule") }}</span>
           </b-button>
+          <b-button
+            class="field mobile-small"
+            type="is-info"
+            outlined
+            @click="handleClickConnections"
+          >
+            <i class="iconfont icon-cloud" />
+            <span>{{ $t("operations.connections") }}</span>
+          </b-button>
         </div>
       </b-field>
 
@@ -916,6 +925,7 @@ import ClipboardJS from "clipboard";
 import { Base64 } from "js-base64";
 import ModalServer from "@/components/modalServer";
 import ModalSubscription from "@/components/modalSubcription";
+import modalConnections from "@/components/modalConnections";
 import ModalSharing from "@/components/modalSharing";
 import ModalPickProxyGroup from "@/components/modalPickProxyGroup";
 import { waitingConnected } from "@/assets/js/networkInspect";
@@ -2198,6 +2208,14 @@ export default {
         const idx = extra.disabledTags.indexOf(row.name);
         if (idx >= 0) extra.disabledTags.splice(idx, 1);
         else extra.disabledTags.push(row.name);
+      });
+    },
+    handleClickConnections() {
+      this.$buefy.modal.open({
+        parent: this,
+        component: modalConnections,
+        hasModalCard: true,
+        canCancel: true,
       });
     },
     handleDetectRule() {

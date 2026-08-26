@@ -137,6 +137,8 @@ func clashProxyToServerObj(p map[string]interface{}) (serverObj.ServerObj, error
 	switch typ {
 	case "mieru":
 		return clashMieruToServerObj(p)
+	case "shadowtls":
+		return clashShadowTLSToServerObj(p)
 	case "vless":
 		return clashVlessToServerObj(p)
 	case "vmess":
@@ -185,6 +187,38 @@ func mieruLink(p map[string]interface{}) string {
 	}
 	u.Fragment = getString(p, "name")
 	return u.String()
+}
+
+func clashShadowTLSToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {
+	server := getString(p, "server")
+	port := getInt(p, "port")
+	if server == "" || port <= 0 || getString(p, "password") == "" {
+		return nil, fmt.Errorf("shadowtls: missing server, port or password")
+	}
+	version := getInt(p, "version")
+	if version == 0 {
+		version = 3
+	}
+	u := url.URL{
+		Scheme: "shadowtls",
+		User:   url.User(getString(p, "password")),
+		Host:   net.JoinHostPort(server, strconv.Itoa(port)),
+	}
+	q := url.Values{}
+	if version != 3 {
+		q.Set("version", strconv.Itoa(version))
+	}
+	if sni := getString(p, "sni"); sni != "" {
+		q.Set("sni", sni)
+	}
+	if getBool(p, "skip-cert-verify") {
+		q.Set("insecure", "1")
+	}
+	if encoded := q.Encode(); encoded != "" {
+		u.RawQuery = encoded
+	}
+	u.Fragment = getString(p, "name")
+	return serverObj.ParseShadowTLSURL(u.String())
 }
 
 func clashVlessToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {

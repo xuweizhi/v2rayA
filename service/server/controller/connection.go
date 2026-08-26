@@ -2,9 +2,12 @@ package controller
 
 import (
 	"fmt"
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/db/configure"
+	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 	"github.com/v2rayA/v2rayA/server/service"
 )
@@ -112,4 +115,13 @@ func DeleteV2ray(ctx *gin.Context) {
 		return
 	}
 	getTouch(ctx)
+}
+
+// GetConnections returns the recent connection events parsed from core logs.
+func GetConnections(ctx *gin.Context) {
+	limit, _ := strconv.Atoi(ctx.Query("limit"))
+	connections := v2ray.GetRecentConnections(limit)
+	common.ResponseSuccess(ctx, gin.H{
+		"connections": connections,
+	})
 }

@@ -171,11 +171,14 @@ func (w logInfoWriter) Write(p []byte) (n int, err error) {
 		fields := strings.SplitN(line, " ", 3)
 		if len(fields) >= 3 {
 			if _, err := time.Parse("2006/01/02 15:04:05", fields[0]+" "+fields[1]); err == nil {
+				recordConnectionLine(fields[2])
 				log.Info("%v", fields[2])
 			} else {
+				recordConnectionLine(line)
 				log.Info("%v", line)
 			}
 		} else {
+			recordConnectionLine(line)
 			log.Info("%v", line)
 		}
 

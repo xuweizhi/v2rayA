@@ -204,17 +204,17 @@
 
 ## 5. 第三梯队：协议/传输能力（核心侧）
 
-### 5.1 ShadowTLS v3（高价值）
+### 5.1 ShadowTLS v3（高价值）—— 已完成
 
-**现状**：无。机场已批量分发 `shadowtls://` 链接。
+**现状**：已实现。机场已批量分发 `shadowtls://` 链接。
 
 **karing 参考**：`my_profiles_screen.dart:1470`、历史 `singbox_json.dart:2663-2779`（version/password/tls/tls_fragment）。
 
-**方案**：核心侧按 sing-box 协议实现 shadowtls outbound（TLS 握手后接 SS）；服务端新增 `serverObj.ShadowTLS` + 链接解析（shadowtls:// 与 clash YAML `type: shadowtls`）。
+**方案**：核心侧按 sing-shadowtls v3 协议实现 shadowtls outbound（ClientHello legacy session id 承载 HMAC-SHA1 认证、auth 记录 XOR 混淆、C/S 双向 HMAC 链分帧）；服务端新增 `serverObj.ShadowTLS` + 链接解析（shadowtls:// 与 clash YAML `type: shadowtls`）。
 
-**涉及文件**：`core/hint/proxy/shadowtls/`、`service/kernel/serverObj/shadowtls.go`、`clash.go`。
+**实现**：`core/hint/proxy/shadowtls/`（outbound + config.pb）、`core/hint/utls_fork/`（vendored uTLS，新增 SessionIDProvider / ClientHelloMarshalHook / SkipSessionIDEchoCheck 三个钩子）、`service/kernel/serverObj/shadowtls.go`、`clash.go`。
 
-**工作量**：2~3 人日。**验证**：真实 shadowtls 节点 e2e。
+**验证**：本地参考服务端（同协议实现）e2e 测试通过（握手认证 + 数据分帧回显）。
 
 ### 5.2 Shadowsocks 2022 方法（低成本）—— 已调研，需核心支持
 

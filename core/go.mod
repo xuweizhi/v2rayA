@@ -83,3 +83,5 @@ require (
 replace github.com/xtls/xray-core => ./xray
 
 replace anytls v0.0.12 => github.com/anytls/anytls-go v0.0.12
+
+replace github.com/refraction-networking/utls => ./hint/utls_fork
