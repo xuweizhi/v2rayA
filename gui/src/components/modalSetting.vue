@@ -18,6 +18,11 @@
         </b-button>
       </b-field>
       <hr class="dropdown-divider" style="margin: 1.25rem 0 1.25rem" />
+      <b-field :label="$t('setting.noviceMode')" label-position="on-border">
+        <b-checkbox v-model="novice" :native-value="true">
+          {{ $t("setting.noviceModeDesc") }}
+        </b-checkbox>
+      </b-field>
       <b-field label-position="on-border" class="with-icon-alert">
         <template slot="label">
           {{ $t("setting.transparentProxy") }}
@@ -43,7 +48,7 @@
             {{ $t("setting.options.sameAsPacMode") }}
           </option>
         </b-select>
-        <b-checkbox-button v-show="!lite" v-model="ipforward" :native-value="true"
+        <b-checkbox-button v-show="!lite && !novice" v-model="ipforward" :native-value="true"
           style="position: relative; left: -1px">{{
             $t("setting.ipForwardOn") }}
         </b-checkbox-button>
@@ -52,7 +57,7 @@
         </b-checkbox-button>
       </b-field>
 
-      <b-field v-show="transparent !== 'close'" label-position="on-border">
+      <b-field v-show="transparent !== 'close' && !novice" label-position="on-border">
         <template slot="label">
           {{ $t("setting.transparentType") }}
           <b-tooltip type="is-dark" multilined :label="$t('setting.messages.transparentType')" position="is-right">
@@ -95,7 +100,7 @@
         </template>
       </b-field>
 
-      <b-field v-show="transparent !== 'close' && (transparentType === 'tproxy' || transparentType === 'redirect')"
+      <b-field v-show="transparent !== 'close' && !novice && (transparentType === 'tproxy' || transparentType === 'redirect')"
         label-position="on-border">
         <template slot="label">
           {{ $t("setting.tproxyExcludedInterfaces") }}
@@ -107,7 +112,7 @@
         <b-input v-model="tproxyExcludedInterfaces" expanded placeholder="docker*, veth*, wg*, ppp*, br-*" />
       </b-field>
 
-      <b-field v-show="transparent !== 'close' && transparentType === 'tun' && tinytunSupported"
+      <b-field v-show="transparent !== 'close' && !novice && transparentType === 'tun' && tinytunSupported"
         label-position="on-border">
         <template slot="label">
           {{ $t("setting.tunBypassInterfaces") }}
@@ -153,7 +158,7 @@
         </div>
       </b-field>
 
-      <b-field v-show="transparent !== 'close' && transparentType === 'tun' && tinytunSupported && os === 'linux'"
+      <b-field v-show="transparent !== 'close' && !novice && transparentType === 'tun' && tinytunSupported && os === 'linux'"
         :label="$t('setting.tunProcessBackend')" label-position="on-border">
         <template slot="label">
           {{ $t("setting.tunProcessBackend") }}
@@ -168,7 +173,7 @@
         </b-select>
       </b-field>
 
-      <b-field v-show="transparent !== 'close' && transparentType === 'tun' && tinytunSupported"
+      <b-field v-show="transparent !== 'close' && !novice && transparentType === 'tun' && tinytunSupported"
         label-position="on-border">
         <template slot="label">
           {{ $t("setting.tunExcludeProcesses") }}
@@ -399,6 +404,7 @@ export default {
   name: "ModalSetting",
   components: { BCheckboxButton, BSelect, BButton, CusBInput },
   data: () => ({
+    novice: false,
     proxyModeWhenSubscribe: "direct",
     unreadNotices: 0,
     tcpFastOpen: "default",
@@ -591,6 +597,7 @@ export default {
           url: apiRoot + "/setting",
           method: "put",
           data: {
+            novice: this.novice,
             proxyModeWhenSubscribe: this.proxyModeWhenSubscribe,
             pacAutoUpdateMode: this.pacAutoUpdateMode,
             pacAutoUpdateIntervalHour: parseInt(this.pacAutoUpdateIntervalHour),

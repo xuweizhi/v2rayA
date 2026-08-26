@@ -1,5 +1,5 @@
 <template>
-  <div class="modal-card" style="max-width: 560px; margin: auto">
+  <div class="modal-card" style="max-width: 620px; margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("backup.title") }}</p>
     </header>
@@ -14,13 +14,13 @@
         <b-table-column field="name" :label="$t('backup.name')" v-slot="p">
           {{ p.row.name }}
         </b-table-column>
-        <b-table-column field="size" :label="$t('backup.size')" width="100" v-slot="p">
+        <b-table-column field="size" :label="$t('backup.size')" width="90" v-slot="p">
           {{ formatBytes(p.row.size) }}
         </b-table-column>
-        <b-table-column field="modTime" :label="$t('backup.time')" width="170" v-slot="p">
+        <b-table-column field="modTime" :label="$t('backup.time')" width="160" v-slot="p">
           {{ formatDate(p.row.modTime) }}
         </b-table-column>
-        <b-table-column :label="$t('operations.name')" width="90" v-slot="p">
+        <b-table-column :label="$t('operations.name')" width="190" v-slot="p">
           <a
             class="button is-small is-success"
             :href="apiRoot + '/backupDownload?filename=' + encodeURIComponent(p.row.name) + '&Authorization=' + encodeURIComponent(localStorage['token'] || '')"
@@ -29,6 +29,68 @@
           >
             {{ $t("operations.export") }}
           </a>
+          <b-button
+            size="is-small"
+            type="is-danger"
+            outlined
+            @click="handleRestore('local', p.row.name)"
+          >
+            {{ $t("backup.restore") }}
+          </b-button>
+        </b-table-column>
+      </b-table>
+
+      <hr />
+      <b-field :label="$t('backup.webdavUrl')" label-position="on-border">
+        <b-input v-model="webdav.url" placeholder="https://dav.example.com/dav/v2raya" />
+      </b-field>
+      <div class="columns">
+        <div class="column">
+          <b-field :label="$t('backup.webdavUsername')" label-position="on-border">
+            <b-input v-model="webdav.username" />
+          </b-field>
+        </div>
+        <div class="column">
+          <b-field :label="$t('backup.webdavPassword')" label-position="on-border">
+            <b-input v-model="webdav.password" type="password" password-reveal />
+          </b-field>
+        </div>
+      </div>
+      <div class="backup-toolbar">
+        <b-button size="is-small" @click="handleSaveWebdav">
+          {{ $t("backup.saveWebdav") }}
+        </b-button>
+        <b-button size="is-small" type="is-primary" :loading="uploading" :disabled="!webdav.url" @click="handleUpload">
+          {{ $t("backup.uploadLatest") }}
+        </b-button>
+        <b-button size="is-small" :loading="listing" :disabled="!webdav.url" @click="handleListRemote">
+          {{ $t("backup.refreshRemote") }}
+        </b-button>
+      </div>
+      <b-table v-if="remoteItems.length || listed" :data="remoteItems" :per-page="100" hoverable striped>
+        <b-table-column field="name" :label="$t('backup.remoteFiles')" v-slot="p">
+          {{ p.row.name }}
+        </b-table-column>
+        <b-table-column field="size" :label="$t('backup.size')" width="90" v-slot="p">
+          {{ formatBytes(p.row.size) }}
+        </b-table-column>
+        <b-table-column :label="$t('operations.name')" width="190" v-slot="p">
+          <a
+            class="button is-small is-success"
+            :href="apiRoot + '/webdavBackupDownload?filename=' + encodeURIComponent(p.row.name) + '&Authorization=' + encodeURIComponent(localStorage['token'] || '')"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {{ $t("operations.export") }}
+          </a>
+          <b-button
+            size="is-small"
+            type="is-danger"
+            outlined
+            @click="handleRestore('webdav', p.row.name)"
+          >
+            {{ $t("backup.restore") }}
+          </b-button>
         </b-table-column>
       </b-table>
     </section>
@@ -41,10 +103,23 @@ export default {
   name: "ModalBackup",
   data: () => ({
     backups: [],
+    remoteItems: [],
+    listed: false,
     creating: false,
+    uploading: false,
+    listing: false,
+    webdav: { url: "", username: "", password: "" },
   }),
   created() {
     this.load();
+    this.$axios({ url: apiRoot + "/setting", method: "get" }).then((res) => {
+      if (res.data && res.data.code === "SUCCESS" && res.data.data) {
+        const s = res.data.data.setting;
+        this.webdav.url = s.webdavUrl || "";
+        this.webdav.username = s.webdavUsername || "";
+        this.webdav.password = s.webdavPassword || "";
+      }
+    });
   },
   methods: {
     load() {
@@ -72,6 +147,92 @@ export default {
         .finally(() => {
           this.creating = false;
         });
+    },
+    saveWebdavConfig() {
+      // PUT the whole setting object with the webdav fields patched in.
+      return this.$axios({ url: apiRoot + "/setting", method: "get" }).then((res) => {
+        if (!res.data || res.data.code !== "SUCCESS" || !res.data.data) {
+          return Promise.reject(new Error("failed to load setting"));
+        }
+        const s = Object.assign({}, res.data.data.setting);
+        s.webdavUrl = this.webdav.url;
+        s.webdavUsername = this.webdav.username;
+        s.webdavPassword = this.webdav.password;
+        return this.$axios({ url: apiRoot + "/setting", method: "put", data: s });
+      });
+    },
+    handleSaveWebdav() {
+      this.saveWebdavConfig().then((res) => {
+        handleResponse(res, this, () => {
+          this.$buefy.toast.open({
+            message: this.$t("common.success"),
+            type: "is-primary",
+            position: "is-top",
+            duration: 3000,
+            queue: false,
+          });
+        });
+      });
+    },
+    handleUpload() {
+      this.uploading = true;
+      this.saveWebdavConfig()
+        .then(() => this.$axios({ url: apiRoot + "/webdavBackup", method: "post" }))
+        .then((res) => {
+          handleResponse(res, this, () => {
+            this.$buefy.toast.open({
+              message: this.$t("common.success"),
+              type: "is-primary",
+              position: "is-top",
+              duration: 3000,
+              queue: false,
+            });
+            this.handleListRemote();
+          });
+        })
+        .finally(() => {
+          this.uploading = false;
+        });
+    },
+    handleListRemote() {
+      this.listing = true;
+      this.$axios({ url: apiRoot + "/webdavBackups", method: "get" })
+        .then((res) => {
+          handleResponse(res, this, () => {
+            this.remoteItems = res.data.data.webdavBackups || [];
+            this.listed = true;
+          });
+        })
+        .finally(() => {
+          this.listing = false;
+        });
+    },
+    handleRestore(source, name) {
+      this.$buefy.dialog.confirm({
+        title: this.$t("backup.restore"),
+        message: this.$t("backup.restoreConfirm"),
+        confirmText: this.$t("operations.confirm"),
+        cancelText: this.$t("operations.cancel"),
+        type: "is-danger",
+        hasIcon: true,
+        onConfirm: () => {
+          this.$axios({
+            url: apiRoot + "/backupRestore",
+            method: "post",
+            data: { source, name },
+          }).then((res) => {
+            handleResponse(res, this, () => {
+              this.$buefy.toast.open({
+                message: this.$t("backup.restoring"),
+                type: "is-primary",
+                position: "is-top",
+                duration: 3000,
+                queue: false,
+              });
+            });
+          });
+        },
+      });
     },
     formatBytes(bytes) {
       if (!bytes) return "0B";

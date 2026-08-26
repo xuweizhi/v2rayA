@@ -239,21 +239,26 @@ type WsSettings struct {
 	EarlyDataHeaderName string  `json:"earlyDataHeaderName,omitempty"`
 }
 type StreamSettings struct {
-	Network          string            `json:"network,omitempty"`
-	Security         string            `json:"security,omitempty"`
-	TLSSettings      *TLSSettings      `json:"tlsSettings,omitempty"`
-	XTLSSettings     *TLSSettings      `json:"xtlsSettings,omitempty"`
-	XHTTPSettings    *XHTTPSettings    `json:"xhttpSettings,omitempty"`
-	RealitySettings  *RealitySettings  `json:"realitySettings,omitempty"`
-	TCPSettings      *TCPSettings      `json:"tcpSettings,omitempty"`
-	KcpSettings      *KcpSettings      `json:"kcpSettings,omitempty"`
-	WsSettings       *WsSettings       `json:"wsSettings,omitempty"`
-	HTTPSettings     *HttpSettings     `json:"httpSettings,omitempty"`
-	GrpcSettings     *GrpcSettings     `json:"grpcSettings,omitempty"`
-	QuicSettings     *QuicSettings     `json:"quicSettings,omitempty"`
-	HysteriaSettings *HysteriaSettings `json:"hysteriaSettings,omitempty"`
-	FinalMask        *FinalMask        `json:"finalmask,omitempty"`
-	Sockopt          *Sockopt          `json:"sockopt,omitempty"`
+	Network             string               `json:"network,omitempty"`
+	Security            string               `json:"security,omitempty"`
+	TLSSettings         *TLSSettings         `json:"tlsSettings,omitempty"`
+	XTLSSettings        *TLSSettings         `json:"xtlsSettings,omitempty"`
+	XHTTPSettings       *XHTTPSettings       `json:"xhttpSettings,omitempty"`
+	RealitySettings     *RealitySettings     `json:"realitySettings,omitempty"`
+	TCPSettings         *TCPSettings         `json:"tcpSettings,omitempty"`
+	KcpSettings         *KcpSettings         `json:"kcpSettings,omitempty"`
+	WsSettings          *WsSettings          `json:"wsSettings,omitempty"`
+	HTTPSettings        *HttpSettings        `json:"httpSettings,omitempty"`
+	GrpcSettings        *GrpcSettings        `json:"grpcSettings,omitempty"`
+	QuicSettings        *QuicSettings        `json:"quicSettings,omitempty"`
+	HysteriaSettings    *HysteriaSettings    `json:"hysteriaSettings,omitempty"`
+	HTTPUPGRADESettings *HTTPUPGRADESettings `json:"httpupgradeSettings,omitempty"`
+	FinalMask           *FinalMask           `json:"finalmask,omitempty"`
+	Sockopt             *Sockopt             `json:"sockopt,omitempty"`
+}
+type HTTPUPGRADESettings struct {
+	Host string `json:"host,omitempty"`
+	Path string `json:"path,omitempty"`
 }
 type HysteriaSettings struct {
 	Version int32  `json:"version"`

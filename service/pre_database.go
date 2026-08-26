@@ -38,6 +38,11 @@ func initConfigure() {
 	// initialize configuration
 	jsonIteratorExtra.RegisterFuzzyDecoders()
 
+	// Apply a pending database restore before the DB is opened.
+	if err := service.ApplyPendingRestore(); err != nil {
+		log.Error("failed to apply pending database restore: %v", err)
+	}
+
 	// Track whether we performed a BoltDB→SQLite migration in this session.
 	// If so, we must skip the v4 migration and initDBValue() below, because
 	// the data has already been migrated into SQLite by MigrateFromBoltDB().

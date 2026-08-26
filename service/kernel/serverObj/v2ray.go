@@ -175,6 +175,10 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 	if data.Net == "mkcp" || data.Net == "kcp" {
 		data.Path = u.Query().Get("seed")
 	}
+	if data.Net == "httpupgrade" {
+		data.Path = u.Query().Get("path")
+		data.Host = u.Query().Get("host")
+	}
 	// Parse the combined brutal=up,down form when the dedicated keys are absent.
 	if data.BrutalUp == "" && data.BrutalDown == "" {
 		if brutal := u.Query().Get("brutal"); brutal != "" {
@@ -572,6 +576,11 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 					Path: v.Path,
 				}
 			}
+		case "httpupgrade":
+			core.StreamSettings.HTTPUPGRADESettings = &coreObj.HTTPUPGRADESettings{
+				Path: v.Path,
+				Host: v.Host,
+			}
 		case "quic":
 			core.StreamSettings.QuicSettings = &coreObj.QuicSettings{
 				Header: coreObj.KcpHeader{
@@ -742,6 +751,9 @@ func (v *V2Ray) ExportToURL() string {
 			if v.MultiMode != "" {
 				setValue(&query, "multiMode", v.MultiMode)
 			}
+		case "httpupgrade":
+			setValue(&query, "path", v.Path)
+			setValue(&query, "host", v.Host)
 		case "quic":
 			setValue(&query, "headerType", v.Type)
 			setValue(&query, "key", v.Key)

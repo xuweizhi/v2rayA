@@ -15,6 +15,10 @@ type Setting struct {
 	SubscriptionAutoUpdateMode         AutoUpdateMode  `json:"subscriptionAutoUpdateMode"`
 	SubscriptionAutoUpdateIntervalHour int             `json:"subscriptionAutoUpdateIntervalHour"`
 	AutoBackup                         bool            `json:"autoBackup"`
+	Novice                             bool            `json:"novice"`
+	WebdavUrl                          string          `json:"webdavUrl"`
+	WebdavUsername                     string          `json:"webdavUsername"`
+	WebdavPassword                     string          `json:"webdavPassword"`
 	TcpFastOpen                        DefaultYesNo    `json:"tcpFastOpen"`
 	MuxOn                              DefaultYesNo    `json:"muxOn"`
 	Mux                                int             `json:"mux"`
@@ -57,6 +61,7 @@ func NewSetting() (setting *Setting) {
 		SubscriptionAutoUpdateMode:         NotAutoUpdate,
 		SubscriptionAutoUpdateIntervalHour: 0,
 		AutoBackup:                         true,
+		Novice:                             true,
 		TcpFastOpen:                        Default,
 		MuxOn:                              No,
 		Mux:                                8,

@@ -181,6 +181,7 @@
             <span>{{ $t("operations.import") }}</span>
           </b-button>
           <b-button
+            v-if="!novice"
             class="field mobile-small"
             type="is-info"
             outlined
@@ -190,6 +191,7 @@
             <span>{{ $t("operations.detectRule") }}</span>
           </b-button>
           <b-button
+            v-if="!novice"
             class="field mobile-small"
             type="is-info"
             outlined
@@ -969,6 +971,7 @@ export default {
     return {
       enterReducedSidebar: false,
       showSidebar: false,
+      novice: false,
       importWhat: "",
       importPassword: "",
       showModalImport: false,
@@ -1059,6 +1062,7 @@ export default {
     },
   },
   created() {
+    this.loadNoviceMode();
     this.coreVersionValid = localStorage["coreVersionValid"] !== "false";
     this.coreVersionErr = localStorage["coreVersionErr"] || "";
     if (!localStorage["token"]) return; // Not authenticated yet — skip to avoid spurious 401 modals
@@ -2208,6 +2212,13 @@ export default {
         const idx = extra.disabledTags.indexOf(row.name);
         if (idx >= 0) extra.disabledTags.splice(idx, 1);
         else extra.disabledTags.push(row.name);
+      });
+    },
+    loadNoviceMode() {
+      this.$axios({ url: apiRoot + "/setting", method: "get" }).then((res) => {
+        if (res.data && res.data.code === "SUCCESS" && res.data.data) {
+          this.novice = !!res.data.data.setting.novice;
+        }
       });
     },
     handleClickConnections() {
