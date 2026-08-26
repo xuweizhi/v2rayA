@@ -78,5 +78,6 @@ func DeleteWhich(ws []*configure.Which) (err error) {
 			return
 		}
 	}
+	AutoBackup()
 	return
 }

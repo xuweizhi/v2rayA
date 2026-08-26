@@ -100,6 +100,26 @@ export default {
     noMatch: "No rule matched",
     assetBased: "asset",
   },
+  backup: {
+    title: "Backup",
+    createNow: "Backup Now",
+    note: "A snapshot of the database is kept automatically after configuration changes; the latest 5 are retained.",
+    name: "Name",
+    size: "Size",
+    time: "Time",
+  },
+  diagnose: {
+    title: "Diagnose",
+    domain: "Domain (optional)",
+    run: "Run",
+    copy: "Copy Report",
+  },
+  notice: {
+    title: "Notices",
+    empty: "No notices",
+    unread: "NEW",
+    openLink: "Open link",
+  },
   operations: {
     name: "Operations",
     tproxyWhiteIpGroups: "Direct Whitelist IP Groups",

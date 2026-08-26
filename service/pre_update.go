@@ -128,4 +128,7 @@ func checkUpdate() {
 
 	// watch network changes to re-probe and re-select the best node
 	watchNetworkChanges()
+
+	// poll the notice feed periodically
+	service.StartNoticeRefresher()
 }

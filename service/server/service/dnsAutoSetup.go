@@ -106,11 +106,24 @@ func fastestServer(items []DnsLatencyItem) string {
 // measureDirectDNS measures the round-trip time of a DNS A query over UDP
 // against each built-in direct DNS server.
 func measureDirectDNS() []DnsLatencyItem {
-	query := buildDNSQuery(dnsTestDomain, 0x0100) // RD flag
 	items := make([]DnsLatencyItem, len(directDNSServers))
+	measureDirectDNSList(directDNSServers, items)
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Ok != items[j].Ok {
+			return items[i].Ok
+		}
+		return items[i].LatencyMs < items[j].LatencyMs
+	})
+	return items
+}
+
+// measureDirectDNSList measures a DNS A query over UDP against each server
+// and writes the results into items (by index).
+func measureDirectDNSList(servers []string, items []DnsLatencyItem) {
+	query := buildDNSQuery(dnsTestDomain, 0x0100) // RD flag
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8)
-	for i, server := range directDNSServers {
+	for i, server := range servers {
 		wg.Add(1)
 		go func(i int, server string) {
 			defer wg.Done()
@@ -139,13 +152,6 @@ func measureDirectDNS() []DnsLatencyItem {
 		}(i, server)
 	}
 	wg.Wait()
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].Ok != items[j].Ok {
-			return items[i].Ok
-		}
-		return items[i].LatencyMs < items[j].LatencyMs
-	})
-	return items
 }
 
 // measureProxyDNS measures the latency of reaching each proxy-side DNS server

@@ -350,6 +350,18 @@
         <button class="button" type="button" @click="handleClickDnsSetting">
           {{ $t("dns.title") }}
         </button>
+        <button class="button" type="button" @click="handleClickBackup">
+          {{ $t("backup.title") }}
+        </button>
+        <button class="button" type="button" @click="handleClickDiagnose">
+          {{ $t("diagnose.title") }}
+        </button>
+        <button class="button" type="button" @click="handleClickNotice">
+          {{ $t("notice.title") }}
+          <b-tag v-if="unreadNotices > 0" type="is-danger" size="is-small" style="margin-left: 4px">
+            {{ unreadNotices }}
+          </b-tag>
+        </button>
       </div>
       <button class="button" type="button" @click="$parent.close()">
         {{ $t("operations.cancel") }}
@@ -377,6 +389,9 @@ import BButton from "buefy/src/components/button/Button";
 import BSelect from "buefy/src/components/select/Select";
 import BCheckboxButton from "buefy/src/components/checkbox/CheckboxButton";
 import modalDnsSetting from "./modalDnsSetting";
+import modalBackup from "./modalBackup";
+import modalDiagnose from "./modalDiagnose";
+import modalNotice from "./modalNotice";
 import axios from "../plugins/axios";
 import { waitingConnected } from "@/assets/js/networkInspect";
 
@@ -385,6 +400,7 @@ export default {
   components: { BCheckboxButton, BSelect, BButton, CusBInput },
   data: () => ({
     proxyModeWhenSubscribe: "direct",
+    unreadNotices: 0,
     tcpFastOpen: "default",
     logLevel: "info",
     muxOn: "no",
@@ -477,8 +493,46 @@ export default {
   },
   created() {
     this.getSettingData();
+    this.loadUnreadNotices();
   },
   methods: {
+    loadUnreadNotices() {
+      this.$axios({ url: apiRoot + "/notices", method: "get" }).then((res) => {
+        if (res.data && res.data.code === "SUCCESS" && res.data.data) {
+          this.unreadNotices = res.data.data.unread || 0;
+        }
+      });
+    },
+    handleClickBackup() {
+      this.$buefy.modal.open({
+        parent: this,
+        component: modalBackup,
+        hasModalCard: true,
+        canCancel: true,
+      });
+    },
+    handleClickDiagnose() {
+      this.$buefy.modal.open({
+        parent: this,
+        component: modalDiagnose,
+        hasModalCard: true,
+        canCancel: true,
+      });
+    },
+    handleClickNotice() {
+      this.$buefy.modal.open({
+        parent: this,
+        component: modalNotice,
+        hasModalCard: true,
+        canCancel: true,
+        events: {
+          close: () => {
+            this.loadUnreadNotices();
+          },
+        },
+      });
+      this.unreadNotices = 0;
+    },
     dayjs() {
       return dayjs.apply(this, arguments);
     },

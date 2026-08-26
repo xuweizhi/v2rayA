@@ -99,6 +99,26 @@ export default {
     noMatch: "没有规则命中",
     assetBased: "资源规则",
   },
+  backup: {
+    title: "备份",
+    createNow: "立即备份",
+    note: "配置变更后会自动备份数据库快照，保留最近 5 份。",
+    name: "文件名",
+    size: "大小",
+    time: "时间",
+  },
+  diagnose: {
+    title: "网络诊断",
+    domain: "域名（可选）",
+    run: "开始检测",
+    copy: "复制报告",
+  },
+  notice: {
+    title: "公告",
+    empty: "暂无公告",
+    unread: "新",
+    openLink: "打开链接",
+  },
   operations: {
     tproxyWhiteIpGroups: "直通白名单IP组",
     name: "操作",

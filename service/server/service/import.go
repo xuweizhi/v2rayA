@@ -41,6 +41,7 @@ func Import(url string, which *configure.Which, password string) (err error) {
 				return fmt.Errorf("failed to import server %d/%d (%v): %w", i+1, len(infos), info.GetName(), err)
 			}
 		}
+		AutoBackup()
 		return nil
 	}
 	supportedPrefix := []string{"vmess", "vless", "ss", "ssr", "trojan", "trojan-go", "http-proxy",
@@ -97,6 +98,9 @@ func Import(url string, which *configure.Which, password string) (err error) {
 			// append a server
 			log.Info("Import: appending a new server")
 			err = configure.AppendServers([]*configure.ServerRaw{{ServerObj: obj}})
+			if err == nil {
+				AutoBackup()
+			}
 		}
 	} else {
 		// subscription
@@ -157,6 +161,9 @@ func Import(url string, which *configure.Which, password string) (err error) {
 			DecryptPassword: password,
 			Extra:           extra,
 		}})
+		if err == nil {
+			AutoBackup()
+		}
 	}
 	return
 }
