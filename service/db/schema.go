@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     status TEXT NOT NULL DEFAULT '',
     info TEXT DEFAULT '',
     auto_select INTEGER NOT NULL DEFAULT 0,
+    decrypt_password TEXT NOT NULL DEFAULT '',
     filter TEXT DEFAULT '',
     group_id TEXT DEFAULT '',
     sort INTEGER NOT NULL DEFAULT 0,
@@ -113,6 +114,18 @@ func MigrateSchema(db *sql.DB) error {
 		log.Info("Adding auto_select column to subscriptions table")
 		if _, err := db.Exec("ALTER TABLE subscriptions ADD COLUMN auto_select INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add auto_select column: %w", err)
+		}
+	}
+
+	// Check if decrypt_password column exists (added for password-protected subscriptions)
+	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'decrypt_password'").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check for decrypt_password column: %w", err)
+	}
+	if count == 0 {
+		log.Info("Adding decrypt_password column to subscriptions table")
+		if _, err := db.Exec("ALTER TABLE subscriptions ADD COLUMN decrypt_password TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add decrypt_password column: %w", err)
 		}
 	}
 

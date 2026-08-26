@@ -218,6 +218,7 @@ func clashVlessToServerObj(p map[string]interface{}) (serverObj.ServerObj, error
 	obj.SNI = getString(p, "servername")
 	obj.Fingerprint = getString(p, "client-fingerprint")
 	obj.Flow = getString(p, "flow")
+	obj.Encryption = getString(p, "encryption")
 	if alpn := getStringList(p, "alpn"); len(alpn) > 0 {
 		obj.Alpn = strings.Join(alpn, ",")
 	}

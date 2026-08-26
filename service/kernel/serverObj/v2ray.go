@@ -47,6 +47,7 @@ type V2Ray struct {
 	ShortId                string `json:"sid,omitempty"`
 	SpiderX                string `json:"spx,omitempty"`
 	Flow                   string `json:"flow,omitempty"`
+	Encryption             string `json:"encryption,omitempty"`
 	Alpn                   string `json:"alpn,omitempty"`
 	PinnedPeerCertSha256   string `json:"pinnedPeerCertSha256,omitempty"`
 	VerifyPeerCertByName   string `json:"verifyPeerCertByName,omitempty"`
@@ -139,6 +140,7 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 		ShortId:              u.Query().Get("sid"),
 		SpiderX:              u.Query().Get("spx"),
 		Flow:                 u.Query().Get("flow"),
+		Encryption:           u.Query().Get("encryption"),
 		Alpn:                 u.Query().Get("alpn"),
 		PinnedPeerCertSha256: u.Query().Get("pinnedPeerCertSha256"),
 		VerifyPeerCertByName: u.Query().Get("verifyPeerCertByName"),
@@ -391,6 +393,10 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 			if security == "" {
 				security = "auto"
 			}
+			encryption := v.Encryption
+			if encryption == "" {
+				encryption = "none"
+			}
 			core.Settings.Vnext = []coreObj.Vnext{
 				{
 					Address: v.Add,
@@ -398,7 +404,7 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 					Users: []coreObj.User{
 						{
 							ID:         id,
-							Encryption: "none",
+							Encryption: encryption,
 						},
 					},
 				},
@@ -765,6 +771,9 @@ func (v *V2Ray) ExportToURL() string {
 				setValue(&query, "sid", v.ShortId)
 				setValue(&query, "spx", v.SpiderX)
 			}
+		}
+		if v.Encryption != "" && v.Encryption != "none" {
+			setValue(&query, "encryption", v.Encryption)
 		}
 
 		U := url.URL{

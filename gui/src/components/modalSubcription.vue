@@ -17,6 +17,14 @@
           :placeholder="$t('subscription.remarks')"
         />
       </b-field>
+      <b-field :label="$t('subscription.decryptPassword')">
+        <b-input
+          v-model="which.decryptPassword"
+          type="password"
+          password-reveal
+          :placeholder="$t('import.passwordPlaceholder')"
+        />
+      </b-field>
       <b-field label="AUTO-SELECT">
         <b-checkbox
 	  v-model="which.autoSelect"

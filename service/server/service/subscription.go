@@ -156,7 +156,7 @@ func trapBOM(fileBytes []byte) []byte {
 	trimmedBytes := bytes.Trim(fileBytes, "\xef\xbb\xbf")
 	return trimmedBytes
 }
-func ResolveSubscriptionWithClient(source string, client *http.Client) (infos []serverObj.ServerObj, status string, err error) {
+func ResolveSubscriptionWithClient(source string, client *http.Client, password string) (infos []serverObj.ServerObj, status string, err error) {
 	c := *client
 	if c.Timeout < 30*time.Second {
 		c.Timeout = 30 * time.Second
@@ -170,6 +170,17 @@ func ResolveSubscriptionWithClient(source string, client *http.Client) (infos []
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, "", err
+	}
+	// Password-protected subscriptions (announced by the
+	// "subscription-encryption" response header) must be decrypted before
+	// parsing.
+	if isSubscriptionEncrypted(res.Header) {
+		var decrypted string
+		decrypted, err = common.DecryptSubscriptionBody(b, password)
+		if err != nil {
+			return nil, "", err
+		}
+		b = []byte(decrypted)
 	}
 	// base64 decode. trapBOM due to https://github.com/v2rayA/v2rayA/issues/612
 	raw, err := common.Base64StdDecode(string(trapBOM(b)))
@@ -196,6 +207,13 @@ func ResolveSubscriptionWithClient(source string, client *http.Client) (infos []
 	return infos, status, nil
 }
 
+// isSubscriptionEncrypted reports whether the response announces the
+// "subscription-encryption" scheme (used by password-protected subscriptions).
+func isSubscriptionEncrypted(h http.Header) bool {
+	v := strings.TrimSpace(h.Get("subscription-encryption"))
+	return strings.EqualFold(v, "true") || v == "1"
+}
+
 func ResolveByLines(raw string) (infos []serverObj.ServerObj, status string, err error) {
 	var sip SIP008
 	if infos, sip, err = resolveSIP008(raw); err == nil {
@@ -219,9 +237,10 @@ func getDataUsageStatus(bytesUsed, bytesRemaining uint64) (status string) {
 func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	subscriptions := configure.GetSubscriptions()
 	addr := subscriptions[index].Address
+	password := subscriptions[index].DecryptPassword
 	c := httpClient.GetHttpClientAutomatically()
 	resolv.CheckResolvConf()
-	subscriptionInfos, status, err := ResolveSubscriptionWithClient(addr, c)
+	subscriptionInfos, status, err := ResolveSubscriptionWithClient(addr, c, password)
 	if err != nil {
 		reason := "failed to resolve subscription address: " + err.Error()
 		log.Warn("UpdateSubscription: %v: %v", err, subscriptionInfos)
@@ -356,6 +375,7 @@ func ModifySubscriptionRemark(subscription touch.Subscription) (err error) {
 	raw.Remarks = subscription.Remarks
 	raw.Address = subscription.Address
 	raw.AutoSelect = subscription.AutoSelect
+	raw.DecryptPassword = subscription.DecryptPassword
 	return configure.SetSubscription(subscription.ID-1, raw)
 }
 

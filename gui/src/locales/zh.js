@@ -66,6 +66,7 @@ export default {
     timeLastUpdate: "上次更新时间",
     numberServers: "节点数",
     subscription: "订阅",
+    decryptPassword: "解密密码",
   },
   operations: {
     tproxyWhiteIpGroups: "直通白名单IP组",
@@ -328,6 +329,7 @@ export default {
     message: "填入节点链接或订阅地址：",
     batchMessage: "一行一个节点链接:",
     qrcodeError: "找不到有效的二维码，请重新尝试",
+    passwordPlaceholder: "订阅密码（可选）",
   },
   delete: {
     title: "确认删除",

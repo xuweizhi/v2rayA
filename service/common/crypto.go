@@ -1,6 +1,8 @@
 package common
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/sha1"
@@ -10,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +20,55 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+// DecryptSubscriptionBody decrypts the body of a password-protected
+// subscription (the scheme announced by the "subscription-encryption: true"
+// response header): the body is base64 encoded, its first 16 bytes are the
+// AES-128-CBC IV, and the key is the MD5 digest of the subscription password.
+func DecryptSubscriptionBody(body []byte, password string) (string, error) {
+	if password == "" {
+		return "", fmt.Errorf("subscription is encrypted, please provide the subscription password")
+	}
+	s := strings.TrimSpace(string(body))
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		// some providers omit padding
+		if raw2, err2 := base64.RawStdEncoding.DecodeString(s); err2 == nil {
+			raw = raw2
+			err = nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("subscription body is not valid base64: %w", err)
+	}
+	if len(raw) <= 16 {
+		return "", fmt.Errorf("subscription body is too short to decrypt")
+	}
+	iv := raw[:16]
+	ciphertext := raw[16:]
+	key := md5.Sum([]byte(password)) // #nosec G401 -- scheme defined by the subscription-encryption convention
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return "", fmt.Errorf("failed to init AES cipher: %w", err)
+	}
+	plaintext := make([]byte, len(ciphertext))
+	cipher.NewCBCDecrypter(block, iv).CryptBlocks(plaintext, ciphertext)
+	// strip PKCS#7 padding
+	if len(plaintext) == 0 {
+		return "", fmt.Errorf("decrypted subscription body is empty")
+	}
+	padLen := int(plaintext[len(plaintext)-1])
+	if padLen <= 0 || padLen > aes.BlockSize || padLen > len(plaintext) {
+		return "", fmt.Errorf("decrypted subscription body has invalid padding")
+	}
+	for _, b := range plaintext[len(plaintext)-padLen:] {
+		if int(b) != padLen {
+			return "", errors.New("decrypted subscription body has invalid padding")
+		}
+	}
+	return string(plaintext[:len(plaintext)-padLen]), nil
+}
 
 // CryptoPwd 使用 bcrypt 加密密码。
 // 如果 bcrypt 失败（极少情况），回退到旧版 MD5 哈希方式以保持兼容。

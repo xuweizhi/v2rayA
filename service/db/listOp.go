@@ -9,6 +9,18 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// subRowJSON is the JSON shape of a subscription row reconstructed from the
+// subscriptions table columns.
+type subRowJSON struct {
+	Remarks         string              `json:"remarks,omitempty"`
+	Address         string              `json:"address"`
+	Status          string              `json:"status"`
+	Info            string              `json:"info"`
+	Servers         jsoniter.RawMessage `json:"servers"`
+	AutoSelect      bool                `json:"autoSelect"`
+	DecryptPassword string              `json:"decryptPassword,omitempty"`
+}
+
 // ListSet sets an element at a specific index in a list.
 func ListSet(bucket string, key string, index int, val interface{}) (err error) {
 	db := GetDB()
@@ -53,10 +65,11 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 		if parsed.Get("autoSelect").Bool() {
 			autoSelect = 1
 		}
+		decryptPassword := parsed.Get("decryptPassword").String()
 
 		result, err := db.Exec(
-			"UPDATE subscriptions SET address = ?, remarks = ?, status = ?, info = ?, auto_select = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-			address, remarks, status, info, autoSelect, subID,
+			"UPDATE subscriptions SET address = ?, remarks = ?, status = ?, info = ?, auto_select = ?, decrypt_password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+			address, remarks, status, info, autoSelect, decryptPassword, subID,
 		)
 		if err != nil {
 			return err
@@ -116,11 +129,11 @@ func ListGet(bucket string, key string, index int) (b []byte, err error) {
 
 	case "touch/subscriptions":
 		var subID int64
-		var address, remarks, status, info string
+		var address, remarks, status, info, decryptPassword string
 		var autoSelectInt int
 		err = db.QueryRow(
-			"SELECT id, address, remarks, status, info, auto_select FROM subscriptions WHERE sort = ?", index,
-		).Scan(&subID, &address, &remarks, &status, &info, &autoSelectInt)
+			"SELECT id, address, remarks, status, info, auto_select, decrypt_password FROM subscriptions WHERE sort = ?", index,
+		).Scan(&subID, &address, &remarks, &status, &info, &autoSelectInt, &decryptPassword)
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("ListGet: can't get element from an empty list")
 		}
@@ -149,9 +162,20 @@ func ListGet(bucket string, key string, index int) (b []byte, err error) {
 
 		serversJSON := "[" + strings.Join(servers, ",") + "]"
 		autoSelect := autoSelectInt != 0
-		result := fmt.Sprintf(`{"remarks":"%s","address":"%s","status":"%s","info":"%s","servers":%s,"autoSelect":%v}`,
-			remarks, address, status, info, serversJSON, autoSelect)
-		return []byte(result), nil
+		result := subRowJSON{
+			Remarks:         remarks,
+			Address:         address,
+			Status:          status,
+			Info:            info,
+			Servers:         jsoniter.RawMessage(serversJSON),
+			AutoSelect:      autoSelect,
+			DecryptPassword: decryptPassword,
+		}
+		b, err := jsoniter.Marshal(result)
+		if err != nil {
+			return nil, err
+		}
+		return b, nil
 
 	default:
 		return nil, fmt.Errorf("ListGet: unsupported bucket/key: %s/%s", bucket, key)
@@ -212,14 +236,15 @@ func ListAppend(bucket string, key string, val interface{}) (err error) {
 				if item.Get("autoSelect").Bool() {
 					autoSelect = 1
 				}
+				decryptPassword := item.Get("decryptPassword").String()
 
 				var maxSort int
 				db.QueryRow("SELECT COALESCE(MAX(sort), -1) FROM subscriptions").Scan(&maxSort)
 				newSort := maxSort + 1
 
 				res, err := db.Exec(
-					"INSERT INTO subscriptions (address, remarks, status, info, auto_select, sort) VALUES (?, ?, ?, ?, ?, ?)",
-					address, remarks, status, info, autoSelect, newSort,
+					"INSERT INTO subscriptions (address, remarks, status, info, auto_select, decrypt_password, sort) VALUES (?, ?, ?, ?, ?, ?, ?)",
+					address, remarks, status, info, autoSelect, decryptPassword, newSort,
 				)
 				if err != nil {
 					return err
@@ -274,7 +299,7 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 		return list, rows.Err()
 
 	case "touch/subscriptions":
-		rows, err := db.Query("SELECT id, address, remarks, status, info, auto_select FROM subscriptions ORDER BY sort")
+		rows, err := db.Query("SELECT id, address, remarks, status, info, auto_select, decrypt_password FROM subscriptions ORDER BY sort")
 		if err != nil {
 			return nil, err
 		}
@@ -282,9 +307,9 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 
 		for rows.Next() {
 			var id int64
-			var address, remarks, status, info string
+			var address, remarks, status, info, decryptPassword string
 			var autoSelectInt int
-			if err := rows.Scan(&id, &address, &remarks, &status, &info, &autoSelectInt); err != nil {
+			if err := rows.Scan(&id, &address, &remarks, &status, &info, &autoSelectInt, &decryptPassword); err != nil {
 				return nil, err
 			}
 
@@ -309,9 +334,20 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 
 			serversJSON := "[" + strings.Join(servers, ",") + "]"
 			autoSelect := autoSelectInt != 0
-			result := fmt.Sprintf(`{"remarks":"%s","address":"%s","status":"%s","info":"%s","servers":%s,"autoSelect":%v}`,
-				remarks, address, status, info, serversJSON, autoSelect)
-			list = append(list, []byte(result))
+			result := subRowJSON{
+				Remarks:         remarks,
+				Address:         address,
+				Status:          status,
+				Info:            info,
+				Servers:         jsoniter.RawMessage(serversJSON),
+				AutoSelect:      autoSelect,
+				DecryptPassword: decryptPassword,
+			}
+			b, err := jsoniter.Marshal(result)
+			if err != nil {
+				return nil, err
+			}
+			list = append(list, b)
 		}
 		return list, rows.Err()
 

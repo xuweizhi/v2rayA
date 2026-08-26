@@ -669,6 +669,10 @@
             @icon-right-click="handleClickImportQRCode"
             @keyup.native="handleImportEnter"
           ></b-input>
+          <b-input
+            v-model="importPassword"
+            :placeholder="$t('import.passwordPlaceholder')"
+          ></b-input>
         </section>
         <footer class="modal-card-foot">
           <button
@@ -811,6 +815,7 @@ export default {
       enterReducedSidebar: false,
       showSidebar: false,
       importWhat: "",
+      importPassword: "",
       showModalImport: false,
       showModalImportInBatch: false,
       currentPage: { servers: 1, subscriptions: 1 },
@@ -1403,6 +1408,7 @@ export default {
         method: "post",
         data: {
           url: value || this.importWhat,
+          password: this.importPassword || undefined,
         },
       }).then((res) => {
         if (res.data.code === "SUCCESS") {
@@ -1416,6 +1422,7 @@ export default {
           this.showModalImport = false;
           this.showModalImportInBatch = false;
           this.importWhat = "";
+          this.importPassword = "";
         } else {
           this.$buefy.toast.open({
             message: res.data.message,

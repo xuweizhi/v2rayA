@@ -67,6 +67,7 @@ export default {
     numberServers: "Number of Servers",
     subscription: "Subscription",
     autoSelect: "Automatically connect to new servers from the subscription after an automatic update of the subscription",
+    decryptPassword: "Decrypt Password",
   },
   operations: {
     name: "Operations",
@@ -331,6 +332,7 @@ export default {
     message: "Input a server link or subscription address:",
     batchMessage: "One server link per line:",
     qrcodeError: "Failed to find a valid QRCode, please try again",
+    passwordPlaceholder: "Subscription password (optional)",
   },
   delete: {
     title: "Confirm to DELETE",
