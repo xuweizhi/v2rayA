@@ -125,4 +125,7 @@ func checkUpdate() {
 			f()
 		}
 	}()
+
+	// watch network changes to re-probe and re-select the best node
+	watchNetworkChanges()
 }

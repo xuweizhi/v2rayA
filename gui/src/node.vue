@@ -180,6 +180,15 @@
             <i class="iconfont icon-daoruzupu-xianxing" />
             <span>{{ $t("operations.import") }}</span>
           </b-button>
+          <b-button
+            class="field mobile-small"
+            type="is-info"
+            outlined
+            @click="showModalDetectRule = true"
+          >
+            <i class="iconfont icon-chakandaorujilu" />
+            <span>{{ $t("operations.detectRule") }}</span>
+          </b-button>
         </div>
       </b-field>
 
@@ -691,6 +700,92 @@
         @submit="handleModalSubscriptionSubmit"
       />
     </b-modal>
+    <b-modal
+      :active.sync="showModalDetectRule"
+      has-modal-card
+      trap-focus
+      aria-role="dialog"
+      aria-modal
+    >
+      <div class="modal-card" style="max-width: 600px; margin: auto">
+        <header class="modal-card-head">
+          <p class="modal-card-title">{{ $t("operations.detectRule") }}</p>
+        </header>
+        <section class="modal-card-body">
+          <b-field :label="$t('detectRule.domain')">
+            <b-input v-model="detectRuleQuery.domain" placeholder="www.google.com" />
+          </b-field>
+          <div class="columns">
+            <div class="column">
+              <b-field :label="$t('detectRule.port')">
+                <b-input v-model="detectRuleQuery.port" placeholder="443" />
+              </b-field>
+            </div>
+            <div class="column">
+              <b-field :label="$t('detectRule.network')">
+                <b-input v-model="detectRuleQuery.network" placeholder="tcp" />
+              </b-field>
+            </div>
+            <div class="column">
+              <b-field :label="$t('detectRule.inbound')">
+                <b-select v-model="detectRuleQuery.inbound" expanded>
+                  <option value="">{{ $t("detectRule.anyInbound") }}</option>
+                  <option value="transparent">transparent</option>
+                  <option value="rule-http">rule-http</option>
+                  <option value="rule-socks">rule-socks</option>
+                </b-select>
+              </b-field>
+            </div>
+          </div>
+          <b-button type="is-primary" @click="handleDetectRule">
+            {{ $t("operations.confirm") }}
+          </b-button>
+          <div v-if="detectRuleResult" style="margin-top: 1rem">
+            <p v-if="detectRuleResult.matched >= 0" class="detect-rule-hit">
+              {{ $t("detectRule.hitOutbound") }}:
+              <strong>{{ detectRuleResult.outbound || "-" }}</strong>
+              （{{ $t("detectRule.ruleIndex") }} {{ detectRuleResult.matched }}）
+            </p>
+            <p v-else class="detect-rule-miss">
+              {{ $t("detectRule.noMatch") }}
+            </p>
+            <p v-if="detectRuleResult.assetNote" class="detect-rule-note">
+              {{ detectRuleResult.assetNote }}
+            </p>
+            <b-table
+              :data="detectRuleResult.rules"
+              :default-sort="['index', 'asc']"
+              :per-page="100"
+              striped
+              hoverable
+              style="max-height: 260px"
+            >
+              <b-table-column field="index" label="#" numeric width="40" v-slot="p">
+                {{ p.row.index }}
+              </b-table-column>
+              <b-table-column :label="$t('detectRule.rule')" v-slot="p">
+                <span :class="p.row.matched ? 'has-text-success' : 'has-text-grey-light'">
+                  {{ p.row.domains && p.row.domains.length ? p.row.domains.join(", ") : (p.row.ips && p.row.ips.length ? p.row.ips.join(", ") : (p.row.reason || "*")) }}
+                </span>
+              </b-table-column>
+              <b-table-column :label="$t('detectRule.outbound')" width="160" v-slot="p">
+                <strong :class="p.row.matched ? 'has-text-success' : ''">
+                  {{ p.row.outbound || "-" }}
+                </strong>
+                <b-tag
+                  v-if="p.row.assetBased"
+                  size="is-small"
+                  type="is-warning"
+                  style="margin-left: 4px"
+                >
+                  {{ $t("detectRule.assetBased") }}
+                </b-tag>
+              </b-table-column>
+            </b-table>
+          </div>
+        </section>
+      </div>
+    </b-modal>
     <input
       id="QRCodeImport"
       type="file"
@@ -867,6 +962,9 @@ export default {
       importWhat: "",
       importPassword: "",
       showModalImport: false,
+      showModalDetectRule: false,
+      detectRuleQuery: { domain: "", port: "", network: "", inbound: "" },
+      detectRuleResult: null,
       showModalImportInBatch: false,
       currentPage: { servers: 1, subscriptions: 1 },
       tableData: {
@@ -2100,6 +2198,27 @@ export default {
         const idx = extra.disabledTags.indexOf(row.name);
         if (idx >= 0) extra.disabledTags.splice(idx, 1);
         else extra.disabledTags.push(row.name);
+      });
+    },
+    handleDetectRule() {
+      this.detectRuleResult = null;
+      const q = this.detectRuleQuery;
+      this.$axios({
+        url:
+          apiRoot +
+          "/detectRule?domain=" +
+          encodeURIComponent(q.domain) +
+          "&port=" +
+          encodeURIComponent(q.port) +
+          "&network=" +
+          encodeURIComponent(q.network) +
+          "&inbound=" +
+          encodeURIComponent(q.inbound),
+        method: "get",
+      }).then((res) => {
+        handleResponse(res, this, () => {
+          this.detectRuleResult = res.data.data.detectRule;
+        });
       });
     },
     removeNodeWithMemory(row, subi) {

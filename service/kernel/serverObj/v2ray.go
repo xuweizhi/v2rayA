@@ -85,8 +85,15 @@ type V2Ray struct {
 	HealthCheckTimeout     string `json:"healthCheckTimeout,omitempty"`  // gRPC HealthCheckTimeout (秒)
 	PermitWithoutStream    string `json:"permitWithoutStream,omitempty"` // gRPC PermitWithoutStream
 	InitialWindowsSize     string `json:"initialWindowsSize,omitempty"`  // gRPC InitialWindowsSize
-	V                      string `json:"v"`
-	Protocol               string `json:"protocol"`
+	// Mux carries the sing-box style multiplex option (mux=smux|yamux|h2mux|1).
+	// It is parsed and preserved on export, but not yet applied by the core.
+	Mux string `json:"mux,omitempty"`
+	// BrutalUp/BrutalDown carry the brutal congestion control parameters
+	// (brutal=up,down). Parsed and preserved, not yet applied by the core.
+	BrutalUp   string `json:"brutalUp,omitempty"`
+	BrutalDown string `json:"brutalDown,omitempty"`
+	V          string `json:"v"`
+	Protocol   string `json:"protocol"`
 }
 
 // queryInt parses an integer query parameter; returns 0 if missing or invalid.
@@ -124,25 +131,27 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 		return nil, err
 	}
 	data = &V2Ray{
-		Ps:                   u.Fragment,
-		Add:                  u.Hostname(),
-		Port:                 u.Port(),
-		ID:                   u.User.String(),
-		Aid:                  u.Query().Get("aid"),
-		Net:                  u.Query().Get("type"),
-		Type:                 u.Query().Get("headerType"),
-		Host:                 u.Query().Get("host"),
-		SNI:                  u.Query().Get("sni"),
-		Path:                 u.Query().Get("path"),
-		TLS:                  u.Query().Get("security"),
-		Fingerprint:          u.Query().Get("fp"),
-		PublicKey:            u.Query().Get("pbk"),
-		ShortId:              u.Query().Get("sid"),
-		SpiderX:              u.Query().Get("spx"),
-		Flow:                 u.Query().Get("flow"),
-		Encryption:           u.Query().Get("encryption"),
-		Alpn:                 u.Query().Get("alpn"),
-		PinnedPeerCertSha256: u.Query().Get("pinnedPeerCertSha256"),
+		Ps:          u.Fragment,
+		Add:         u.Hostname(),
+		Port:        u.Port(),
+		ID:          u.User.String(),
+		Aid:         u.Query().Get("aid"),
+		Net:         u.Query().Get("type"),
+		Type:        u.Query().Get("headerType"),
+		Host:        u.Query().Get("host"),
+		SNI:         u.Query().Get("sni"),
+		Path:        u.Query().Get("path"),
+		TLS:         u.Query().Get("security"),
+		Fingerprint: u.Query().Get("fp"),
+		PublicKey:   u.Query().Get("pbk"),
+		ShortId:     u.Query().Get("sid"),
+		SpiderX:     u.Query().Get("spx"),
+		Flow:        u.Query().Get("flow"),
+		Encryption:  u.Query().Get("encryption"),
+		Alpn:        u.Query().Get("alpn"),
+		Mux:         u.Query().Get("mux"),
+		BrutalUp:    u.Query().Get("brutalUp"),
+		BrutalDown:  u.Query().Get("brutalDown"), PinnedPeerCertSha256: u.Query().Get("pinnedPeerCertSha256"),
 		VerifyPeerCertByName: u.Query().Get("verifyPeerCertByName"),
 		Key:                  u.Query().Get("key"),
 		V:                    vless,
@@ -165,6 +174,17 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 	}
 	if data.Net == "mkcp" || data.Net == "kcp" {
 		data.Path = u.Query().Get("seed")
+	}
+	// Parse the combined brutal=up,down form when the dedicated keys are absent.
+	if data.BrutalUp == "" && data.BrutalDown == "" {
+		if brutal := u.Query().Get("brutal"); brutal != "" {
+			parts := strings.FieldsFunc(brutal, func(r rune) bool { return r == ',' || r == ':' })
+			if len(parts) >= 2 {
+				data.BrutalUp, data.BrutalDown = parts[0], parts[1]
+			} else if len(parts) == 1 {
+				data.BrutalUp = parts[0]
+			}
+		}
 	}
 	if data.Net == "quic" {
 		data.QuicSecurity = u.Query().Get("quicSecurity")
@@ -354,6 +374,12 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 	switch strings.ToLower(v.Protocol) {
 	case "vmess", "vless":
 		id := v.ID
+		if v.Mux != "" && v.Mux != "0" && !strings.EqualFold(v.Mux, "false") && !strings.EqualFold(v.Mux, "none") {
+			log.Warn("node %q: mux=%v is not supported by the core yet, ignoring multiplex", v.Ps, v.Mux)
+		}
+		if v.BrutalUp != "" || v.BrutalDown != "" {
+			log.Warn("node %q: brutal congestion control (%v,%v) is not supported by the core yet, ignoring", v.Ps, v.BrutalUp, v.BrutalDown)
+		}
 		network := v.Net
 		if l := len([]byte(id)); l < 32 || l > 36 {
 			id = common.StringToUUID5(id)
@@ -774,6 +800,12 @@ func (v *V2Ray) ExportToURL() string {
 		}
 		if v.Encryption != "" && v.Encryption != "none" {
 			setValue(&query, "encryption", v.Encryption)
+		}
+		if v.Mux != "" {
+			setValue(&query, "mux", v.Mux)
+		}
+		if v.BrutalUp != "" || v.BrutalDown != "" {
+			setValue(&query, "brutal", v.BrutalUp+","+v.BrutalDown)
 		}
 
 		U := url.URL{
