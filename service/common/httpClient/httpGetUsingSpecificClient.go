@@ -12,12 +12,19 @@ func HttpGetUsingSpecificClient(c *http.Client, url string) (resp *http.Response
 }
 
 func HttpGetUsingSpecificClientWithUA(c *http.Client, url string, userAgent string) (resp *http.Response, err error) {
+	return HttpGetUsingSpecificClientWithUAAndHeaders(c, url, userAgent, nil)
+}
+
+func HttpGetUsingSpecificClientWithUAAndHeaders(c *http.Client, url string, userAgent string, headers map[string]string) (resp *http.Response, err error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return
 	}
 	//shadowrocket会有可能不清楚alterid的情况，影响aead是否启用的问题
 	req.Header.Set("User-Agent", userAgent)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	if resp, err = c.Do(req); err != nil {
 		resp, err = http.DefaultClient.Do(req)
 	}

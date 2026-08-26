@@ -279,6 +279,32 @@
               </b-table-column>
               <b-table-column
                 v-slot="props"
+                :label="$t('subscription.traffic')"
+                width="200"
+              >
+                <div
+                  v-if="
+                    props.row.extra &&
+                    (props.row.extra.total > 0 || props.row.extra.expire > 0)
+                  "
+                  class="traffic-column"
+                >
+                  <p v-if="props.row.extra.total > 0" class="traffic-line">
+                    {{ formatBytes(props.row.extra.upload + props.row.extra.download) }}
+                    /
+                    {{ formatBytes(props.row.extra.total) }}
+                  </p>
+                  <p
+                    v-if="props.row.extra.expire > 0"
+                    :class="expireClass(props.row.extra.expire)"
+                    :title="$t('subscription.expire')"
+                  >
+                    {{ formatDate(props.row.extra.expire) }}
+                  </p>
+                </div>
+              </b-table-column>
+              <b-table-column
+                v-slot="props"
                 :label="$t('operations.name')"
                 width="300"
               >
@@ -606,6 +632,30 @@
                   >
                     {{ $t("operations.share") }}
                   </b-button>
+                  <b-button
+                    size="is-small"
+                    :title="props.row.fav ? $t('operations.unfavNode') : $t('operations.favNode')"
+                    :type="props.row.fav ? 'is-warning' : ''"
+                    :outlined="!props.row.fav"
+                    icon-left="iconfont icon-heart"
+                    @click="toggleNodeFav(props.row, subi)"
+                  />
+                  <b-button
+                    size="is-small"
+                    :title="props.row.disabled ? $t('operations.enableNode') : $t('operations.disableNode')"
+                    :type="props.row.disabled ? 'is-danger' : ''"
+                    :outlined="!props.row.disabled"
+                    icon-left="iconfont icon-close-circle-fill"
+                    @click="toggleNodeDisabled(props.row, subi)"
+                  />
+                  <b-button
+                    size="is-small"
+                    :title="$t('operations.removeNodeWithMemory')"
+                    outlined
+                    type="is-danger"
+                    icon-left="iconfont icon-delete"
+                    @click="removeNodeWithMemory(props.row, subi)"
+                  />
                 </div>
               </b-table-column>
             </b-table>
@@ -1965,6 +2015,7 @@ export default {
     handleClickModifySubscription(row) {
       this.which = Object.assign({}, row);
       this.which.servers = [];
+      this.which.extra = Object.assign({}, row.extra || {});
       this.showModalSubscription = true;
     },
     handleModalSubscriptionSubmit(subscription) {
@@ -1986,6 +2037,85 @@ export default {
           this.showModalSubscription = false;
           this.syncLatestNodeOverview();
         });
+      });
+    },
+    formatBytes(bytes) {
+      if (!bytes || bytes <= 0) return "0B";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let i = 0;
+      let v = bytes;
+      while (v >= 1024 && i < units.length - 1) {
+        v /= 1024;
+        i++;
+      }
+      return v.toFixed(v >= 100 || i === 0 ? 0 : 1) + units[i];
+    },
+    formatDate(unixSec) {
+      const d = new Date(unixSec * 1000);
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    },
+    expireClass(unixSec) {
+      const days = (unixSec * 1000 - Date.now()) / 86400000;
+      if (days < 7) return "expire-warning expire-critical";
+      if (days < 14) return "expire-warning";
+      return "";
+    },
+    updateSubscriptionExtra(subi, mutator) {
+      const sub = this.tableData.subscriptions[subi];
+      if (!sub) return;
+      if (!sub.extra) sub.extra = {};
+      mutator(sub.extra);
+      this.$axios({
+        url: apiRoot + "/subscription",
+        method: "patch",
+        data: {
+          subscription: {
+            id: sub.id,
+            _type: sub._type,
+            address: sub.address,
+            remarks: sub.remarks,
+            autoSelect: sub.autoSelect,
+            decryptPassword: sub.decryptPassword,
+            extra: sub.extra,
+          },
+        },
+      }).then((res) => {
+        handleResponse(res, this, () => {
+          this.syncLatestNodeOverview();
+        });
+      });
+    },
+    toggleNodeFav(row, subi) {
+      this.updateSubscriptionExtra(subi, (extra) => {
+        extra.favTags = extra.favTags || [];
+        const idx = extra.favTags.indexOf(row.name);
+        if (idx >= 0) extra.favTags.splice(idx, 1);
+        else extra.favTags.push(row.name);
+      });
+    },
+    toggleNodeDisabled(row, subi) {
+      this.updateSubscriptionExtra(subi, (extra) => {
+        extra.disabledTags = extra.disabledTags || [];
+        const idx = extra.disabledTags.indexOf(row.name);
+        if (idx >= 0) extra.disabledTags.splice(idx, 1);
+        else extra.disabledTags.push(row.name);
+      });
+    },
+    removeNodeWithMemory(row, subi) {
+      this.$buefy.dialog.confirm({
+        message: this.$t("operations.removeNodeConfirm"),
+        type: "is-danger",
+        confirmText: this.$t("operations.delete"),
+        cancelText: this.$t("operations.cancel"),
+        onConfirm: () => {
+          this.updateSubscriptionExtra(subi, (extra) => {
+            extra.removedTags = extra.removedTags || [];
+            if (extra.removedTags.indexOf(row.name) < 0) {
+              extra.removedTags.push(row.name);
+            }
+          });
+        },
       });
     },
   },
@@ -2018,6 +2148,21 @@ td {
 
 .ping-latency {
   font-size: 0.8em;
+}
+
+.traffic-column {
+  font-size: 0.8em;
+  .traffic-line {
+    margin: 0;
+  }
+  .expire-warning {
+    margin: 0;
+    color: #ff9800;
+    &.expire-critical {
+      color: #f14668;
+      font-weight: bold;
+    }
+  }
 }
 </style>
 

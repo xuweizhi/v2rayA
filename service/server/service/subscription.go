@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/common/httpClient"
 	"github.com/v2rayA/v2rayA/common/resolv"
+	"github.com/v2rayA/v2rayA/conf"
 	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/kernel/serverObj"
 	"github.com/v2rayA/v2rayA/kernel/touch"
@@ -156,20 +158,56 @@ func trapBOM(fileBytes []byte) []byte {
 	trimmedBytes := bytes.Trim(fileBytes, "\xef\xbb\xbf")
 	return trimmedBytes
 }
-func ResolveSubscriptionWithClient(source string, client *http.Client, password string) (infos []serverObj.ServerObj, status string, err error) {
+
+// subscriptionFetchResult is the parsed result of fetching a subscription.
+type subscriptionFetchResult struct {
+	infos   []serverObj.ServerObj
+	status  string
+	traffic SubscriptionUserInfo
+}
+
+// ResolveSubscriptionWithClient downloads and parses a subscription. The
+// per-subscription advanced options (User-Agent, X-HWID, download strategy,
+// filters) come from extra; password is the decrypt password for encrypted
+// subscriptions.
+func ResolveSubscriptionWithClient(source string, client *http.Client, password string, extra configure.SubscriptionExtra) (result subscriptionFetchResult, err error) {
 	c := *client
 	if c.Timeout < 30*time.Second {
 		c.Timeout = 30 * time.Second
 	}
 
-	res, err := httpClient.HttpGetUsingSpecificClientWithUA(client, source, "clash-verge")
+	// Per-subscription User-Agent.
+	ua := "clash-verge"
+	if extra.UserAgent != "" {
+		ua = extra.UserAgent
+	}
+	if extra.UserAgentAppend {
+		ua += " v2rayA/" + conf.Version
+	}
+	headers := map[string]string{}
+	if extra.XHWID != "" {
+		headers["X-HWID"] = extra.XHWID
+	}
+
+	// Download strategy: try the configured order of direct/proxy clients.
+	clients := subscriptionDownloadClients(&c, extra)
+	var res *http.Response
+	for i, cl := range clients {
+		res, err = httpClient.HttpGetUsingSpecificClientWithUAAndHeaders(cl, source, ua, headers)
+		if err == nil {
+			break
+		}
+		if i < len(clients)-1 {
+			log.Warn("subscription download via client %d/%d failed: %v; trying next", i+1, len(clients), err)
+		}
+	}
 	if err != nil {
 		return
 	}
 	defer res.Body.Close()
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, "", err
+		return result, err
 	}
 	// Password-protected subscriptions (announced by the
 	// "subscription-encryption" response header) must be decrypted before
@@ -178,7 +216,7 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 		var decrypted string
 		decrypted, err = common.DecryptSubscriptionBody(b, password)
 		if err != nil {
-			return nil, "", err
+			return result, err
 		}
 		b = []byte(decrypted)
 	}
@@ -189,14 +227,17 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 	}
 	// Many providers serve a full Clash YAML to clash-capable clients and a
 	// reduced node list to others. Parse the YAML form when present.
+	var infos []serverObj.ServerObj
+	var status string
 	if isClashYAML(raw) {
 		infos, status, err = resolveClashYAML(raw)
 	} else {
 		infos, status, err = ResolveByLines(raw)
 	}
 	if err != nil {
-		return nil, "", err
+		return result, err
 	}
+	infos = filterServersByExtra(infos, extra)
 	subscriptionUserInfo := res.Header.Get("Subscription-Userinfo")
 	sui := parseSubscriptionUserInfo(subscriptionUserInfo)
 	if len(status) > 0 {
@@ -204,7 +245,100 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 	} else {
 		status = sui.String()
 	}
-	return infos, status, nil
+	return subscriptionFetchResult{infos: infos, status: status, traffic: sui}, nil
+}
+
+// subscriptionDownloadClients returns the HTTP clients to try in order,
+// based on the per-subscription download strategy.
+func subscriptionDownloadClients(direct *http.Client, extra configure.SubscriptionExtra) []*http.Client {
+	strategy := extra.DownloadStrategy
+	if strategy == "" {
+		// Follow the system: the default client already honors the
+		// transparent proxy when active.
+		return []*http.Client{direct}
+	}
+	proxyClient := direct
+	ports := configure.GetPortsNotNil()
+	if ports.Socks5 > 0 {
+		proxyURL, err := url.Parse(fmt.Sprintf("socks5://127.0.0.1:%d", ports.Socks5))
+		if err == nil {
+			proxyClient = &http.Client{
+				Timeout: direct.Timeout,
+				Transport: &http.Transport{
+					Proxy: http.ProxyURL(proxyURL),
+				},
+			}
+		}
+	}
+	switch strategy {
+	case "onlyProxy":
+		return []*http.Client{proxyClient}
+	case "onlyDirect":
+		return []*http.Client{direct}
+	case "preferProxy":
+		return []*http.Client{proxyClient, direct}
+	default:
+		return []*http.Client{direct}
+	}
+}
+
+// filterServersByExtra applies the per-subscription include/exclude regexes
+// and the "removed node" memory to a parsed node list.
+func filterServersByExtra(infos []serverObj.ServerObj, extra configure.SubscriptionExtra) []serverObj.ServerObj {
+	removed := make(map[string]bool, len(extra.RemovedTags))
+	for _, t := range extra.RemovedTags {
+		removed[t] = true
+	}
+	var includeRe, excludeRe *regexp.Regexp
+	var err error
+	if extra.IncludeRegex != "" {
+		if includeRe, err = regexp.Compile(extra.IncludeRegex); err != nil {
+			log.Warn("invalid include regex %q: %v", extra.IncludeRegex, err)
+			includeRe = nil
+		}
+	}
+	if extra.ExcludeRegex != "" {
+		if excludeRe, err = regexp.Compile(extra.ExcludeRegex); err != nil {
+			log.Warn("invalid exclude regex %q: %v", extra.ExcludeRegex, err)
+			excludeRe = nil
+		}
+	}
+	out := make([]serverObj.ServerObj, 0, len(infos))
+	for _, info := range infos {
+		name := info.GetName()
+		if removed[name] {
+			continue
+		}
+		if includeRe != nil && !includeRe.MatchString(name) {
+			continue
+		}
+		if excludeRe != nil && excludeRe.MatchString(name) {
+			continue
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
+// applyServerFlags marks a server raw with its per-node flags (disabled,
+// favorite) from the subscription extra.
+func applyServerFlags(sr *configure.ServerRaw, extra configure.SubscriptionExtra) {
+	if sr.ServerObj == nil {
+		return
+	}
+	name := sr.ServerObj.GetName()
+	for _, t := range extra.DisabledTags {
+		if t == name {
+			sr.Disabled = true
+			break
+		}
+	}
+	for _, t := range extra.FavTags {
+		if t == name {
+			sr.Fav = true
+			break
+		}
+	}
 }
 
 // isSubscriptionEncrypted reports whether the response announces the
@@ -238,13 +372,24 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	subscriptions := configure.GetSubscriptions()
 	addr := subscriptions[index].Address
 	password := subscriptions[index].DecryptPassword
+	extra := subscriptions[index].Extra
 	c := httpClient.GetHttpClientAutomatically()
 	resolv.CheckResolvConf()
-	subscriptionInfos, status, err := ResolveSubscriptionWithClient(addr, c, password)
+	result, err := ResolveSubscriptionWithClient(addr, c, password, extra)
 	if err != nil {
 		reason := "failed to resolve subscription address: " + err.Error()
-		log.Warn("UpdateSubscription: %v: %v", err, subscriptionInfos)
+		log.Warn("UpdateSubscription: %v: %v", err, result.infos)
 		return fmt.Errorf("UpdateSubscription: %v", reason)
+	}
+	subscriptionInfos := result.infos
+	status := result.status
+	// Preserve latencies of nodes that keep the same name across updates so
+	// users don't have to re-run tests after every refresh.
+	oldNameLatency := make(map[string]string)
+	for _, old := range subscriptions[index].Servers {
+		if old.ServerObj != nil && old.Latency != "" {
+			oldNameLatency[old.ServerObj.GetName()] = old.Latency
+		}
 	}
 	infoServerRaws := make([]configure.ServerRaw, len(subscriptionInfos))
 	css := configure.GetConnectedServers()
@@ -271,7 +416,9 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	for i, info := range subscriptionInfos {
 		infoServerRaw := configure.ServerRaw{
 			ServerObj: info,
+			Latency:   oldNameLatency[info.GetName()],
 		}
+		applyServerFlags(&infoServerRaw, extra)
 		link := infoServerRaw.ServerObj.ExportToURL()
 		if cssIndexes, ok := connectedVmessInfo2CssIndex[link]; ok {
 			for _, cssIndex := range cssIndexes {
@@ -354,6 +501,11 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	subscriptions[index].Servers = infoServerRaws
 	subscriptions[index].Status = string(touch.NewUpdateStatus())
 	subscriptions[index].Info = status
+	subscriptions[index].Extra.LastUpdateTime = time.Now().Unix()
+	subscriptions[index].Extra.Upload = result.traffic.Upload
+	subscriptions[index].Extra.Download = result.traffic.Download
+	subscriptions[index].Extra.Total = result.traffic.Total
+	subscriptions[index].Extra.Expire = result.traffic.Expire.Unix()
 	if err := configure.SetSubscription(index, &subscriptions[index]); err != nil {
 		return err
 	}
@@ -376,6 +528,39 @@ func ModifySubscriptionRemark(subscription touch.Subscription) (err error) {
 	raw.Address = subscription.Address
 	raw.AutoSelect = subscription.AutoSelect
 	raw.DecryptPassword = subscription.DecryptPassword
+	raw.Extra = subscription.Extra
+	// Drop nodes the user removed with "delete and keep removed" so they
+	// disappear immediately rather than only after the next refresh.
+	if len(raw.Extra.RemovedTags) > 0 {
+		removed := make(map[string]bool, len(raw.Extra.RemovedTags))
+		for _, t := range raw.Extra.RemovedTags {
+			removed[t] = true
+		}
+		// Disconnect any connected server that is being removed.
+		css := configure.GetConnectedServers().Get()
+		for _, cs := range css {
+			if cs.TYPE == configure.SubscriptionServerType && cs.Sub == subscription.ID-1 {
+				if sRaw, e := cs.LocateServerRaw(); e == nil && sRaw.ServerObj != nil && removed[sRaw.ServerObj.GetName()] {
+					if e := Disconnect(*cs, false); e != nil {
+						log.Warn("ModifySubscriptionRemark: failed to disconnect removed server %v: %v", sRaw.ServerObj.GetName(), e)
+					}
+				}
+			}
+		}
+		filtered := make([]configure.ServerRaw, 0, len(raw.Servers))
+		for _, s := range raw.Servers {
+			if s.ServerObj != nil && removed[s.ServerObj.GetName()] {
+				continue
+			}
+			filtered = append(filtered, s)
+		}
+		raw.Servers = filtered
+	}
+	// Re-apply node flags (disabled/favorite) to the stored servers when the
+	// corresponding tag lists change.
+	for i := range raw.Servers {
+		applyServerFlags(&raw.Servers[i], raw.Extra)
+	}
 	return configure.SetSubscription(subscription.ID-1, raw)
 }
 

@@ -26,18 +26,25 @@ type Server struct {
 	Address     string              `json:"address"`
 	Net         string              `json:"net"`
 	PingLatency string              `json:"pingLatency"`
+	Disabled    bool                `json:"disabled,omitempty"`
+	Fav         bool                `json:"fav,omitempty"`
 }
 type Subscription struct {
-	Remarks         string              `json:"remarks,omitempty"`
-	ID              int                 `json:"id"`
-	TYPE            configure.TouchType `json:"_type"`
-	Host            string              `json:"host"`
-	Address         string              `json:"address"`
-	Status          SubscriptionStatus  `json:"status"`
-	Info            string              `json:"info"`
-	Servers         []Server            `json:"servers"`
-	AutoSelect      bool                `json:"autoSelect"`
-	DecryptPassword string              `json:"decryptPassword,omitempty"`
+	Remarks         string                      `json:"remarks,omitempty"`
+	ID              int                         `json:"id"`
+	TYPE            configure.TouchType         `json:"_type"`
+	Host            string                      `json:"host"`
+	Address         string                      `json:"address"`
+	Status          SubscriptionStatus          `json:"status"`
+	Info            string                      `json:"info"`
+	Servers         []Server                    `json:"servers"`
+	AutoSelect      bool                        `json:"autoSelect"`
+	DecryptPassword string                      `json:"decryptPassword,omitempty"`
+	Extra           configure.SubscriptionExtra `json:"extra,omitempty"`
+	Upload          int64                       `json:"upload,omitempty"`
+	Download        int64                       `json:"download,omitempty"`
+	Total           int64                       `json:"total,omitempty"`
+	Expire          int64                       `json:"expire,omitempty"`
 }
 
 func NewUpdateStatus() SubscriptionStatus {
@@ -60,6 +67,8 @@ func serverRawsToServers(rss []configure.ServerRaw) (ts []Server) {
 			Address:     address,
 			Net:         v.ServerObj.ProtoToShow(),
 			PingLatency: v.Latency,
+			Disabled:    v.Disabled,
+			Fav:         v.Fav,
 		}
 	}
 	return
@@ -97,6 +106,11 @@ func GenerateTouch() (t Touch) {
 			Info:            v.Info,
 			AutoSelect:      v.AutoSelect,
 			DecryptPassword: v.DecryptPassword,
+			Extra:           v.Extra,
+			Upload:          v.Extra.Upload,
+			Download:        v.Extra.Download,
+			Total:           v.Extra.Total,
+			Expire:          v.Extra.Expire,
 		}
 	}
 	t.ConnectedServers = configure.GetConnectedServers().Get()

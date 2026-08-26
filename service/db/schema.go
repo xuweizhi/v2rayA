@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     info TEXT DEFAULT '',
     auto_select INTEGER NOT NULL DEFAULT 0,
     decrypt_password TEXT NOT NULL DEFAULT '',
+    extra_json TEXT NOT NULL DEFAULT '{}',
     filter TEXT DEFAULT '',
     group_id TEXT DEFAULT '',
     sort INTEGER NOT NULL DEFAULT 0,
@@ -126,6 +127,18 @@ func MigrateSchema(db *sql.DB) error {
 		log.Info("Adding decrypt_password column to subscriptions table")
 		if _, err := db.Exec("ALTER TABLE subscriptions ADD COLUMN decrypt_password TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add decrypt_password column: %w", err)
+		}
+	}
+
+	// Check if extra_json column exists (per-subscription advanced settings)
+	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'extra_json'").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check for extra_json column: %w", err)
+	}
+	if count == 0 {
+		log.Info("Adding extra_json column to subscriptions table")
+		if _, err := db.Exec("ALTER TABLE subscriptions ADD COLUMN extra_json TEXT NOT NULL DEFAULT '{}'"); err != nil {
+			return fmt.Errorf("failed to add extra_json column: %w", err)
 		}
 	}
 

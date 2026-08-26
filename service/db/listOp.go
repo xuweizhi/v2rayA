@@ -19,6 +19,17 @@ type subRowJSON struct {
 	Servers         jsoniter.RawMessage `json:"servers"`
 	AutoSelect      bool                `json:"autoSelect"`
 	DecryptPassword string              `json:"decryptPassword,omitempty"`
+	Extra           jsoniter.RawMessage `json:"extra,omitempty"`
+}
+
+// subExtraFromJSON extracts the "extra" sub-object from a marshaled
+// subscription JSON, defaulting to "{}" when absent.
+func subExtraFromJSON(b []byte) string {
+	parsed := gjson.ParseBytes(b)
+	if extra := parsed.Get("extra"); extra.Exists() {
+		return extra.Raw
+	}
+	return "{}"
 }
 
 // ListSet sets an element at a specific index in a list.
@@ -66,10 +77,11 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 			autoSelect = 1
 		}
 		decryptPassword := parsed.Get("decryptPassword").String()
+		extraJSON := subExtraFromJSON(b)
 
 		result, err := db.Exec(
-			"UPDATE subscriptions SET address = ?, remarks = ?, status = ?, info = ?, auto_select = ?, decrypt_password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-			address, remarks, status, info, autoSelect, decryptPassword, subID,
+			"UPDATE subscriptions SET address = ?, remarks = ?, status = ?, info = ?, auto_select = ?, decrypt_password = ?, extra_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+			address, remarks, status, info, autoSelect, decryptPassword, extraJSON, subID,
 		)
 		if err != nil {
 			return err
@@ -129,11 +141,11 @@ func ListGet(bucket string, key string, index int) (b []byte, err error) {
 
 	case "touch/subscriptions":
 		var subID int64
-		var address, remarks, status, info, decryptPassword string
+		var address, remarks, status, info, decryptPassword, extraJSON string
 		var autoSelectInt int
 		err = db.QueryRow(
-			"SELECT id, address, remarks, status, info, auto_select, decrypt_password FROM subscriptions WHERE sort = ?", index,
-		).Scan(&subID, &address, &remarks, &status, &info, &autoSelectInt, &decryptPassword)
+			"SELECT id, address, remarks, status, info, auto_select, decrypt_password, extra_json FROM subscriptions WHERE sort = ?", index,
+		).Scan(&subID, &address, &remarks, &status, &info, &autoSelectInt, &decryptPassword, &extraJSON)
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("ListGet: can't get element from an empty list")
 		}
@@ -162,6 +174,9 @@ func ListGet(bucket string, key string, index int) (b []byte, err error) {
 
 		serversJSON := "[" + strings.Join(servers, ",") + "]"
 		autoSelect := autoSelectInt != 0
+		if extraJSON == "" {
+			extraJSON = "{}"
+		}
 		result := subRowJSON{
 			Remarks:         remarks,
 			Address:         address,
@@ -170,6 +185,7 @@ func ListGet(bucket string, key string, index int) (b []byte, err error) {
 			Servers:         jsoniter.RawMessage(serversJSON),
 			AutoSelect:      autoSelect,
 			DecryptPassword: decryptPassword,
+			Extra:           jsoniter.RawMessage(extraJSON),
 		}
 		b, err := jsoniter.Marshal(result)
 		if err != nil {
@@ -237,14 +253,15 @@ func ListAppend(bucket string, key string, val interface{}) (err error) {
 					autoSelect = 1
 				}
 				decryptPassword := item.Get("decryptPassword").String()
+				extraJSON := subExtraFromJSON([]byte(item.Raw))
 
 				var maxSort int
 				db.QueryRow("SELECT COALESCE(MAX(sort), -1) FROM subscriptions").Scan(&maxSort)
 				newSort := maxSort + 1
 
 				res, err := db.Exec(
-					"INSERT INTO subscriptions (address, remarks, status, info, auto_select, decrypt_password, sort) VALUES (?, ?, ?, ?, ?, ?, ?)",
-					address, remarks, status, info, autoSelect, decryptPassword, newSort,
+					"INSERT INTO subscriptions (address, remarks, status, info, auto_select, decrypt_password, extra_json, sort) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+					address, remarks, status, info, autoSelect, decryptPassword, extraJSON, newSort,
 				)
 				if err != nil {
 					return err
@@ -299,7 +316,7 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 		return list, rows.Err()
 
 	case "touch/subscriptions":
-		rows, err := db.Query("SELECT id, address, remarks, status, info, auto_select, decrypt_password FROM subscriptions ORDER BY sort")
+		rows, err := db.Query("SELECT id, address, remarks, status, info, auto_select, decrypt_password, extra_json FROM subscriptions ORDER BY sort")
 		if err != nil {
 			return nil, err
 		}
@@ -307,9 +324,9 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 
 		for rows.Next() {
 			var id int64
-			var address, remarks, status, info, decryptPassword string
+			var address, remarks, status, info, decryptPassword, extraJSON string
 			var autoSelectInt int
-			if err := rows.Scan(&id, &address, &remarks, &status, &info, &autoSelectInt, &decryptPassword); err != nil {
+			if err := rows.Scan(&id, &address, &remarks, &status, &info, &autoSelectInt, &decryptPassword, &extraJSON); err != nil {
 				return nil, err
 			}
 
@@ -334,6 +351,9 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 
 			serversJSON := "[" + strings.Join(servers, ",") + "]"
 			autoSelect := autoSelectInt != 0
+			if extraJSON == "" {
+				extraJSON = "{}"
+			}
 			result := subRowJSON{
 				Remarks:         remarks,
 				Address:         address,
@@ -342,6 +362,7 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 				Servers:         jsoniter.RawMessage(serversJSON),
 				AutoSelect:      autoSelect,
 				DecryptPassword: decryptPassword,
+				Extra:           jsoniter.RawMessage(extraJSON),
 			}
 			b, err := jsoniter.Marshal(result)
 			if err != nil {

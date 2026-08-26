@@ -118,14 +118,14 @@ func Import(url string, which *configure.Which, password string) (err error) {
 		}
 		c := httpClient.GetHttpClientAutomatically()
 		c.Timeout = 90 * time.Second
-		infos, status, err := ResolveSubscriptionWithClient(source, c, password)
+		result, err := ResolveSubscriptionWithClient(source, c, password, configure.SubscriptionExtra{})
 		if err != nil {
 			return fmt.Errorf("failed to resolve subscription address: %w", err)
 		}
 
 		// info to serverRawV2
-		servers := make([]configure.ServerRaw, len(infos))
-		for i, v := range infos {
+		servers := make([]configure.ServerRaw, len(result.infos))
+		for i, v := range result.infos {
 			servers[i] = configure.ServerRaw{ServerObj: v}
 		}
 
@@ -142,12 +142,20 @@ func Import(url string, which *configure.Which, password string) (err error) {
 			seen[key] = struct{}{}
 			uniqueServers = append(uniqueServers, s)
 		}
+		extra := configure.SubscriptionExtra{
+			Upload:         result.traffic.Upload,
+			Download:       result.traffic.Download,
+			Total:          result.traffic.Total,
+			Expire:         result.traffic.Expire.Unix(),
+			LastUpdateTime: time.Now().Unix(),
+		}
 		err = configure.AppendSubscriptions([]*configure.SubscriptionRaw{{
 			Address:         source,
 			Status:          string(touch.NewUpdateStatus()),
 			Servers:         uniqueServers,
-			Info:            status,
+			Info:            result.status,
 			DecryptPassword: password,
+			Extra:           extra,
 		}})
 	}
 	return

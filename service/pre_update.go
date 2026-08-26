@@ -24,6 +24,15 @@ func updateSubscriptions() {
 	}
 	wg := new(sync.WaitGroup)
 	for i := 0; i < lenSubs; i++ {
+		// Per-subscription update interval: subscriptions with an explicit
+		// interval are skipped until their LastUpdateTime is due.
+		if sub := subs[i]; sub.Extra.UpdateIntervalHour > 0 && sub.Extra.LastUpdateTime > 0 {
+			due := time.Now().Unix()-sub.Extra.LastUpdateTime >= int64(sub.Extra.UpdateIntervalHour)*3600
+			if !due {
+				log.Trace("[AutoUpdate] Subscriptions: skipping not-yet-due subscription -- ID: %d, Address: %s", i, sub.Address)
+				continue
+			}
+		}
 		wg.Add(1)
 		go func(i int) {
 			control <- struct{}{}
