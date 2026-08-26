@@ -308,6 +308,13 @@ export default {
     addRule: "添加规则",
     resetDefault: "恢复默认",
     errNoRules: "至少需要一条 DNS 规则",
+    autoSetup: "一键测速择优",
+    autoSetupResult: "择优完成",
+    autoSetupApplied: "已用最快服务器更新 DNS 规则",
+    kind: "类型",
+    direct: "直连",
+    proxy: "代理",
+    latency: "延迟",
   },
   egressPortWhitelist: {
     title: "出方向端口白名单",

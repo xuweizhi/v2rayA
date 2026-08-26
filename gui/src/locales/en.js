@@ -311,6 +311,13 @@ export default {
     addRule: "Add Rule",
     resetDefault: "Reset to Defaults",
     errNoRules: "At least one DNS rule is required",
+    autoSetup: "Auto Test & Setup",
+    autoSetupResult: "Auto setup done",
+    autoSetupApplied: "DNS rules updated with the fastest servers",
+    kind: "Kind",
+    direct: "Direct",
+    proxy: "Proxy",
+    latency: "Latency",
   },
   egressPortWhitelist: {
     title: "Egress Port Whitelist",

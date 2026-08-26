@@ -80,6 +80,48 @@
           @click="resetDefault"
           style="margin-left: 8px"
         >{{ $t("dns.resetDefault") }}</b-button>
+        <b-button
+          size="is-small"
+          type="is-warning"
+          :loading="autoSetupLoading"
+          style="margin-left: 8px"
+          @click="handleAutoSetup"
+        >{{ $t("dns.autoSetup") }}</b-button>
+      </div>
+      <div v-if="autoSetupResult" class="dns-auto-result">
+        <p class="dns-auto-title">
+          {{ $t("dns.autoSetupResult") }}: {{ $t("dns.colServer") }}
+          <strong v-if="autoSetupResult.rules && autoSetupResult.rules.length > 1">
+            {{ autoSetupResult.rules[1].server }}
+          </strong>
+          ({{ $t("dns.direct") }}) /
+          <strong v-if="autoSetupResult.rules && autoSetupResult.rules.length > 2">
+            {{ autoSetupResult.rules[2].server }}
+          </strong>
+          ({{ $t("dns.proxy") }})
+        </p>
+        <b-table
+          :data="autoSetupItems"
+          :per-page="100"
+          striped
+          hoverable
+          style="max-height: 240px"
+        >
+          <b-table-column field="kind" :label="$t('dns.kind')" width="80" v-slot="p">
+            {{ p.row.kind === "direct" ? $t("dns.direct") : $t("dns.proxy") }}
+          </b-table-column>
+          <b-table-column field="server" :label="$t('dns.colServer')" v-slot="p">
+            {{ p.row.server }}
+          </b-table-column>
+          <b-table-column field="latency" :label="$t('dns.latency')" width="100" v-slot="p">
+            <span v-if="p.row.ok" :class="p.row.ok ? 'has-text-success' : 'has-text-danger'">
+              {{ p.row.latencyMs }}ms
+            </span>
+            <span v-else class="has-text-danger" :title="p.row.error || ''">
+              {{ p.row.error || "FAIL" }}
+            </span>
+          </b-table-column>
+        </b-table>
       </div>
     </section>
     <footer class="modal-card-foot flex-end">
@@ -107,7 +149,22 @@ export default {
   data: () => ({
     rules: DEFAULT_RULES.map((r) => ({ ...r })),
     outbounds: ["proxy"],
+    autoSetupLoading: false,
+    autoSetupResult: null,
   }),
+  computed: {
+    autoSetupItems() {
+      if (!this.autoSetupResult) return [];
+      const items = [];
+      (this.autoSetupResult.direct || []).forEach((d) =>
+        items.push({ kind: "direct", ...d })
+      );
+      (this.autoSetupResult.proxy || []).forEach((d) =>
+        items.push({ kind: "proxy", ...d })
+      );
+      return items;
+    },
+  },
   created() {
     // Load available outbounds
     this.$axios({ url: apiRoot + "/outbounds" }).then((res) => {
@@ -137,6 +194,38 @@ export default {
     },
     resetDefault() {
       this.rules = DEFAULT_RULES.map((r) => ({ ...r }));
+    },
+    handleAutoSetup() {
+      this.autoSetupLoading = true;
+      this.autoSetupResult = null;
+      this.$axios({
+        url: apiRoot + "/dnsAutoSetup",
+        method: "post",
+        timeout: 60000,
+      })
+        .then((res) => {
+          handleResponse(res, this, () => {
+            const data = res.data.data.dnsAutoSetup;
+            this.autoSetupResult = data;
+            if (data.rules && data.rules.length > 0) {
+              this.rules = data.rules.map((r) => ({
+                server: r.server || "",
+                domains: r.domains || "",
+                outbound: r.outbound || "direct",
+              }));
+              this.$buefy.toast.open({
+                message: this.$t("dns.autoSetupApplied"),
+                type: "is-primary",
+                position: "is-top",
+                duration: 3000,
+                queue: false,
+              });
+            }
+          });
+        })
+        .finally(() => {
+          this.autoSetupLoading = false;
+        });
     },
     handleClickSubmit() {
       const validRules = this.rules.filter((r) => r.server.trim() !== "");
