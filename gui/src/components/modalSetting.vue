@@ -28,7 +28,7 @@
         <template slot="label">
           {{ $t("setting.transparentProxy") }}
           <b-tooltip type="is-dark" :label="$t('setting.messages.transparentProxy')" multilined position="is-right">
-            <b-icon size="is-small" icon=" iconfont icon-help-circle-outline"
+            <b-icon size="is-small" icon="help-circle-outline"
               style="position: relative; top: 2px; right: 3px; font-weight: normal" />
           </b-tooltip>
         </template>
@@ -62,7 +62,7 @@
         <template slot="label">
           {{ $t("setting.transparentType") }}
           <b-tooltip type="is-dark" multilined :label="$t('setting.messages.transparentType')" position="is-right">
-            <b-icon size="is-small" icon=" iconfont icon-help-circle-outline"
+            <b-icon size="is-small" icon="help-circle-outline"
               style="position: relative; top: 2px; right: 3px; font-weight: normal" />
           </b-tooltip>
         </template>
@@ -106,7 +106,7 @@
         <template slot="label">
           {{ $t("setting.tproxyExcludedInterfaces") }}
           <b-tooltip type="is-dark" multilined :label="$t('setting.messages.tproxyExcludedInterfaces')" position="is-right">
-            <b-icon size="is-small" icon=" iconfont icon-help-circle-outline"
+            <b-icon size="is-small" icon="help-circle-outline"
               style="position: relative; top: 2px; right: 3px; font-weight: normal" />
           </b-tooltip>
         </template>
@@ -164,7 +164,7 @@
         <template slot="label">
           {{ $t("setting.tunProcessBackend") }}
           <b-tooltip type="is-dark" multilined :label="$t('setting.messages.tunProcessBackend')" position="is-right">
-            <b-icon size="is-small" icon=" iconfont icon-help-circle-outline"
+            <b-icon size="is-small" icon="help-circle-outline"
               style="position: relative; top: 2px; right: 3px; font-weight: normal" />
           </b-tooltip>
         </template>
@@ -179,7 +179,7 @@
         <template slot="label">
           {{ $t("setting.tunExcludeProcesses") }}
           <b-tooltip type="is-dark" multilined :label="$t('setting.messages.tunExcludeProcesses')" position="is-right">
-            <b-icon size="is-small" icon=" iconfont icon-help-circle-outline"
+            <b-icon size="is-small" icon="help-circle-outline"
               style="position: relative; top: 2px; right: 3px; font-weight: normal" />
           </b-tooltip>
         </template>
@@ -198,7 +198,7 @@
         <template slot="label">
           {{ $t("setting.pacMode") }}
           <b-tooltip type="is-dark" :label="$t('setting.messages.pacMode')" multilined position="is-right">
-            <b-icon size="is-small" icon=" iconfont icon-help-circle-outline"
+            <b-icon size="is-small" icon="help-circle-outline"
               style="position: relative; top: 2px; right: 3px; font-weight: normal" />
           </b-tooltip>
         </template>
@@ -237,7 +237,7 @@
         <template slot="label">
           TCPFastOpen
           <b-tooltip type="is-dark" :label="$t('setting.messages.tcpFastOpen')" multilined position="is-right">
-            <b-icon size="is-small" icon=" iconfont icon-help-circle-outline"
+            <b-icon size="is-small" icon="help-circle-outline"
               style="position: relative; top: 2px; right: 3px; font-weight: normal" />
           </b-tooltip>
         </template>
@@ -265,7 +265,7 @@
         <template slot="label">
           {{ $t("setting.inboundSniffing") }}
           <b-tooltip type="is-dark" :label="$t('setting.messages.inboundSniffing')" multilined position="is-right">
-            <b-icon size="is-small" icon=" iconfont icon-help-circle-outline"
+            <b-icon size="is-small" icon="help-circle-outline"
               style="position: relative; top: 2px; right: 3px; font-weight: normal" />
           </b-tooltip>
         </template>
@@ -291,7 +291,7 @@
         <template slot="label">
           {{ $t("setting.mux") }}
           <b-tooltip type="is-dark" :label="$t('setting.messages.mux')" multilined position="is-right">
-            <b-icon size="is-small" icon=" iconfont icon-help-circle-outline"
+            <b-icon size="is-small" icon="help-circle-outline"
               style="position: relative; top: 2px; right: 3px; font-weight: normal" />
           </b-tooltip>
         </template>
@@ -300,7 +300,7 @@
           <option value="yes">{{ $t("setting.options.on") }}</option>
         </b-select>
         <cus-b-input v-if="muxOn === 'yes'" ref="muxinput" v-model="mux" :placeholder="$t('setting.concurrency')"
-          custom-class="no-shadow" type="number" min="1" max="1024" validation-icon=" iconfont icon-alert"
+          custom-class="no-shadow" type="number" min="1" max="1024" validation-icon="alert-circle-outline"
           style="flex: 1" />
       </b-field>
 
@@ -318,7 +318,7 @@
         </b-select>
         <cus-b-input v-if="pacAutoUpdateMode === 'auto_update_at_intervals'" ref="autoUpdatePacInput"
           v-model="pacAutoUpdateIntervalHour" custom-class="no-shadow" type="number" min="1"
-          validation-icon=" iconfont icon-alert" style="flex: 1" />
+          validation-icon="alert-circle-outline" style="flex: 1" />
       </b-field>
       <b-field :label="$t('setting.autoUpdateSub')" label-position="on-border">
         <b-select v-model="subscriptionAutoUpdateMode" expanded>
@@ -332,7 +332,7 @@
         </b-select>
         <cus-b-input v-if="subscriptionAutoUpdateMode === 'auto_update_at_intervals'" ref="autoUpdateSubInput"
           v-model="subscriptionAutoUpdateIntervalHour" custom-class="no-shadow" type="number" min="1"
-          validation-icon=" iconfont icon-alert" style="flex: 1" />
+          validation-icon="alert-circle-outline" style="flex: 1" />
       </b-field>
       <b-field :label="$t('setting.preferModeWhenUpdate')" label-position="on-border">
         <b-select v-model="proxyModeWhenSubscribe" expanded>
@@ -784,7 +784,7 @@ export default {
 </script>
 
 <style lang="scss">
-.rules {
+.modal-setting > .rules {
   height: 390px;
   overflow-x: hidden;
 }
@@ -816,15 +816,15 @@ export default {
 }
 
 //让"更新"按钮右对齐
-.rules .field.is-horizontal .field-body .field:last-child {
+.modal-setting > .rules .field.is-horizontal .field-body .field:last-child {
   text-align: right;
 }
 
-.no-shadow {
+.modal-setting .no-shadow {
   box-shadow: none !important;
 }
 
-.with-icon-alert {
+.modal-setting .with-icon-alert {
   p.help {
     position: absolute;
     bottom: -18px;
@@ -836,7 +836,7 @@ export default {
   }
 }
 
-.control:first-of-type:not(:last-of-type) .select select {
+.modal-setting .control:first-of-type:not(:last-of-type) .select select {
   border-radius: 4px 0 0 4px !important;
 }
 
@@ -853,6 +853,10 @@ export default {
 }
 
 .modal-setting {
+  width: 800px;
+  max-width: 95vw !important;
+  max-height: calc(100vh - 2rem);
+
   .novice-mode-field {
     min-width: 0;
     margin: 0 0 1.25rem;
@@ -904,6 +908,26 @@ body.theme-dark .modal-setting .novice-mode-field {
 }
 
 @media screen and (max-width: 600px) {
+  .modal-setting {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem) !important;
+    max-height: calc(100vh - 1rem);
+  }
+
+  .modal-setting > .rules {
+    min-height: 12rem;
+  }
+
+  .modal-setting .modal-card-head,
+  .modal-setting .modal-card-body,
+  .modal-setting .modal-card-foot {
+    padding: 0.75rem;
+  }
+
+  .modal-setting-footer__secondary {
+    flex-basis: 100%;
+  }
+
   .modal-setting-footer__primary {
     width: 100%;
     justify-content: flex-end;

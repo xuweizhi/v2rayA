@@ -149,7 +149,7 @@ export default {
         case "is-success":
           return "check";
         case "is-danger":
-          return " iconfont icon-alert";
+          return "alert-circle-outline";
         case "is-info":
           return "information";
         case "is-warning":

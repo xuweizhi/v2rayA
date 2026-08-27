@@ -1,6 +1,6 @@
 <template>
   <div id="app">
-    <b-navbar ref="navs" fixed-top shadow type="is-light">
+    <b-navbar ref="navs" fixed-top shadow type="is-light" class="app-navbar">
       <template slot="brand">
         <b-navbar-item href="/">
           <img src="@/assets/img/logo2.png" alt="v2rayA" class="logo no-select" />
@@ -8,6 +8,8 @@
         <b-navbar-item tag="div">
           <b-tag id="statusTag" class="pointerTag" role="button" tabindex="0" :type="statusMap[runningState.running]"
             @mouseenter.native="handleOnStatusMouseEnter" @mouseleave.native="handleOnStatusMouseLeave"
+            @keydown.native.enter.prevent="handleClickStatus"
+            @keydown.native.space.prevent="handleClickStatus"
             @click.native="handleClickStatus">{{ coverStatusText ? coverStatusText : runningState.running }}
           </b-tag>
         </b-navbar-item>
@@ -26,47 +28,48 @@
       <template slot="start"></template>
 
       <template slot="end">
-        <b-navbar-item tag="a" @click.native="openNodeAction('handleClickCreate')">
-          <i class="iconfont icon-chuangjiangongdan1" style="font-size: 1.25em"></i>
+        <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="openNodeAction('handleClickCreate')">
+          <i class="mdi mdi-file-plus-outline app-nav-icon" aria-hidden="true"></i>
           {{ $t("operations.create") }}
         </b-navbar-item>
-        <b-navbar-item tag="a" @click.native="openNodeAction('handleClickImport')">
-          <i class="iconfont icon-daoruzupu-xianxing" style="font-size: 1.25em"></i>
+        <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="openNodeAction('handleClickImport')">
+          <i class="mdi mdi-import app-nav-icon" aria-hidden="true"></i>
           {{ $t("operations.import") }}
         </b-navbar-item>
-        <b-navbar-item v-if="!noviceMode" tag="a" @click.native="openNodeAction('openDetectRule')">
-          <i class="iconfont icon-chakandaorujilu" style="font-size: 1.25em"></i>
+        <b-navbar-item v-if="!noviceMode" tag="button" type="button" class="navbar-action" @click.native="openNodeAction('openDetectRule')">
+          <i class="mdi mdi-radar app-nav-icon" aria-hidden="true"></i>
           {{ $t("operations.detectRule") }}
         </b-navbar-item>
-        <b-navbar-item v-if="!noviceMode" tag="a" @click.native="openNodeAction('handleClickConnections')">
-          <i class="iconfont icon-cloud" style="font-size: 1.25em"></i>
+        <b-navbar-item v-if="!noviceMode" tag="button" type="button" class="navbar-action" @click.native="openNodeAction('handleClickConnections')">
+          <i class="mdi mdi-cloud-outline app-nav-icon" aria-hidden="true"></i>
           {{ $t("operations.connections") }}
         </b-navbar-item>
-        <b-navbar-item tag="a" @click.native="handleClickSetting">
-          <i class="iconfont icon-setting" style="font-size: 1.25em"></i>
+        <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="handleClickSetting">
+          <i class="mdi mdi-cog-outline app-nav-icon" aria-hidden="true"></i>
           {{ $t("common.setting") }}
         </b-navbar-item>
-        <b-navbar-item tag="a" @click.native="handleClickAbout">
-          <i class="iconfont icon-heart" style="font-size: 1.25em"></i>
+        <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="handleClickAbout">
+          <i class="mdi mdi-heart-outline app-nav-icon" aria-hidden="true"></i>
           {{ $t("common.about") }}
         </b-navbar-item>
-        <b-navbar-item tag="a" @click.native="handleClickLogs">
-          <i class="iconfont icon-info" style="font-size: 1.25em"></i>
+        <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="handleClickLogs">
+          <i class="mdi mdi-information-outline app-nav-icon" aria-hidden="true"></i>
           {{ $t("common.log") }}
         </b-navbar-item>
-        <b-navbar-item tag="a" @click.native="toggleTheme">
+        <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="toggleTheme">
           <i
             :class="themePreference === 'auto' ? 'mdi mdi-theme-light-dark' : (isDarkTheme ? 'mdi mdi-weather-sunny' : 'mdi mdi-weather-night')"
-            style="font-size: 1.25em"
+            class="app-nav-icon"
+            aria-hidden="true"
           ></i>
           {{ themeSwitchLabel }}
         </b-navbar-item>
         <b-dropdown position="is-bottom-left" aria-role="menu" class="langdropdown">
-          <a slot="trigger" class="navbar-item" role="button">
-            <i class="iconfont icon-earth" style="font-size: 1.25em; margin-right: 4px"></i>
+          <button slot="trigger" class="navbar-item navbar-dropdown-trigger" type="button">
+            <i class="mdi mdi-earth app-nav-icon" aria-hidden="true"></i>
             <span class="no-select">{{ currentLangLabel }}</span>
-            <i class="iconfont icon-caret-down" style="position: relative; top: 1px; left: 2px"></i>
-          </a>
+            <i class="mdi mdi-menu-down" aria-hidden="true"></i>
+          </button>
           <b-dropdown-item v-for="lang of langs" :key="lang.code" aria-role="menuitem" class="no-select"
             @click="handleClickLang(lang.code)">
             <span style="font-weight: 500; min-width: 120px; display: inline-block">{{ lang.label }}</span>
@@ -74,15 +77,16 @@
           </b-dropdown-item>
         </b-dropdown>
         <b-dropdown position="is-bottom-left" aria-role="menu" style="margin-right: 10px" class="menudropdown">
-          <a slot="trigger" class="navbar-item" role="button">
+          <button slot="trigger" class="navbar-item navbar-dropdown-trigger" type="button">
             <span class="no-select">{{ username }}</span>
-            <i class="iconfont icon-caret-down" style="position: relative; top: 1px; left: 2px"></i>
-          </a>
-          <b-dropdown-item custom aria-role="menuitem" v-html="$t('common.loggedAs', { username })">
+            <i class="mdi mdi-menu-down" aria-hidden="true"></i>
+          </button>
+          <b-dropdown-item custom aria-role="menuitem">
+            {{ $t('common.loggedAs', { username }) }}
           </b-dropdown-item>
           <hr class="dropdown-divider" />
           <b-dropdown-item value="logout" aria-role="menuitem" class="no-select" @click="handleClickLogout">
-            <i class="iconfont icon-logout" style="position: relative; top: 1px"></i>
+            <i class="mdi mdi-logout" aria-hidden="true"></i>
             {{ $t("operations.logout") }}
           </b-dropdown-item>
         </b-dropdown>
@@ -100,7 +104,7 @@
       class="modal-custom-ports">
       <ModalCustomAddress @close="showCustomPorts = false" />
     </b-modal>
-    <b-modal :active.sync="loginModalActive" has-modal-card trap-focus aria-role="dialog" aria-modal class="modal-login modal-login-app">
+    <b-modal :active.sync="loginModalActive" :can-cancel="false" has-modal-card trap-focus aria-role="dialog" aria-modal class="modal-login modal-login-app">
       <ModalLogin :first="loginModalFirst" @close="loginModalActive = false" />
     </b-modal>
     <div id="login"></div>
@@ -119,7 +123,6 @@ import { waitingConnected } from "@/assets/js/networkInspect";
 import axios from "@/plugins/axios";
 import ModalLog from "@/components/modalLog";
 import ModalLogin from "@/components/modalLogin";
-import { ModalProgrammatic } from "buefy";
 
 export default {
   components: { ModalCustomAddress, node, OutboundGroupPanel, ModalLogin },
@@ -158,6 +161,8 @@ export default {
       updateOutboundDropdown: true,
       themePreference: 'auto',
       systemDark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+      wsReconnectTimer: null,
+      appDestroyed: false,
     };
   },
   computed: {
@@ -282,8 +287,15 @@ export default {
     this.connectWsMessage();
   },
   beforeDestroy() {
+    this.appDestroyed = true;
+    if (this.wsReconnectTimer) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = null;
+    }
     if (this.ws) {
+      this.ws.onclose = null;
       this.ws.close();
+      this.ws = null;
     }
     if (this._darkMediaQuery && this._onSystemThemeChange) {
       this._darkMediaQuery.removeEventListener('change', this._onSystemThemeChange);
@@ -307,6 +319,7 @@ export default {
       this.loginModalActive = true;
     },
     connectWsMessage() {
+      if (this.appDestroyed) return;
       const that = this;
       let url = apiRoot;
       if (!url.trim() || url.startsWith("/")) {
@@ -323,8 +336,9 @@ export default {
       }
       url = `${protocol}://${u.host}:${u.port}${basePath}/api/message?Authorization=${encodeURIComponent(localStorage["token"])}`;
       if (this.ws) {
-        // console.log("ws close");
+        this.ws.onclose = null;
         this.ws.close();
+        this.ws = null;
       }
       const ws = new WebSocket(url);
       // WebSocket 重连指数退避参数
@@ -349,12 +363,17 @@ export default {
       };
       ws.onclose = () => {
         ws.onmessage = null;
-        that.ws = null;
+        if (that.ws === ws) {
+          that.ws = null;
+        }
+        if (that.appDestroyed) return;
         // 指数退避重连：1s, 2s, 4s, 8s... 最大 30 秒
         const delay = Math.min(1000 * Math.pow(2, that._wsRetries), 30000);
         that._wsRetries++;
-        setTimeout(() => {
-          if (that.ws === null) {
+        if (that.wsReconnectTimer) clearTimeout(that.wsReconnectTimer);
+        that.wsReconnectTimer = setTimeout(() => {
+          that.wsReconnectTimer = null;
+          if (!that.appDestroyed && that.ws === null) {
             that.connectWsMessage();
           }
         }, delay);
@@ -704,7 +723,6 @@ export default {
 </script>
 
 <style lang="scss">
-@import "assets/iconfont/fonts/font.css";
 @import "assets/scss/reset.scss";
 @import "assets/scss/dark-theme.scss";
 </style>
@@ -724,8 +742,27 @@ export default {
   margin-right: 1em;
 }
 
-.navbar-item .iconfont {
-  margin-right: 0.15em;
+.app-nav-icon {
+  margin-right: 0.25rem;
+  font-size: 1.25em;
+}
+
+.navbar-action,
+.navbar-dropdown-trigger {
+  appearance: none;
+  border: 0;
+  background-color: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.navbar-action:focus-visible,
+.navbar-dropdown-trigger:focus-visible,
+.pointerTag:focus-visible {
+  outline: 2px solid #3273dc;
+  outline-offset: -2px;
 }
 
 .pointerTag:hover {
@@ -755,6 +792,79 @@ html {
     right: 0 !important;
     margin: auto;
     transform: unset !important;
+  }
+}
+
+@media screen and (max-width: 1199px) {
+  .app-navbar.navbar {
+    display: block;
+  }
+
+  .app-navbar .navbar-brand {
+    align-items: stretch;
+    display: flex;
+  }
+
+  .app-navbar .navbar-brand > .navbar-item {
+    align-items: center;
+    display: flex;
+  }
+
+  .app-navbar .navbar-burger {
+    display: block;
+  }
+
+  .app-navbar .navbar-menu,
+  .app-navbar .navbar-start,
+  .app-navbar .navbar-end {
+    display: block;
+  }
+
+  .app-navbar .navbar-menu {
+    display: none;
+    max-height: calc(100vh - 3.25rem);
+    overflow: auto;
+    padding: 0.5rem 0;
+    background: #fff;
+    box-shadow: 0 8px 16px rgba(10, 10, 10, 0.1);
+  }
+
+  .app-navbar .navbar-menu.is-active {
+    display: block;
+  }
+
+  .app-navbar .navbar-menu .navbar-item,
+  .app-navbar .navbar-menu .navbar-link {
+    align-items: center;
+    display: flex;
+    width: 100%;
+  }
+
+  .app-navbar .navbar-end {
+    margin-left: 0;
+  }
+
+  .app-navbar .dropdown,
+  .app-navbar .dropdown-trigger {
+    display: block;
+    width: 100%;
+  }
+
+  body.theme-dark .app-navbar .navbar-menu {
+    background: var(--md-surface-container);
+  }
+}
+
+@media screen and (min-width: 1200px) and (max-width: 1439px) {
+  .app-navbar .navbar-menu .navbar-item {
+    padding-right: 0.35rem;
+    padding-left: 0.35rem;
+    font-size: 0.86rem;
+  }
+
+  .app-navbar .logo {
+    margin-right: 0.35rem;
+    margin-left: 0.35rem;
   }
 }
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="modal-card dns-setting-modal" style="width: auto; min-width: 680px; max-width: 95vw; margin: auto">
+  <div class="modal-card dns-setting-modal">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("dns.title") }}</p>
       <a
@@ -9,7 +9,7 @@
         rel="noopener noreferrer"
         :title="$t('dns.helpTooltip')"
       >
-        <b-icon icon=" iconfont icon-help-circle-outline" size="is-small" />
+        <b-icon icon="help-circle-outline" size="is-small" />
         {{ $t("dns.help") }}
       </a>
     </header>
@@ -31,6 +31,7 @@
           class="dns-row dns-data-row"
         >
           <div class="col-server">
+            <span class="dns-mobile-label">{{ $t("dns.colServer") }}</span>
             <b-input
               v-model="rule.server"
               size="is-small"
@@ -39,6 +40,7 @@
             />
           </div>
           <div class="col-domains">
+            <span class="dns-mobile-label">{{ $t("dns.colDomains") }}</span>
             <b-input
               v-model="rule.domains"
               type="textarea"
@@ -49,6 +51,7 @@
             />
           </div>
           <div class="col-outbound">
+            <span class="dns-mobile-label">{{ $t("dns.colOutbound") }}</span>
             <b-select v-model="rule.outbound" size="is-small" expanded>
               <option value="direct">direct</option>
               <option
@@ -62,7 +65,7 @@
             <b-button
               size="is-small"
               type="is-danger"
-              icon-left=" iconfont icon-delete"
+              icon-left="delete"
               @click="removeRule(index)"
             />
           </div>
@@ -253,6 +256,11 @@ export default {
 
 <style lang="scss" scoped>
 .dns-setting-modal {
+  width: 900px;
+  max-width: 95vw;
+  max-height: calc(100vh - 2rem);
+  margin: auto;
+
   .dns-info-msg {
     margin-bottom: 12px;
   }
@@ -337,6 +345,66 @@ export default {
     display: flex;
     align-items: center;
   }
+
+  .dns-mobile-label {
+    display: none;
+    margin-bottom: 0.25rem;
+    color: #555;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+}
+
+@media screen and (max-width: 720px) {
+  .dns-setting-modal {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+
+    .modal-card-head,
+    .modal-card-foot {
+      padding: 0.75rem;
+    }
+
+    .modal-card-title {
+      font-size: 1.1rem;
+    }
+
+    .modal-card-body {
+      padding: 0.75rem;
+    }
+
+    .dns-header {
+      display: none;
+    }
+
+    .dns-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      padding: 0.4rem 0;
+    }
+
+    .dns-row > div {
+      padding: 0.35rem 0.6rem;
+    }
+
+    .dns-mobile-label {
+      display: block;
+    }
+
+    .col-actions {
+      justify-content: flex-end;
+      padding-top: 0;
+    }
+
+    .dns-add-row {
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .dns-add-row .button {
+      margin-left: 0 !important;
+    }
+  }
 }
 </style>
 
@@ -368,6 +436,10 @@ body.theme-dark {
       &:hover {
         background: var(--md-surface-container);
       }
+    }
+
+    .dns-mobile-label {
+      color: var(--md-on-surface-variant);
     }
   }
 }

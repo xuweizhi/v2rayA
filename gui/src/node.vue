@@ -80,7 +80,7 @@
       :closable="false"
       class="core-version-error"
     >
-      <i class="iconfont icon-alert" />
+      <i class="mdi mdi-alert-circle-outline" aria-hidden="true" />
       {{ $t("version.coreVersionMismatch", { err: coreVersionErr || "" }) }}
     </b-message>
     <div v-if="ready" class="hero-body">
@@ -115,7 +115,7 @@
             :disabled="!isCheckedRowsPingable()"
             @click="handleClickLatency(true)"
           >
-            <i class="iconfont icon-wave" />
+            <i class="mdi mdi-access-point-network" aria-hidden="true" />
             <span>PING</span>
           </button>
           <button
@@ -129,7 +129,7 @@
             :disabled="!isCheckedRowsPingable()"
             @click="handleClickLatency(false)"
           >
-            <i class="iconfont icon-wave" />
+            <i class="mdi mdi-access-point-network" aria-hidden="true" />
             <span>HTTP</span>
           </button>
           <button
@@ -143,7 +143,7 @@
             :disabled="!isCheckedRowsDeletable()"
             @click="handleClickDelete"
           >
-            <i class="iconfont icon-delete" />
+            <i class="mdi mdi-delete-outline" aria-hidden="true" />
             <span>{{ $t("operations.delete") }}</span>
           </button>
           <b-dropdown
@@ -157,7 +157,7 @@
           >
             <template #trigger>
               <button class="button is-info mobile-small" :disabled="!isCheckedRowsExportable()">
-                <i class="iconfont icon-share" />
+                <i class="mdi mdi-export-variant" aria-hidden="true" />
                 <span>{{ $t("operations.export") }}</span>
               </button>
             </template>
@@ -299,7 +299,7 @@
                 <div class="operate-box">
                   <b-button
                     size="is-small"
-                    icon-left=" github-circle iconfont icon-sync"
+                    icon-left="sync"
                     outlined
                     type="is-warning"
                     @click="handleClickUpdateSubscription(props.row)"
@@ -308,7 +308,7 @@
                   </b-button>
                   <b-button
                     size="is-small"
-                    icon-left=" github-circle iconfont icon-wendangxiugai"
+                    icon-left="pencil"
                     outlined
                     type="is-info"
                     @click="handleClickModifySubscription(props.row)"
@@ -317,7 +317,7 @@
                   </b-button>
                   <b-button
                     size="is-small"
-                    icon-left=" github-circle iconfont icon-share"
+                    icon-left="share-variant"
                     outlined
                     type="is-success"
                     @click="handleClickShare(props.row)"
@@ -331,9 +331,7 @@
         </b-tab-item>
         <b-tab-item
           label="SERVER"
-          :icon="`${
-            connectedServerInTab['server'] ? ' iconfont icon-dian' : ''
-          }`"
+          :icon="connectedServerInTab['server'] ? 'circle-medium' : ''"
         >
           <b-field :label="`SERVER(${tableData.servers.length})`">
             <b-table
@@ -434,11 +432,7 @@
                   <b-button
                     v-else
                     size="is-small"
-                    :icon-left="` github-circle iconfont ${
-                      props.row.connected
-                        ? 'icon-Link_disconnect'
-                        : 'icon-lianjie'
-                    }`"
+                    :icon-left="props.row.connected ? 'link-variant-off' : 'link-variant'"
                     :outlined="!props.row.connected"
                     :type="props.row.connected ? 'is-warning' : 'is-primary'"
                     @click="handleClickAboutConnection(props.row)"
@@ -451,7 +445,7 @@
                   </b-button>
                   <b-button
                     size="is-small"
-                    icon-left=" github-circle iconfont icon-wendangxiugai"
+                    icon-left="pencil"
                     :outlined="!props.row.connected"
                     type="is-info"
                     @click="handleClickModifyServer(props.row)"
@@ -460,7 +454,7 @@
                   </b-button>
                   <b-button
                     size="is-small"
-                    icon-left=" github-circle iconfont icon-share"
+                    icon-left="share-variant"
                     :outlined="!props.row.connected"
                     type="is-success"
                     @click="handleClickShare(props.row)"
@@ -478,11 +472,7 @@
           :label="
             (sub.remarks && sub.remarks.toUpperCase()) || sub.host.toUpperCase()
           "
-          :icon="`${
-            connectedServerInTab['subscriptionServer'][subi]
-              ? ' iconfont icon-dian'
-              : ''
-          }`"
+          :icon="connectedServerInTab['subscriptionServer'][subi] ? 'circle-medium' : ''"
         >
           <b-field
             v-if="tab === subi + 2"
@@ -589,11 +579,7 @@
                   <b-button
                     v-else
                     size="is-small"
-                    :icon-left="` github-circle iconfont ${
-                      props.row.connected
-                        ? 'icon-Link_disconnect'
-                        : 'icon-lianjie'
-                    }`"
+                    :icon-left="props.row.connected ? 'link-variant-off' : 'link-variant'"
                     :outlined="!props.row.connected"
                     :type="props.row.connected ? 'is-warning' : 'is-primary'"
                     @click="handleClickAboutConnection(props.row, subi)"
@@ -670,7 +656,7 @@
       </b-tabs>
     </div>
     <b-loading v-else :is-full-page="true" :active="true">
-      <i class="iconfont icon-loading_ico-copy" />
+      <i class="mdi mdi-loading mdi-spin" aria-hidden="true" />
     </b-loading>
     <b-modal
       :active.sync="showModalServer"
@@ -785,6 +771,7 @@
     </b-modal>
     <input
       id="QRCodeImport"
+      ref="qrCodeImport"
       type="file"
       style="display: none"
       accept="image/*"
@@ -806,7 +793,7 @@
           <b-input
             ref="importInput"
             v-model="importWhat"
-            icon-right=" iconfont icon-camera"
+            icon-right="camera"
             icon-right-clickable
             @icon-right-click="handleClickImportQRCode"
             @keyup.native="handleImportEnter"
@@ -907,10 +894,7 @@
 <script>
 import { locateServer, handleResponse } from "@/assets/js/utils";
 import CONST from "@/assets/js/const";
-import QRCode from "qrcode";
 import { Decoder } from "@nuintun/qrcode";
-import ClipboardJS from "clipboard";
-import { Base64 } from "js-base64";
 import ModalServer from "@/components/modalServer";
 import ModalSubscription from "@/components/modalSubcription";
 import modalConnections from "@/components/modalConnections";
@@ -921,7 +905,7 @@ import axios from "@/plugins/axios";
 import dayjs from "dayjs";
 
 export default {
-  name: "Node",
+  name: "NodeManager",
   components: { ModalSubscription, ModalServer },
   filters: {
     unix2datetime(x) {
@@ -990,7 +974,8 @@ export default {
       },
       connectedServerInfo: [],
       overHeight: false,
-      clipboard: null,
+      scrollTimer: null,
+      windowScrollHandler: null,
       coreVersionValid: true,
       coreVersionErr: "",
     };
@@ -1015,6 +1000,7 @@ export default {
       }
     },
     observatory(val) {
+      if (!val?.body?.outboundStatus) return;
       for (const info of val.body.outboundStatus) {
         this.connectedServerInfo.some((x) => {
           if (
@@ -1023,7 +1009,10 @@ export default {
             info.which.sub === x.which.sub
           ) {
             for (const k in info) {
-              if (k === "which" || !info.hasOwnProperty(k)) {
+              if (
+                k === "which" ||
+                !Object.prototype.hasOwnProperty.call(info, k)
+              ) {
                 continue;
               }
               x.info[k] = info[k];
@@ -1082,39 +1071,32 @@ export default {
     loadTouch();
   },
   beforeDestroy() {
-    this.clipboard.destroy();
+    if (this.$refs.qrCodeImport) {
+      this.$refs.qrCodeImport.removeEventListener(
+        "change",
+        this.handleFileChange,
+        false
+      );
+    }
+    if (this.windowScrollHandler) {
+      window.removeEventListener("scroll", this.windowScrollHandler);
+    }
+    if (this.scrollTimer) clearTimeout(this.scrollTimer);
   },
   mounted() {
-    document
-      .querySelector("#QRCodeImport")
-      .addEventListener("change", this.handleFileChange, false);
-    this.clipboard = new ClipboardJS(".sharingAddressTag");
-    this.clipboard.on("success", (e) => {
-      this.$buefy.toast.open({
-        message: this.$t("common.success"),
-        type: "is-primary",
-        position: "is-top",
-        queue: false,
-      });
-      e.clearSelection();
-    });
-    this.clipboard.on("error", (e) => {
-      this.$buefy.toast.open({
-        message: this.$t("common.fail") + ", error:" + e.toLocaleString(),
-        type: "is-warning",
-        position: "is-top",
-        queue: false,
-      });
-    });
-    const that = this;
-    let scrollTimer = null;
-    window.addEventListener("scroll", (e) => {
-      clearTimeout(scrollTimer);
-      setTimeout(() => {
-        scrollTimer = null;
-        that.overHeight = e.target.scrollingElement.scrollTop > 50;
+    this.$refs.qrCodeImport.addEventListener(
+      "change",
+      this.handleFileChange,
+      false
+    );
+    this.windowScrollHandler = (e) => {
+      if (this.scrollTimer) clearTimeout(this.scrollTimer);
+      this.scrollTimer = setTimeout(() => {
+        this.scrollTimer = null;
+        this.overHeight = e.target.scrollingElement.scrollTop > 50;
       }, 100);
-    });
+    };
+    window.addEventListener("scroll", this.windowScrollHandler);
 
     // if lastNodeTab in the local storage, set it as the current tab.
     const { lastNodeTab } = localStorage;
@@ -1291,14 +1273,8 @@ export default {
     handleFileChange(e) {
       const that = this;
       const file = e.target.files[0];
-      let elem = document.querySelector("#QRCodeImport");
-      // eslint-disable-next-line no-self-assign
-      elem.outerHTML = elem.outerHTML;
-      this.$nextTick(() => {
-        document
-          .querySelector("#QRCodeImport")
-          .addEventListener("change", this.handleFileChange, false);
-      });
+      e.target.value = "";
+      if (!file) return;
       // console.log(file);
       if (!file.type.match(/image\/.*/)) {
         this.$buefy.toast.open({
@@ -1544,7 +1520,7 @@ export default {
       }
     },
     handleClickImportQRCode() {
-      document.querySelector("#QRCodeImport").click();
+      this.$refs.qrCodeImport.click();
     },
     handleClickImport() {
       this.showModalImport = true;
@@ -1618,7 +1594,7 @@ export default {
         cancelText: this.$t("operations.cancel"),
         type: "is-danger",
         hasIcon: true,
-        icon: " iconfont icon-alert",
+        icon: "alert-circle-outline",
         onConfirm: () => this.deleteSelectedServers(),
       });
     },
@@ -2271,7 +2247,7 @@ td {
 .node-section {
   margin-top: 1rem;
 
-  .iconfont {
+  .mdi {
     margin-right: 0.1em;
   }
 
@@ -2368,7 +2344,7 @@ td {
     display: none; //方案1
     margin: 0 0 0 -0.5em !important;
 
-    .iconfont {
+    .mdi {
       font-size: 32px;
       color: coral;
     }
@@ -2425,43 +2401,8 @@ table th {
   vertical-align: middle !important;
 }
 
-.dialog .mdi-.iconfont.icon-alert {
+.dialog .mdi-alert-circle-outline {
   font-size: 40px;
-}
-
-.qrcode#canvas {
-  min-height: 300px !important;
-  min-width: 300px !important;
-}
-
-$coverBackground: rgba(0, 0, 0, 0.6);
-.tag-cover {
-  height: 100%;
-  width: 100%;
-  position: absolute;
-  top: 0;
-  left: 0;
-  background-color: $coverBackground !important;
-  transition: all 0.5s ease;
-  cursor: pointer;
-  text-align: center;
-  line-height: 22px;
-  user-select: none;
-}
-
-#tag-cover-text {
-  color: findColorInvert($coverBackground);
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: calc(100% - 8px);
-  display: none;
-  justify-content: center;
-  align-items: center;
-  z-index: 1;
-  font-size: 12px;
-  pointer-events: none;
 }
 
 .mobile-small {

@@ -1,5 +1,4 @@
 import axios from "../../plugins/axios";
-import Vue from "vue";
 import { handleResponse } from "./utils";
 
 // 如果节点已连接，reload页面
@@ -36,7 +35,7 @@ function waitingConnected(promise, interval, cancel, timeout) {
         );
       })
       .catch((err) => {
-        if (err.response.status === 401) {
+        if (err.response?.status === 401) {
           clearInterval(timer);
           cancel && cancel();
         }

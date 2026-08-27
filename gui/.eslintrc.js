@@ -19,4 +19,13 @@ module.exports = {
   globals: {
     apiRoot: true,
   },
+
+  overrides: [
+    {
+      files: ["**/*.spec.js"],
+      env: {
+        jest: true,
+      },
+    },
+  ],
 };

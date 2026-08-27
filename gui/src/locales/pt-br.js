@@ -3,7 +3,7 @@ export default {
     outboundSetting: "Configuração de Saída",
     setting: "Configuração",
     about: "Sobre",
-    loggedAs: "Logado como <b>{username}</b>",
+    loggedAs: "Logado como {username}",
     v2rayCoreStatus: "Status do v2ray-core",
     checkRunning: "Verificando",
     isRunning: "Executando",
@@ -326,6 +326,23 @@ export default {
     addMessage: "Digite o nome do destino de saída que deseja adicionar:",
     deleteMessage:
       'Tem certeza de que deseja <b>EXCLUIR</b> o destino de saída "{outboundName}"? Essa ação não pode ser desfeita.',
+  },
+  proxyGroup: {
+    pickTitle: "Adicionar ao grupo de proxy",
+    pickMessage: "Escolha o grupo de proxy para este nó.",
+    group: "Grupo de proxy",
+    searchPlaceholder: "Pesquisar nós…",
+    emptyNodes: "Nenhum nó",
+  },
+  driver: {
+    welcome: [
+      "Importe seu primeiro servidor",
+      "Você ainda não possui servidores. Importe ou crie um servidor aqui.",
+    ],
+    tabs: [
+      "Assinaturas e servidores",
+      "Alterne e gerencie assinaturas, servidores independentes e servidores de assinaturas aqui.",
+    ],
   },
   log: {
     logModalTitle: "Visualizar logs",

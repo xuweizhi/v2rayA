@@ -3,7 +3,7 @@ export default {
     outboundSetting: "Proxy Group Setting",
     setting: "Setting",
     about: "About",
-    loggedAs: "Logged as <b>{username}</b>",
+    loggedAs: "Logged as {username}",
     v2rayCoreStatus: "Status of v2ray-core",
     checkRunning: "Checking",
     isRunning: "Running",
@@ -493,6 +493,18 @@ export default {
     pickTitle: "Add to Proxy Group",
     pickMessage: "Choose the proxy group this node should join.",
     group: "Proxy Group",
+    searchPlaceholder: "Search nodes…",
+    emptyNodes: "No nodes",
+  },
+  driver: {
+    welcome: [
+      "Import your first server",
+      "You do not have any servers yet. Import or create one here.",
+    ],
+    tabs: [
+      "Subscriptions and servers",
+      "Switch between and manage subscriptions, standalone servers, and subscription servers here.",
+    ],
   },
   log: {
     logModalTitle: "View logs",

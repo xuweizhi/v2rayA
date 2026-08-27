@@ -3,7 +3,7 @@ export default {
     outboundSetting: "代理分组设置",
     setting: "设置",
     about: "关于",
-    loggedAs: "正在以 <b>{username}</b> 的身份登录",
+    loggedAs: "正在以 {username} 的身份登录",
     v2rayCoreStatus: "v2ray-core状态",
     checkRunning: "检测中",
     isRunning: "正在运行",
@@ -485,6 +485,8 @@ export default {
     pickTitle: "添加到代理分组",
     pickMessage: "选择要加入的代理分组。",
     group: "代理分组",
+    searchPlaceholder: "搜索节点…",
+    emptyNodes: "暂无节点",
   },
   driver: {
     welcome: [

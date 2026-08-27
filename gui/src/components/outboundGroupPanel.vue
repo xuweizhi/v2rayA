@@ -27,7 +27,12 @@
               'ogp-group-row--current': outbound === currentOutbound,
               'ogp-group-row--open': expandedGroup === outbound,
             }"
+            role="button"
+            tabindex="0"
+            :aria-expanded="String(expandedGroup === outbound)"
             @click="handleClickGroup(outbound)"
+            @keydown.enter.prevent="handleClickGroup(outbound)"
+            @keydown.space.prevent="handleClickGroup(outbound)"
           >
             <span class="ogp-group-label">
               <span
@@ -82,18 +87,30 @@
                 <span
                   class="mdi mdi-close ogp-node-del"
                   :title="$t('operations.disconnect')"
+                  :aria-label="$t('operations.disconnect')"
+                  role="button"
+                  tabindex="0"
                   @click.stop="disconnectNode(node)"
+                  @keydown.enter.prevent.stop="disconnectNode(node)"
+                  @keydown.space.prevent.stop="disconnectNode(node)"
                 ></span>
               </div>
               <div v-if="!getGroupNodes(outbound).length" class="ogp-nodes-empty">
-                {{ $t("common.empty") || "暂无节点" }}
+                {{ $t("proxyGroup.emptyNodes") }}
               </div>
             </div>
           </div>
         </div>
 
         <hr class="dropdown-divider" style="margin: 4px 0" />
-        <div class="ogp-group-row ogp-group-row--add" @click.stop="$emit('add-outbound')">
+        <div
+          class="ogp-group-row ogp-group-row--add"
+          role="button"
+          tabindex="0"
+          @click.stop="$emit('add-outbound')"
+          @keydown.enter.prevent.stop="$emit('add-outbound')"
+          @keydown.space.prevent.stop="$emit('add-outbound')"
+        >
           <span class="mdi mdi-plus"></span> {{ $t("operations.addOutbound") }}
         </div>
     </div>
@@ -112,7 +129,7 @@
         <section class="modal-card-body" style="min-height: 200px; max-height: 60vh; overflow-y: auto">
           <b-input
             v-model="nodeSearch"
-            placeholder="搜索节点..."
+            :placeholder="$t('proxyGroup.searchPlaceholder')"
             icon="magnify"
             style="margin-bottom: 0.75rem"
           ></b-input>
@@ -125,7 +142,12 @@
               :key="node.key"
               class="ogp-picker-row"
               :class="{ 'ogp-picker-row--highlight': isPickerNodeHighlighted(node) }"
+              role="checkbox"
+              tabindex="0"
+              :aria-checked="String(isPickerNodeHighlighted(node))"
               @click="toggleNode(node)"
+              @keydown.enter.prevent="toggleNode(node)"
+              @keydown.space.prevent="toggleNode(node)"
             >
               <span
                 class="mdi"
@@ -145,7 +167,7 @@
               </b-tag>
             </div>
             <div v-if="!filteredNodes.length && !loadingNodes" style="text-align: center; padding: 1rem; color: #888">
-              暂无节点
+              {{ $t("proxyGroup.emptyNodes") }}
             </div>
           </template>
         </section>
@@ -342,7 +364,9 @@ export default {
           this.touchData = res.data.data.touch;
           this.isCoreRunning = !!res.data.data.running;
         }
-      } catch (_) {}
+      } catch (err) {
+        console.debug("Unable to refresh proxy group state", err);
+      }
     },
     toggleMenu() {
       this.menuOpen = !this.menuOpen;
@@ -468,7 +492,15 @@ export default {
         });
         await this.fetchTouchData();
         this.$emit("changed");
-      } catch (_) {}
+      } catch (err) {
+        this.$buefy.toast.open({
+          message: err?.response?.data?.message || err?.message || this.$t("common.fail"),
+          type: "is-warning",
+          position: "is-top",
+          duration: 5000,
+          queue: false,
+        });
+      }
     },
     async deleteGroup(outbound) {
       try {
@@ -569,6 +601,13 @@ export default {
       color: #4a9eff;
     }
   }
+}
+
+.ogp-group-row:focus-visible,
+.ogp-picker-row:focus-visible,
+.ogp-node-del:focus-visible {
+  outline: 2px solid #3273dc;
+  outline-offset: -2px;
 }
 
 .ogp-group-label {

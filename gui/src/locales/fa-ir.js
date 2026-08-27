@@ -3,7 +3,7 @@ export default {
     outboundSetting: "تنظیمات خروجی",
     setting: "تنظیمات",
     about: "درباره",
-    loggedAs: "خوش آمدید <b>{username}</b>",
+    loggedAs: "خوش آمدید {username}",
     v2rayCoreStatus: "وضعیت v2ray-core",
     checkRunning: "بررسی",
     isRunning: "درحال اجرا",
@@ -320,6 +320,23 @@ export default {
     addMessage: "لطفاً نام خروجی را که می خواهید اضافه کنید وارد کنید:",
     deleteMessage:
       'از حذف <b>DELETE</b> اطمینان دارید "{outboundName}"? این عمل غیرقابل بازگشت است',
+  },
+  proxyGroup: {
+    pickTitle: "افزودن به گروه پروکسی",
+    pickMessage: "گروه پروکسی مورد نظر برای این گره را انتخاب کنید.",
+    group: "گروه پروکسی",
+    searchPlaceholder: "جستجوی گره‌ها…",
+    emptyNodes: "هیچ گره‌ای وجود ندارد",
+  },
+  driver: {
+    welcome: [
+      "ابتدا یک سرور وارد کنید",
+      "هنوز سروری ندارید. یک سرور را در اینجا وارد یا ایجاد کنید.",
+    ],
+    tabs: [
+      "اشتراک‌ها و سرورها",
+      "اشتراک‌ها، سرورهای مستقل و سرورهای اشتراک را در اینجا مدیریت کنید.",
+    ],
   },
   log: {
     logModalTitle: "دیدن لاگ ها",

@@ -88,7 +88,7 @@ export default {
         cancelText: that.$t("operations.cancel"),
         type: "is-danger",
         hasIcon: true,
-        icon: " iconfont icon-alert",
+        icon: "alert-circle-outline",
         onConfirm: () => {
           that.$emit("delete");
           that.$parent.close();
@@ -98,7 +98,7 @@ export default {
     handleClickSubmit() {
       let valid = true;
       for (let k in this.$refs) {
-        if (!this.$refs.hasOwnProperty(k)) {
+        if (!Object.prototype.hasOwnProperty.call(this.$refs, k)) {
           continue;
         }
         let x = this.$refs[k];
@@ -107,7 +107,6 @@ export default {
         }
         if (
           x.$el.offsetParent && // is visible
-          x.hasOwnProperty("checkHtml5Validity") &&
           typeof x.checkHtml5Validity === "function" &&
           !x.checkHtml5Validity()
         ) {
@@ -118,7 +117,6 @@ export default {
       if (!valid) {
         return;
       }
-      const that = this;
       this.$axios({
         url: apiRoot + "/outbound",
         method: "put",

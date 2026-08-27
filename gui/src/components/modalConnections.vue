@@ -41,7 +41,11 @@
           <span
             class="code-font dest-cell"
             :title="$t('connections.copyDest')"
+            role="button"
+            tabindex="0"
             @click="copyText(p.row.dest)"
+            @keydown.enter.prevent="copyText(p.row.dest)"
+            @keydown.space.prevent="copyText(p.row.dest)"
           >
             {{ p.row.dest }}
           </span>
@@ -168,41 +172,74 @@ export default {
       const pad = (n) => String(n).padStart(2, "0");
       return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     },
-    copyText(text) {
+    async copyText(text) {
       if (!text) return;
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(() => {
-          this.$buefy.toast.open({
-            message: this.$t("common.success"),
-            type: "is-primary",
-            position: "is-top",
-            duration: 1500,
-            queue: false,
-          });
+      try {
+        if (window.isSecureContext && navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          textarea.setAttribute("readonly", "");
+          textarea.style.position = "fixed";
+          textarea.style.opacity = "0";
+          document.body.appendChild(textarea);
+          textarea.select();
+          const copied = document.execCommand("copy");
+          document.body.removeChild(textarea);
+          if (!copied) throw new Error("Copy command failed");
+        }
+        this.$buefy.toast.open({
+          message: this.$t("common.success"),
+          type: "is-primary",
+          position: "is-top",
+          duration: 1500,
+          queue: false,
+        });
+      } catch (err) {
+        this.$buefy.toast.open({
+          message: `${this.$t("common.fail")}: ${err.message}`,
+          type: "is-warning",
+          position: "is-top",
+          duration: 3000,
+          queue: false,
         });
       }
     },
     destHost(row) {
-      const dest = (row.dest || "").replace(/^(tcp|udp):/, "");
-      if (/^https?:\/\//.test(dest)) {
-        try {
-          return new URL(dest).hostname;
-        } catch (e) {
+      const dest = (row.dest || "")
+        .trim()
+        .replace(/^(tcp|udp):(?:\/\/)?/i, "");
+      if (!dest) return null;
+      try {
+        const parsed = new URL(
+          /^[a-z][a-z\d+.-]*:\/\//i.test(dest) ? dest : `http://${dest}`
+        );
+        const host = parsed.hostname.replace(/\.$/, "");
+        if (
+          !host ||
+          host === "localhost" ||
+          host.includes(":") ||
+          host.startsWith("[") ||
+          /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)
+        ) {
           return null;
         }
-      }
-      const host = dest.split(":")[0];
-      if (host && !/^\d+\.\d+\.\d+\.\d+$/.test(host) && host.indexOf(":") < 0) {
         return host;
+      } catch (_) {
+        return null;
       }
-      return null;
     },
     openCreateRule(row) {
       const host = this.destHost(row);
       if (!host) return;
       // Create a suffix rule like "domain:example.com" for the DNS module.
       this.newRule.domains = "domain:" + host;
-      this.newRule.outbound = row.outbound === "direct" ? "direct" : "proxy";
+      this.newRule.outbound = this.outbounds.includes(row.outbound)
+        ? row.outbound
+        : row.outbound === "direct"
+        ? "direct"
+        : "proxy";
       this.showRuleDialog = true;
     },
     createRule() {
@@ -240,3 +277,49 @@ export default {
   },
 };
 </script>
+
+<style lang="scss" scoped>
+.conn-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.conn-note {
+  color: #777;
+  font-size: 0.8rem;
+}
+
+.dest-cell {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  color: #3273dc;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dest-cell:focus-visible {
+  outline: 2px solid #3273dc;
+  outline-offset: 2px;
+}
+
+@media screen and (max-width: 600px) {
+  .modal-card {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem) !important;
+  }
+
+  .conn-toolbar .control {
+    width: 100%;
+    max-width: none !important;
+  }
+
+  .conn-note {
+    flex-basis: 100%;
+  }
+}
+</style>

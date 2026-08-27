@@ -1,7 +1,7 @@
 <template>
   <div
     class="modal-card modal-configure-pac"
-    style="max-width: 550px; height: 700px; margin: auto"
+    style="max-width: 550px; margin: auto"
   >
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("customRouting.title") }}</p>
@@ -26,12 +26,16 @@
       <b-message type="is-success" class="after-line-dot5">
         <p>{{ $t("customRouting.messages.2") }}</p>
       </b-message>
-      <b-collapse class="card">
+      <b-collapse ref="defaultCollapse" class="card">
         <div
           slot="trigger"
           slot-scope="props"
           class="card-header"
           role="button"
+          tabindex="0"
+          :aria-expanded="String(props.open)"
+          @keydown.enter.prevent.stop="toggleCollapse(-1)"
+          @keydown.space.prevent.stop="toggleCollapse(-1)"
         >
           <p class="card-header-title">
             {{ $t("customRouting.defaultRoutingRule") }}
@@ -55,6 +59,7 @@
       </b-collapse>
       <b-collapse
         v-for="(rule, index) of customPac.routingRules"
+        ref="ruleCollapses"
         :key="rule.value"
         class="card"
       >
@@ -63,6 +68,10 @@
           slot-scope="props"
           class="card-header"
           role="button"
+          tabindex="0"
+          :aria-expanded="String(props.open)"
+          @keydown.enter.prevent.stop="toggleCollapse(index)"
+          @keydown.space.prevent.stop="toggleCollapse(index)"
         >
           <p class="card-header-title" style="position: relative">
             <span>{{ `${$t("customRouting.rule")}${index + 1}` }}</span>
@@ -70,16 +79,14 @@
               type="is-text"
               size="is-small"
               style="position: absolute; right: 0"
-              @click="handleClickDeleteRule(...arguments, index)"
+              @click.stop="handleClickDeleteRule(...arguments, index)"
               >{{ $t("operations.delete") }}</b-button
             >
           </p>
           <a class="card-header-icon">
             <b-icon
               :icon="
-                props.open
-                  ? ' iconfont icon-caret-down'
-                  : ' iconfont icon-caret-up'
+                props.open ? 'menu-down' : 'menu-up'
               "
             >
             </b-icon>
@@ -159,14 +166,7 @@
       </b-collapse>
     </section>
     <footer class="modal-card-foot">
-      <div
-        style="
-          position: relative;
-          display: flex;
-          justify-content: flex-end;
-          width: 100%;
-        "
-      >
+      <div class="routing-footer-actions">
         <button class="button btn-new" type="button" @click="handleNew">
           {{ $t("customRouting.appendRule") }}
         </button>
@@ -242,6 +242,13 @@ export default {
     })();
   },
   methods: {
+    toggleCollapse(index) {
+      const collapse =
+        index < 0
+          ? this.$refs.defaultCollapse
+          : this.$refs.ruleCollapses?.[index];
+      if (collapse) collapse.toggle();
+    },
     handleNew() {
       this.customPac.routingRules.push({
         filename: this.firstSiteDatFilename,
@@ -287,10 +294,53 @@ export default {
 </script>
 
 <style lang="scss" scoped>
+.modal-configure-pac {
+  width: 550px;
+  max-width: calc(100vw - 1rem) !important;
+  max-height: calc(100vh - 2rem);
+}
+
+.modal-configure-pac > .rules {
+  height: auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.routing-footer-actions {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 0.5rem;
+}
+
 .btn-new {
-  position: absolute;
-  left: 0;
-  top: 0;
+  margin-right: auto;
+}
+
+.card-header:focus-visible {
+  outline: 2px solid #3273dc;
+  outline-offset: 2px;
+}
+
+@media screen and (max-width: 480px) {
+  .modal-configure-pac {
+    max-height: calc(100vh - 1rem);
+  }
+
+  .modal-card-head,
+  .modal-card-body,
+  .modal-card-foot {
+    padding: 0.75rem;
+  }
+
+  .routing-footer-actions {
+    flex-wrap: wrap;
+  }
+
+  .btn-new {
+    flex-basis: 100%;
+    margin-right: 0;
+  }
 }
 </style>
 <style lang="scss">

@@ -507,7 +507,7 @@
             <template slot="label">
               Impl
               <b-tooltip type="is-dark" :label="$t('setting.messages.ssPluginImpl')" multilined position="is-right">
-                <b-icon size="is-samll" icon=" iconfont icon-help-circle-outline" style="
+                <b-icon size="is-small" icon="help-circle-outline" style="
                     position: relative;
                     top: 2px;
                     right: 3px;
@@ -1928,7 +1928,7 @@ export default {
     async handleClickSubmit() {
       let valid = true;
       for (let k in this.$refs) {
-        if (!this.$refs.hasOwnProperty(k)) {
+        if (!Object.prototype.hasOwnProperty.call(this.$refs, k)) {
           continue;
         }
         if (this.tabChoice === 0 && !k.startsWith("v2ray_")) {
@@ -1973,7 +1973,6 @@ export default {
         }
         if (
           x.$el.offsetParent && // is visible
-          x.hasOwnProperty("checkHtml5Validity") &&
           typeof x.checkHtml5Validity === "function" &&
           !x.checkHtml5Validity()
         ) {

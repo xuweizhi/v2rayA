@@ -6,20 +6,20 @@
     <section class="modal-card-body">
       <b-field label="SUBSCRIPTION">
         <b-input
-          v-model="which.address"
+          v-model="form.address"
           type="textarea"
           :placeholder="$t('subscription.subscription')"
         />
       </b-field>
       <b-field label="REMARKS">
         <b-input
-          v-model="which.remarks"
+          v-model="form.remarks"
           :placeholder="$t('subscription.remarks')"
         />
       </b-field>
       <b-field :label="$t('subscription.decryptPassword')">
         <b-input
-          v-model="which.decryptPassword"
+          v-model="form.decryptPassword"
           type="password"
           password-reveal
           :placeholder="$t('import.passwordPlaceholder')"
@@ -58,10 +58,9 @@
         <b-input v-model.number="extra.updateIntervalHour" type="number" min="0" />
       </b-field>
       <b-field label="AUTO-SELECT">
-        <b-checkbox
-	  v-model="which.autoSelect"
-	  >{{ $t("subscription.autoSelect") }}
-	</b-checkbox>
+        <b-checkbox v-model="form.autoSelect">
+          {{ $t("subscription.autoSelect") }}
+        </b-checkbox>
       </b-field>
     </section>
     <footer class="modal-card-foot flex-end">
@@ -82,20 +81,27 @@ export default {
     which: {
       type: Object,
       default() {
-        return null;
+        return {};
       },
     },
   },
+  data() {
+    const source = this.which || {};
+    return {
+      form: {
+        ...source,
+        extra: { ...(source.extra || {}) },
+      },
+    };
+  },
   computed: {
     extra() {
-      if (!this.which) return {};
-      if (!this.which.extra) this.which.extra = {};
-      return this.which.extra;
+      return this.form.extra;
     },
   },
   methods: {
     handleClickSubmit() {
-      this.$emit("submit", this.which);
+      this.$emit("submit", this.form);
     },
   },
 };

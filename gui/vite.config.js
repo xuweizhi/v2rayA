@@ -28,6 +28,30 @@ export default defineConfig(({ mode }) => ({
     sourcemap: false,
     assetsDir: "static",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (
+            id.includes("/vue/") ||
+            id.includes("/vuex/") ||
+            id.includes("/vue-i18n/") ||
+            id.includes("/vue-router/")
+          ) {
+            return "vue-vendor";
+          }
+          if (
+            id.includes("/buefy/") ||
+            id.includes("/vue-virtual-scroller/")
+          ) {
+            return "ui-vendor";
+          }
+          if (id.includes("highlight.js")) return "highlight-vendor";
+          if (id.includes("qrcode")) return "qrcode-vendor";
+          return "vendor";
+        },
+      },
+    },
   },
   base: process.env.publicPath || (mode === "production" ? "./" : "/"),
 }));
