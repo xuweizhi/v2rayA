@@ -292,15 +292,20 @@
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | 1 | 第一梯队全部（3.1~3.6 订阅/节点管理） | ✅ 完成（commit 1dd39964） |
-| 2 | 4.2 规则命中检测 + 4.5 网络变化重测 + mux/brutal 参数兼容 | ✅ 完成（commit 94a3deef；SS2022 需核心支持，暂缓） |
-| 3 | 4.4 DNS 一键测速择优 | ✅ 完成（commit e7188a1d；4.1 规则模型一期：DNS 规则出站已支持任意节点/组，完整路由规则 UI 重设计留待后续） |
+| 2 | 4.2 规则命中检测 + 4.5 网络变化重测 + mux/brutal 参数兼容 | ✅ 完成（commit 94a3deef） |
+| 3 | 4.4 DNS 一键测速择优 | ✅ 完成（commit e7188a1d；4.1 规则模型一期：DNS 规则出站已支持任意节点/组） |
 | 4 | 6.1 备份 + 6.3 诊断报告 + 6.2 公告 | ✅ 完成（commit 6369f1fd） |
-| 5 | 4.3 连接监控 + 5.1 ShadowTLS v3 | ✅ 完成（commit d1b9741c；含 uTLS fork） |
-| 6 | 6.4 分享/二维码（已有）；连接监控搜索 + 一键创建 DNS 分流规则 | ✅ 完成（最终批次） |
+| 5 | 4.3 连接监控 + 5.1 ShadowTLS v3 | ✅ 完成（commit d1b9741c、a05a8e8f；含 uTLS fork） |
+| 6 | 6.4 分享/二维码（已有）；连接监控搜索 + 一键创建 DNS 分流规则 | ✅ 完成（commit a05a8e8f） |
+| 7 | SS2022（注册核心自带 shadowsocks_2022 出站并实测互操作）+ httpupgrade 传输 + 新手模式 + WebDAV 备份/恢复（真实容器实测） | ✅ 完成（commit aefd4a12） |
+| 8 | 4.1 三期路由规则 UI + hy2 端口跳跃/brutal 带宽 + tlsfragment/tls-tricks 解析兼容 + PQ 指纹 | ✅ 完成（commit c5f0946d 及子模块 bump） |
 
-未排期项：新手模式（低风险，纯 GUI）、SS2022 核心实现（约 2~3 人日，有参考实现）、4.1 二期/三期完整路由规则 UI（需兼容迁移）。
+已完成但超出本方案的原生能力：mieru 协议、加密订阅（subscription-encryption）、VLESS ML-KEM 加密参数透传。
 
-已明确剔除需求：per-app/进程级代理——v2rayA 以网关部署为主，实现需 cgroup/eBPF 级路由且与 tproxy 深度耦合、故障影响面大，风险收益比不划算，长期不做。
+剩余项：
+- 新手模式已上线（默认开启，设置中可关）；规则命中检测已覆盖"看流量走哪条路"的核心诉求。
+- 暂缓：SS2022 服务端入站联调已可用、tlsfragment/tls-tricks 核心级实现（当前解析保留+忽略提示）、generic smux/yamux multiplex 核心 5 人日+。
+- 已明确剔除需求：per-app/进程级代理——v2rayA 以网关部署为主，实现需 cgroup/eBPF 级路由且与 tproxy 深度耦合、故障影响面大，风险收益比不划算，长期不做。
 
 ---
 

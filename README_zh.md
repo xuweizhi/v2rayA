@@ -2,7 +2,7 @@
 
 [**English**](https://github.com/v2rayA/v2rayA/blob/main/README.md)&nbsp;&nbsp;&nbsp;[**简体中文**](https://github.com/v2rayA/v2rayA/blob/main/README_zh.md)
 
-v2rayA 是一个支持全局透明代理的 V2Ray 客户端，同时兼容 SS、SSR、Trojan(trojan-go)、Tuic 与 [Juicity](https://github.com/juicity)协议。 [[SSR支持清单]](https://github.com/v2rayA/dist/shadowsocksR/blob/master/README.md#ss-encrypting-algorithm)
+v2rayA 是一个支持全局透明代理的 V2Ray 客户端，同时兼容 SS（含 Shadowsocks 2022）、SSR、Trojan(trojan-go)、VLESS ML-KEM 加密、Tuic、AnyTLS、ShadowTLS v3、Hysteria2、Mieru 与 [Juicity](https://github.com/juicity) 协议，并支持 Clash YAML 订阅、加密订阅与 httpupgrade 等传输。 [[SSR支持清单]](https://github.com/v2rayA/dist/shadowsocksR/blob/master/README.md#ss-encrypting-algorithm)
 
 v2rayA 致力于提供最简单的操作，满足绝大部分需求。
 

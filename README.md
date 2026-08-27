@@ -2,7 +2,7 @@
 
 [**English**](https://github.com/v2rayA/v2rayA/blob/main/README.md)&nbsp;&nbsp;&nbsp;[**简体中文**](https://github.com/v2rayA/v2rayA/blob/main/README_zh.md)
 
-v2rayA is a V2Ray client supporting global transparent proxy on Linux and system proxy on Windows and macOS, it is compatible with SS, SSR, Trojan(trojan-go), Tuic and [Juicity](https://github.com/juicity) protocols. [[SSR protocol list]](https://github.com/v2rayA/shadowsocksR/blob/main/README.md#ss-encrypting-algorithm)
+v2rayA is a V2Ray client supporting global transparent proxy on Linux and system proxy on Windows and macOS, it is compatible with SS (including Shadowsocks 2022), SSR, Trojan(trojan-go), VLESS ML-KEM encryption, Tuic, AnyTLS, ShadowTLS v3, Hysteria2, Mieru and [Juicity](https://github.com/juicity) protocols, plus Clash YAML subscriptions, password-protected (encrypted) subscriptions and the httpupgrade transport. [[SSR protocol list]](https://github.com/v2rayA/shadowsocksR/blob/main/README.md#ss-encrypting-algorithm)
 
 We are committed to providing the simplest operation and meet most needs.
 
