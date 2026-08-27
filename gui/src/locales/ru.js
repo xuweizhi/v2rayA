@@ -79,6 +79,8 @@ export default {
     connect: "Подключиться",
     disconnect: "Отключиться",
     select: "Выбрать",
+    addTo: "Добавить в",
+    added: "Добавлено",
     login: "Войти",
     logout: "Выйти",
     configure: "Настройка",

@@ -77,6 +77,8 @@ export default {
     connect: "Conectar",
     disconnect: "Desconectar",
     select: "Selecionar",
+    addTo: "Adicionar a",
+    added: "Adicionado",
     login: "Login",
     logout: "Logout",
     configure: "Configurar",

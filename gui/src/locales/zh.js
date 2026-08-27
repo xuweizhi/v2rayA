@@ -168,6 +168,7 @@ export default {
     disconnect: "断开",
     select: "选择",
     addTo: "添加到",
+    added: "已添加",
     addToProxyGroup: "加入分组 {group}",
     removeFromProxyGroup: "移出分组 {group}",
     favNode: "收藏",

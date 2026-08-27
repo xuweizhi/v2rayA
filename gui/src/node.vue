@@ -411,10 +411,22 @@
                       slot="trigger"
                       size="is-small"
                       type="is-primary"
-                      outlined
+                      :outlined="!isNodeInAnyOutbound(props.row, undefined)"
+                      :class="{
+                        'node-group-trigger--added': isNodeInAnyOutbound(
+                          props.row,
+                          undefined
+                        ),
+                      }"
                       icon-right="menu-down"
                     >
-                      {{ $t("operations.addTo") }}
+                      {{
+                        $t(
+                          isNodeInAnyOutbound(props.row, undefined)
+                            ? "operations.added"
+                            : "operations.addTo"
+                        )
+                      }}
                     </b-button>
                     <b-dropdown-item
                       v-for="group in outbounds"
@@ -558,10 +570,22 @@
                       slot="trigger"
                       size="is-small"
                       type="is-primary"
-                      outlined
+                      :outlined="!isNodeInAnyOutbound(props.row, subi)"
+                      :class="{
+                        'node-group-trigger--added': isNodeInAnyOutbound(
+                          props.row,
+                          subi
+                        ),
+                      }"
                       icon-right="menu-down"
                     >
-                      {{ $t("operations.addTo") }}
+                      {{
+                        $t(
+                          isNodeInAnyOutbound(props.row, subi)
+                            ? "operations.added"
+                            : "operations.addTo"
+                        )
+                      }}
                     </b-button>
                     <b-dropdown-item
                       v-for="group in outbounds"
@@ -1658,23 +1682,35 @@ export default {
       }
       return normalized;
     },
+    connectedTouches() {
+      const connected = this.runningState.connectedServer;
+      if (connected instanceof Array) {
+        return connected;
+      }
+      return connected ? [connected] : [];
+    },
+    isSameNodeTouch(row, sub, which) {
+      if (!which || which._type !== row._type || which.id !== row.id) {
+        return false;
+      }
+      if (row._type === "subscriptionServer") {
+        return which.sub === sub;
+      }
+      return true;
+    },
     // 判断某节点是否已连接到指定分组，用于下拉菜单黄色高亮
     isNodeInOutbound(row, sub, outboundName) {
-      return this.connectedServerInfo.some((x) => {
-        if (sub !== undefined) {
-          return (
-            x.which._type === "subscriptionServer" &&
-            x.which.id === row.id &&
-            x.which.sub === sub &&
-            x.which.outbound === outboundName
-          );
-        }
-        return (
-          x.which._type === "server" &&
-          x.which.id === row.id &&
-          x.which.outbound === outboundName
-        );
-      });
+      return this.connectedTouches().some(
+        (which) =>
+          this.isSameNodeTouch(row, sub, which) &&
+          (which.outbound || "proxy") === outboundName
+      );
+    },
+    // 节点加入任意代理分组后，将“添加到”按钮显示为已添加状态。
+    isNodeInAnyOutbound(row, sub) {
+      return this.connectedTouches().some((which) =>
+        this.isSameNodeTouch(row, sub, which)
+      );
     },
     openPickProxyGroup(row, sub) {
       const groups = this.normalizeProxyGroups(this.outbounds);
@@ -1753,8 +1789,7 @@ export default {
       const targetType = row._type;
       const targetSub = targetType === "subscriptionServer" ? sub : 0;
       const targetId = row.id;
-      const currentMembers = this.connectedServerInfo
-        .map((x) => x.which)
+      const currentMembers = this.connectedTouches()
         .filter((w) => (w.outbound || "proxy") === group)
         .map((w) => ({
           id: w.id,
@@ -2267,6 +2302,24 @@ td {
     margin-right: 0.3rem;
     font-size: 1rem;
     line-height: 1;
+  }
+
+  .node-group-trigger--added.button.is-primary {
+    background-color: #00695c;
+    border-color: #00695c;
+    color: #fff;
+    font-weight: 600;
+
+    &:hover,
+    &:focus {
+      background-color: #00574d;
+      border-color: #00574d;
+      color: #fff;
+    }
+
+    &:focus:not(:active) {
+      box-shadow: 0 0 0 0.125em rgba(0, 105, 92, 0.35);
+    }
   }
 }
 

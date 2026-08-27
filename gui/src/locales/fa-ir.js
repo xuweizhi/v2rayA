@@ -77,6 +77,8 @@ export default {
     connect: "اتصال",
     disconnect: "قطع اتصال",
     select: "انتخاب",
+    addTo: "افزودن به",
+    added: "اضافه شده",
     login: "وارد شدن",
     logout: "خارج شدن",
     configure: "پیکربندی شود",

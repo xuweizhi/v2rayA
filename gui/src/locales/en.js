@@ -169,6 +169,7 @@ export default {
     disconnect: "Disconnect",
     select: "Select",
     addTo: "Add to",
+    added: "Added",
     addToProxyGroup: "Add to group {group}",
     removeFromProxyGroup: "Remove from group {group}",
     favNode: "Favorite",
