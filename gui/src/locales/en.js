@@ -176,6 +176,7 @@ export default {
     disableNode: "Disable",
     enableNode: "Enable",
     removeNodeWithMemory: "Delete and keep removed after refresh",
+    removeNodeWithMemoryShort: "Delete and remember",
     removeNodeConfirm: "This node will be deleted and will not reappear after the subscription refreshes. Continue?",
     detectRule: "Detect Rule",
     connections: "Connections",

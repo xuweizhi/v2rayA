@@ -26,10 +26,22 @@
       <template slot="start"></template>
 
       <template slot="end">
-        <!--        <b-navbar-item tag="router-link" to="/node" :active="nav === 'node'">-->
-        <!--          <i class="iconfont icon-cloud" style="font-size: 1.4em"></i>-->
-        <!--          节点-->
-        <!--        </b-navbar-item>-->
+        <b-navbar-item tag="a" @click.native="openNodeAction('handleClickCreate')">
+          <i class="iconfont icon-chuangjiangongdan1" style="font-size: 1.25em"></i>
+          {{ $t("operations.create") }}
+        </b-navbar-item>
+        <b-navbar-item tag="a" @click.native="openNodeAction('handleClickImport')">
+          <i class="iconfont icon-daoruzupu-xianxing" style="font-size: 1.25em"></i>
+          {{ $t("operations.import") }}
+        </b-navbar-item>
+        <b-navbar-item v-if="!noviceMode" tag="a" @click.native="openNodeAction('openDetectRule')">
+          <i class="iconfont icon-chakandaorujilu" style="font-size: 1.25em"></i>
+          {{ $t("operations.detectRule") }}
+        </b-navbar-item>
+        <b-navbar-item v-if="!noviceMode" tag="a" @click.native="openNodeAction('handleClickConnections')">
+          <i class="iconfont icon-cloud" style="font-size: 1.25em"></i>
+          {{ $t("operations.connections") }}
+        </b-navbar-item>
         <b-navbar-item tag="a" @click.native="handleClickSetting">
           <i class="iconfont icon-setting" style="font-size: 1.25em"></i>
           {{ $t("common.setting") }}
@@ -76,7 +88,14 @@
         </b-dropdown>
       </template>
     </b-navbar>
-    <node ref="nodeRef" v-model="runningState" :outbound="outboundName" :outbounds="outbounds" :observatory="observatory" />
+    <node
+      ref="nodeRef"
+      v-model="runningState"
+      :outbound="outboundName"
+      :outbounds="outbounds"
+      :observatory="observatory"
+      @novice-mode-change="handleNoviceModeChange"
+    />
     <b-modal :active.sync="showCustomPorts" has-modal-card trap-focus aria-role="dialog" aria-modal
       class="modal-custom-ports">
       <ModalCustomAddress @close="showCustomPorts = false" />
@@ -125,6 +144,7 @@ export default {
         outboundToServerName: {},
       },
       showCustomPorts: false,
+      noviceMode: false,
       langs: [
         { code: "zh_CN", label: "中文-中国", flag: "zh" },
         { code: "en_US", label: "English-US", flag: "en" },
@@ -270,6 +290,18 @@ export default {
     }
   },
   methods: {
+    openNodeAction(method) {
+      const nodeRef = this.$refs.nodeRef;
+      if (nodeRef && typeof nodeRef[method] === "function") {
+        nodeRef[method]();
+      }
+    },
+    handleNoviceModeChange(novice) {
+      this.noviceMode = !!novice;
+      if (this.$refs.nodeRef) {
+        this.$refs.nodeRef.novice = this.noviceMode;
+      }
+    },
     showLoginModal(first) {
       this.loginModalFirst = first;
       this.loginModalActive = true;
@@ -545,6 +577,9 @@ export default {
         events: {
           clickPorts() {
             that.showCustomPorts = true;
+          },
+          "novice-change"(novice) {
+            that.handleNoviceModeChange(novice);
           },
         },
       });

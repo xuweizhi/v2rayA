@@ -175,6 +175,7 @@ export default {
     disableNode: "禁用",
     enableNode: "启用",
     removeNodeWithMemory: "删除并记忆（刷新后不恢复）",
+    removeNodeWithMemoryShort: "删除并记忆",
     removeNodeConfirm: "该节点将被删除，且订阅刷新后不会重新出现。是否继续？",
     detectRule: "路由检测",
     connections: "连接监控",

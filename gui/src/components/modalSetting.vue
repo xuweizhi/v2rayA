@@ -18,11 +18,12 @@
         </b-button>
       </b-field>
       <hr class="dropdown-divider" style="margin: 1.25rem 0 1.25rem" />
-      <b-field :label="$t('setting.noviceMode')" label-position="on-border">
+      <fieldset class="novice-mode-field">
+        <legend class="novice-mode-field__title">{{ $t("setting.noviceMode") }}</legend>
         <b-checkbox v-model="novice" :native-value="true">
           {{ $t("setting.noviceModeDesc") }}
         </b-checkbox>
-      </b-field>
+      </fieldset>
       <b-field label-position="on-border" class="with-icon-alert">
         <template slot="label">
           {{ $t("setting.transparentProxy") }}
@@ -347,8 +348,8 @@
         </b-select>
       </b-field>
     </section>
-    <footer class="modal-card-foot flex-end">
-      <div class="footer-absolute-left" style="display: flex; gap: 8px;">
+    <footer class="modal-card-foot modal-setting-footer">
+      <div class="modal-setting-footer__secondary">
         <button class="button" type="button" @click="$emit('clickPorts')">
           {{ $t("customAddressPort.title") }}
         </button>
@@ -371,12 +372,14 @@
           </b-tag>
         </button>
       </div>
-      <button class="button" type="button" @click="$parent.close()">
-        {{ $t("operations.cancel") }}
-      </button>
-      <button class="button is-primary" @click="handleClickSubmit">
-        {{ $t("operations.saveApply") }}
-      </button>
+      <div class="modal-setting-footer__primary">
+        <button class="button" type="button" @click="$parent.close()">
+          {{ $t("operations.cancel") }}
+        </button>
+        <button class="button is-primary" @click="handleClickSubmit">
+          {{ $t("operations.saveApply") }}
+        </button>
+      </div>
     </footer>
   </div>
 </template>
@@ -649,6 +652,7 @@ export default {
               position: "is-top",
               queue: false,
             });
+            this.$emit("novice-change", this.novice);
             this.$parent.close();
           });
           if (
@@ -836,11 +840,6 @@ export default {
   border-radius: 4px 0 0 4px !important;
 }
 
-.footer-absolute-left {
-  position: absolute;
-  left: 20px;
-}
-
 .left-border select {
   border-radius: 4px 0 0 4px !important;
 }
@@ -854,8 +853,60 @@ export default {
 }
 
 .modal-setting {
+  .novice-mode-field {
+    min-width: 0;
+    margin: 0 0 1.25rem;
+    padding: 0.65rem 0.9rem 0.8rem;
+    border: 1px solid #dbdbdb;
+    border-radius: 4px;
+  }
+
+  .novice-mode-field__title {
+    padding: 0 0.35rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
   .b-checkbox.checkbox {
     margin-right: 0;
+  }
+}
+
+.modal-setting-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+
+  .button {
+    margin: 0 !important;
+  }
+}
+
+.modal-setting-footer__secondary {
+  display: flex;
+  flex: 1 1 30rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.modal-setting-footer__primary {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+body.theme-dark .modal-setting .novice-mode-field {
+  border-color: var(--md-surface-variant);
+}
+
+@media screen and (max-width: 600px) {
+  .modal-setting-footer__primary {
+    width: 100%;
+    justify-content: flex-end;
   }
 }
 </style>

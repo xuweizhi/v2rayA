@@ -85,6 +85,12 @@
     </b-message>
     <div v-if="ready" class="hero-body">
       <b-field
+        v-if="
+          overHeight ||
+          isCheckedRowsPingable() ||
+          isCheckedRowsDeletable() ||
+          isCheckedRowsExportable()
+        "
         id="toolbar"
         grouped
         group-multiline
@@ -162,44 +168,6 @@
               {{ $t("operations.downloadTxt") }}
             </b-dropdown-item>
           </b-dropdown>
-        </div>
-        <div class="right">
-          <b-button
-            class="field mobile-small"
-            type="is-primary"
-            @click="handleClickCreate"
-          >
-            <i class="iconfont icon-chuangjiangongdan1" />
-            <span>{{ $t("operations.create") }}</span>
-          </b-button>
-          <b-button
-            class="field mobile-small"
-            type="is-primary"
-            @click="handleClickImport"
-          >
-            <i class="iconfont icon-daoruzupu-xianxing" />
-            <span>{{ $t("operations.import") }}</span>
-          </b-button>
-          <b-button
-            v-if="!novice"
-            class="field mobile-small"
-            type="is-info"
-            outlined
-            @click="showModalDetectRule = true"
-          >
-            <i class="iconfont icon-chakandaorujilu" />
-            <span>{{ $t("operations.detectRule") }}</span>
-          </b-button>
-          <b-button
-            v-if="!novice"
-            class="field mobile-small"
-            type="is-info"
-            outlined
-            @click="handleClickConnections"
-          >
-            <i class="iconfont icon-cloud" />
-            <span>{{ $t("operations.connections") }}</span>
-          </b-button>
         </div>
       </b-field>
 
@@ -445,6 +413,7 @@
                       slot="trigger"
                       size="is-small"
                       type="is-primary"
+                      outlined
                       icon-right="menu-down"
                     >
                       {{ $t("operations.addTo") }}
@@ -588,7 +557,7 @@
                 :label="$t('operations.name')"
                 sortable
                 :custom-sort="sortConnections"
-                width="300"
+                width="620"
               >
                 <div class="operate-box">
                   <b-dropdown
@@ -599,6 +568,7 @@
                       slot="trigger"
                       size="is-small"
                       type="is-primary"
+                      outlined
                       icon-right="menu-down"
                     >
                       {{ $t("operations.addTo") }}
@@ -636,46 +606,62 @@
                   </b-button>
                   <b-button
                     size="is-small"
-                    icon-left=" github-circle iconfont icon-winfo-icon-chakanbaogao"
-                    :outlined="!props.row.connected"
+                    outlined
                     type="is-info"
                     @click="handleClickViewServer(props.row, subi)"
                   >
+                    <i class="mdi mdi-eye-outline node-action-icon" aria-hidden="true"></i>
                     {{ $t("operations.view") }}
                   </b-button>
                   <b-button
                     size="is-small"
-                    icon-left=" github-circle iconfont icon-share"
-                    :outlined="!props.row.connected"
+                    outlined
                     type="is-success"
                     @click="handleClickShare(props.row, subi)"
                   >
+                    <i class="mdi mdi-share-variant node-action-icon" aria-hidden="true"></i>
                     {{ $t("operations.share") }}
                   </b-button>
                   <b-button
                     size="is-small"
                     :title="props.row.fav ? $t('operations.unfavNode') : $t('operations.favNode')"
-                    :type="props.row.fav ? 'is-warning' : ''"
-                    :outlined="!props.row.fav"
-                    icon-left="iconfont icon-heart"
+                    type="is-warning"
+                    outlined
+                    :aria-pressed="props.row.fav ? 'true' : 'false'"
                     @click="toggleNodeFav(props.row, subi)"
-                  />
+                  >
+                    <i
+                      :class="props.row.fav ? 'mdi mdi-heart' : 'mdi mdi-heart-outline'"
+                      class="node-action-icon"
+                      aria-hidden="true"
+                    ></i>
+                    {{ props.row.fav ? $t("operations.unfavNode") : $t("operations.favNode") }}
+                  </b-button>
                   <b-button
                     size="is-small"
                     :title="props.row.disabled ? $t('operations.enableNode') : $t('operations.disableNode')"
-                    :type="props.row.disabled ? 'is-danger' : ''"
-                    :outlined="!props.row.disabled"
-                    icon-left="iconfont icon-close-circle-fill"
+                    type="is-danger"
+                    outlined
+                    :aria-pressed="props.row.disabled ? 'true' : 'false'"
                     @click="toggleNodeDisabled(props.row, subi)"
-                  />
+                  >
+                    <i
+                      :class="props.row.disabled ? 'mdi mdi-check-circle-outline' : 'mdi mdi-cancel'"
+                      class="node-action-icon"
+                      aria-hidden="true"
+                    ></i>
+                    {{ props.row.disabled ? $t("operations.enableNode") : $t("operations.disableNode") }}
+                  </b-button>
                   <b-button
                     size="is-small"
                     :title="$t('operations.removeNodeWithMemory')"
                     outlined
                     type="is-danger"
-                    icon-left="iconfont icon-delete"
                     @click="removeNodeWithMemory(props.row, subi)"
-                  />
+                  >
+                    <i class="mdi mdi-delete-outline node-action-icon" aria-hidden="true"></i>
+                    {{ $t("operations.removeNodeWithMemoryShort") }}
+                  </b-button>
                 </div>
               </b-table-column>
             </b-table>
@@ -2221,8 +2207,12 @@ export default {
       this.$axios({ url: apiRoot + "/setting", method: "get" }).then((res) => {
         if (res.data && res.data.code === "SUCCESS" && res.data.data) {
           this.novice = !!res.data.data.setting.novice;
+          this.$emit("novice-mode-change", this.novice);
         }
       });
+    },
+    openDetectRule() {
+      this.showModalDetectRule = true;
     },
     handleClickConnections() {
       this.$buefy.modal.open({
@@ -2286,9 +2276,21 @@ td {
   }
 
   .operate-box {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0.375rem;
+
     > * {
-      margin-right: 0.5rem;
+      flex: 0 0 auto;
+      margin-right: 0 !important;
     }
+  }
+
+  .node-action-icon {
+    margin-right: 0.3rem;
+    font-size: 1rem;
+    line-height: 1;
   }
 }
 
@@ -2348,13 +2350,6 @@ td {
 
   * {
     pointer-events: auto;
-  }
-
-  .right {
-    position: absolute;
-    right: 0.75rem;
-    top: 0.75em;
-    /*max-width: 70%;*/
   }
 
   transition: all 200ms linear;
