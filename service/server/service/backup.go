@@ -45,8 +45,10 @@ func CreateBackup() (item BackupItem, err error) {
 	if err = os.MkdirAll(dir, os.ModeDir|0750); err != nil {
 		return item, fmt.Errorf("failed to create backup directory: %w", err)
 	}
-	name := "v2raya-backup-" + time.Now().Format("20060102-150405") + ".db"
+	name := "v2raya-backup-" + time.Now().Format("20060102-150405.000000") + ".db"
 	path := filepath.Join(dir, name)
+	// VACUUM INTO refuses to overwrite an existing target file.
+	_ = os.Remove(path)
 	// VACUUM INTO does not support bound parameters; escape the single
 	// quotes of the (user-configurable) path ourselves.
 	escaped := strings.ReplaceAll(path, "'", "''")
