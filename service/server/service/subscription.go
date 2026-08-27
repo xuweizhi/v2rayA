@@ -190,7 +190,20 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 	}
 
 	// Download strategy: try the configured order of direct/proxy clients.
-	clients := subscriptionDownloadClients(&c, extra)
+	clients, err := subscriptionDownloadClients(&c, extra)
+	if err != nil {
+		return
+	}
+	defer func() {
+		for _, cl := range clients {
+			if cl == nil || cl == client {
+				continue
+			}
+			if tr, ok := cl.Transport.(*http.Transport); ok {
+				tr.CloseIdleConnections()
+			}
+		}
+	}()
 	var res *http.Response
 	for i, cl := range clients {
 		res, err = httpClient.HttpGetUsingSpecificClientWithUAAndHeaders(cl, source, ua, headers)
@@ -250,35 +263,40 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 
 // subscriptionDownloadClients returns the HTTP clients to try in order,
 // based on the per-subscription download strategy.
-func subscriptionDownloadClients(direct *http.Client, extra configure.SubscriptionExtra) []*http.Client {
+func subscriptionDownloadClients(direct *http.Client, extra configure.SubscriptionExtra) ([]*http.Client, error) {
 	strategy := extra.DownloadStrategy
 	if strategy == "" {
 		// Follow the system: the default client already honors the
 		// transparent proxy when active.
-		return []*http.Client{direct}
+		return []*http.Client{direct}, nil
 	}
-	proxyClient := direct
 	ports := configure.GetPortsNotNil()
-	if ports.Socks5 > 0 {
-		proxyURL, err := url.Parse(fmt.Sprintf("socks5://127.0.0.1:%d", ports.Socks5))
-		if err == nil {
-			proxyClient = &http.Client{
-				Timeout: direct.Timeout,
-				Transport: &http.Transport{
-					Proxy: http.ProxyURL(proxyURL),
-				},
-			}
+	if ports.Socks5 <= 0 {
+		switch strategy {
+		case "onlyProxy":
+			return nil, fmt.Errorf("download strategy is %q but the proxy port is not configured", strategy)
+		default:
+			return []*http.Client{direct}, nil
 		}
+	}
+	proxyURL, err := url.Parse(fmt.Sprintf("socks5://127.0.0.1:%d", ports.Socks5))
+	if err != nil {
+		return nil, fmt.Errorf("invalid proxy port %d: %w", ports.Socks5, err)
+	}
+	proxyClient := &http.Client{
+		Timeout: direct.Timeout,
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
 	}
 	switch strategy {
 	case "onlyProxy":
-		return []*http.Client{proxyClient}
-	case "onlyDirect":
-		return []*http.Client{direct}
+		return []*http.Client{proxyClient}, nil
 	case "preferProxy":
-		return []*http.Client{proxyClient, direct}
+		return []*http.Client{proxyClient, direct}, nil
 	default:
-		return []*http.Client{direct}
+		// preferDirect and anything else
+		return []*http.Client{direct}, nil
 	}
 }
 
@@ -529,20 +547,25 @@ func ModifySubscriptionRemark(subscription touch.Subscription) (err error) {
 	raw.AutoSelect = subscription.AutoSelect
 	raw.DecryptPassword = subscription.DecryptPassword
 	raw.Extra = subscription.Extra
-	// Drop nodes the user removed with "delete and keep removed" so they
-	// disappear immediately rather than only after the next refresh.
 	if len(raw.Extra.RemovedTags) > 0 {
 		removed := make(map[string]bool, len(raw.Extra.RemovedTags))
 		for _, t := range raw.Extra.RemovedTags {
 			removed[t] = true
 		}
+		// Map every current server ID of this subscription to its node name
+		// while the original list is still intact.
+		nameByOldID := make(map[int]string, len(raw.Servers))
+		for i, srv := range raw.Servers {
+			if srv.ServerObj != nil {
+				nameByOldID[i+1] = srv.ServerObj.GetName()
+			}
+		}
 		// Disconnect any connected server that is being removed.
-		css := configure.GetConnectedServers().Get()
-		for _, cs := range css {
+		for _, cs := range configure.GetConnectedServers().Get() {
 			if cs.TYPE == configure.SubscriptionServerType && cs.Sub == subscription.ID-1 {
-				if sRaw, e := cs.LocateServerRaw(); e == nil && sRaw.ServerObj != nil && removed[sRaw.ServerObj.GetName()] {
+				if name, ok := nameByOldID[cs.ID]; ok && removed[name] {
 					if e := Disconnect(*cs, false); e != nil {
-						log.Warn("ModifySubscriptionRemark: failed to disconnect removed server %v: %v", sRaw.ServerObj.GetName(), e)
+						log.Warn("ModifySubscriptionRemark: failed to disconnect removed server %v: %v", name, e)
 					}
 				}
 			}
@@ -555,6 +578,36 @@ func ModifySubscriptionRemark(subscription touch.Subscription) (err error) {
 			filtered = append(filtered, s)
 		}
 		raw.Servers = filtered
+		// The removal shifted the server IDs of this subscription; remap the
+		// remaining connected entries by name so they keep pointing at the
+		// same nodes.
+		cssAfter := configure.GetConnectedServers().Get()
+		idToName := make(map[int]string, len(cssAfter))
+		for _, cs := range cssAfter {
+			if cs.TYPE == configure.SubscriptionServerType && cs.Sub == subscription.ID-1 {
+				if name, ok := nameByOldID[cs.ID]; ok {
+					idToName[cs.ID] = name
+				}
+			}
+		}
+		newIDByName := make(map[string]int, len(raw.Servers))
+		for i, srv := range raw.Servers {
+			if srv.ServerObj != nil {
+				newIDByName[srv.ServerObj.GetName()] = i + 1
+			}
+		}
+		for _, cs := range cssAfter {
+			if cs.TYPE == configure.SubscriptionServerType && cs.Sub == subscription.ID-1 {
+				if name, ok := idToName[cs.ID]; ok {
+					if id, exist := newIDByName[name]; exist {
+						cs.ID = id
+					}
+				}
+			}
+		}
+		if err := configure.OverwriteConnects(configure.NewWhiches(cssAfter)); err != nil {
+			log.Warn("ModifySubscriptionRemark: failed to update connections: %v", err)
+		}
 	}
 	// Re-apply node flags (disabled/favorite) to the stored servers when the
 	// corresponding tag lists change.
@@ -576,7 +629,12 @@ func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error)
 		if sub == nil {
 			return fmt.Errorf("SelectServersFromSubscription: subscription at index %d not found", index)
 		}
-		serverObj := sub.Servers[i-1].ServerObj // ServerObj IDs start with 0
+		serverRaw := sub.Servers[i-1]
+		if serverRaw.Disabled {
+			log.Info("[AutoSelect] Skipping disabled server %v", serverRaw.ServerObj.GetName())
+			continue
+		}
+		serverObj := serverRaw.ServerObj // ServerObj IDs start with 0
 		if serverObj == nil {
 			log.Warn("[AutoSelect] Skipping server %d in subscription %d: nil ServerObj", i, index)
 			continue

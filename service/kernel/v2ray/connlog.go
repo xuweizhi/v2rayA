@@ -19,7 +19,9 @@ type ConnectionEvent struct {
 const connectionRingCapacity = 2000
 
 var connLogMu sync.Mutex
-var connLogRing = make([]ConnectionEvent, 0, connectionRingCapacity)
+var connLogRing [connectionRingCapacity]ConnectionEvent
+var connLogHead int // next write position
+var connLogLen int
 
 // parseConnectionLine extracts a connection event from a core access log
 // line of the form:
@@ -67,11 +69,12 @@ func recordConnectionLine(line string) {
 		return
 	}
 	connLogMu.Lock()
-	defer connLogMu.Unlock()
-	if len(connLogRing) >= connectionRingCapacity {
-		connLogRing = append(connLogRing[:0], connLogRing[1:]...)
+	connLogRing[connLogHead] = ev
+	connLogHead = (connLogHead + 1) % connectionRingCapacity
+	if connLogLen < connectionRingCapacity {
+		connLogLen++
 	}
-	connLogRing = append(connLogRing, ev)
+	connLogMu.Unlock()
 }
 
 // GetRecentConnections returns up to limit most recent connection events,
@@ -79,14 +82,13 @@ func recordConnectionLine(line string) {
 func GetRecentConnections(limit int) []ConnectionEvent {
 	connLogMu.Lock()
 	defer connLogMu.Unlock()
-	if limit <= 0 || limit > len(connLogRing) {
-		limit = len(connLogRing)
+	if limit <= 0 || limit > connLogLen {
+		limit = connLogLen
 	}
 	out := make([]ConnectionEvent, limit)
-	n := 0
-	for i := len(connLogRing) - 1; i >= 0 && n < limit; i-- {
+	for n := 0; n < limit; n++ {
+		i := (connLogHead - 1 - n + connectionRingCapacity) % connectionRingCapacity
 		out[n] = connLogRing[i]
-		n++
 	}
-	return out[:n]
+	return out
 }

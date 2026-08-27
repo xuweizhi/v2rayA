@@ -148,6 +148,12 @@ func measureDirectDNSList(servers []string, items []DnsLatencyItem) {
 				items[i] = DnsLatencyItem{Server: server, LatencyMs: elapsed, Error: "no response"}
 				return
 			}
+			// Discard responses for a different query (e.g. a late reply to
+			// an earlier probe sharing the same socket lifetime).
+			if !bytes.Equal(resp[:2], query[:2]) {
+				items[i] = DnsLatencyItem{Server: server, LatencyMs: elapsed, Error: "mismatched response"}
+				return
+			}
 			items[i] = DnsLatencyItem{Server: server, LatencyMs: elapsed, Ok: true}
 		}(i, server)
 	}

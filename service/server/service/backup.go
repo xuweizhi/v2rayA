@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,7 +47,10 @@ func CreateBackup() (item BackupItem, err error) {
 	}
 	name := "v2raya-backup-" + time.Now().Format("20060102-150405") + ".db"
 	path := filepath.Join(dir, name)
-	if _, err = db.GetDB().Exec(`VACUUM INTO '` + path + `'`); err != nil {
+	// VACUUM INTO does not support bound parameters; escape the single
+	// quotes of the (user-configurable) path ourselves.
+	escaped := strings.ReplaceAll(path, "'", "''")
+	if _, err = db.GetDB().Exec(`VACUUM INTO '` + escaped + `'`); err != nil {
 		return item, fmt.Errorf("failed to backup database: %w", err)
 	}
 	info, err := os.Stat(path)

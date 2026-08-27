@@ -312,6 +312,13 @@ func ApplyPendingRestore() error {
 		}
 		log.Info("preserved current database as %v", safety)
 	}
+	// Stale write-ahead files would corrupt the swapped-in database; remove
+	// them along with the swap.
+	for _, side := range []string{dbPath + "-wal", dbPath + "-shm"} {
+		if err := os.Remove(side); err == nil {
+			log.Info("removed stale sqlite sidecar %v", side)
+		}
+	}
 	if err := os.Rename(m.Staging, dbPath); err != nil {
 		return fmt.Errorf("failed to apply restored database: %w", err)
 	}

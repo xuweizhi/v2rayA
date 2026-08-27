@@ -1062,7 +1062,9 @@ export default {
     },
   },
   created() {
-    this.loadNoviceMode();
+    if (localStorage["token"]) {
+      this.loadNoviceMode();
+    }
     this.coreVersionValid = localStorage["coreVersionValid"] !== "false";
     this.coreVersionErr = localStorage["coreVersionErr"] || "";
     if (!localStorage["token"]) return; // Not authenticated yet — skip to avoid spurious 401 modals
@@ -2215,6 +2217,7 @@ export default {
       });
     },
     loadNoviceMode() {
+      if (!localStorage["token"]) return;
       this.$axios({ url: apiRoot + "/setting", method: "get" }).then((res) => {
         if (res.data && res.data.code === "SUCCESS" && res.data.data) {
           this.novice = !!res.data.data.setting.novice;
