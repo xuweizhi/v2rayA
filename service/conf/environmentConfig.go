@@ -55,7 +55,9 @@ func initFunc() {
 		EnvPrefix:         "V2RAYA_",
 	})
 	if err != nil {
-		if err.Error() != "unexpected word while parsing flags: '-test.v'" {
+		// The Go test runner injects several -test.* flags. They belong to the
+		// testing package rather than v2rayA and may vary between Go versions.
+		if !strings.HasPrefix(err.Error(), "unexpected word while parsing flags: '-test.") {
 			log2.Fatal(err)
 		}
 	}

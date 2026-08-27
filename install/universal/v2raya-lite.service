@@ -6,6 +6,8 @@ Wants=network.target
 
 [Service]
 Type=simple
+# Signal the manager first so it can shut down its child core cleanly.
+KillMode=mixed
 ExecStart=/usr/bin/v2raya --lite --log-disable-timestamp
 Environment=V2RAYA_LOG_FILE=%L/v2raya/v2raya.log
 Restart=on-failure

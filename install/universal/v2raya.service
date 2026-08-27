@@ -7,6 +7,8 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
+# Signal the manager first so it can shut down its child core cleanly.
+KillMode=mixed
 LimitNPROC=500
 LimitNOFILE=1000000
 ExecStart=/usr/bin/v2raya --log-disable-timestamp

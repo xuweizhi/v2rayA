@@ -44,6 +44,10 @@
           <i class="mdi mdi-cloud-outline app-nav-icon" aria-hidden="true"></i>
           {{ $t("operations.connections") }}
         </b-navbar-item>
+        <b-navbar-item v-if="!noviceMode" tag="button" type="button" class="navbar-action" @click.native="handleClickTraffic">
+          <i class="mdi mdi-chart-areaspline app-nav-icon" aria-hidden="true"></i>
+          {{ $t("operations.traffic") }}
+        </b-navbar-item>
         <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="handleClickSetting">
           <i class="mdi mdi-cog-outline app-nav-icon" aria-hidden="true"></i>
           {{ $t("common.setting") }}
@@ -123,6 +127,7 @@ import { waitingConnected } from "@/assets/js/networkInspect";
 import axios from "@/plugins/axios";
 import ModalLog from "@/components/modalLog";
 import ModalLogin from "@/components/modalLogin";
+import ModalTraffic from "@/components/modalTraffic";
 
 export default {
   components: { ModalCustomAddress, node, OutboundGroupPanel, ModalLogin },
@@ -163,6 +168,13 @@ export default {
       systemDark: window.matchMedia('(prefers-color-scheme: dark)').matches,
       wsReconnectTimer: null,
       appDestroyed: false,
+      traffic: {
+        up: 0,
+        down: 0,
+        upTotal: 0,
+        downTotal: 0,
+        samples: [],
+      },
     };
   },
   computed: {
@@ -367,6 +379,7 @@ export default {
           that.ws = null;
         }
         if (that.appDestroyed) return;
+        that.recordTraffic({ up: 0, down: 0 });
         // 指数退避重连：1s, 2s, 4s, 8s... 最大 30 秒
         const delay = Math.min(1000 * Math.pow(2, that._wsRetries), 30000);
         that._wsRetries++;
@@ -389,11 +402,44 @@ export default {
       }
       if (msg.type === "running_state" && msg.body) {
         if (msg.body.running === false) {
+          this.recordTraffic({ up: 0, down: 0 });
           this.$refs.nodeRef && this.$refs.nodeRef.notifyStopped(!!msg.body.networkPaused);
         } else {
           this.$refs.nodeRef && this.$refs.nodeRef.notifyRunning(!!msg.body.networkPaused);
         }
       }
+      if (msg.type === "traffic" && msg.body) {
+        this.recordTraffic(msg.body);
+      }
+    },
+    recordTraffic(body) {
+      const safeNumber = (value, fallback = 0) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+      };
+      this.traffic.up = safeNumber(body.up);
+      this.traffic.down = safeNumber(body.down);
+      this.traffic.upTotal = safeNumber(body.upTotal, this.traffic.upTotal);
+      this.traffic.downTotal = safeNumber(body.downTotal, this.traffic.downTotal);
+      this.traffic.samples.push({
+        up: this.traffic.up,
+        down: this.traffic.down,
+        time: Date.now(),
+      });
+      if (this.traffic.samples.length > 60) {
+        this.traffic.samples.splice(0, this.traffic.samples.length - 60);
+      }
+    },
+    handleClickTraffic() {
+      this.$buefy.modal.open({
+        parent: this,
+        component: ModalTraffic,
+        hasModalCard: true,
+        canCancel: true,
+        props: {
+          traffic: this.traffic,
+        },
+      });
     },
     handleOutboundDropdownActiveChange(active) {
       if (active) {
