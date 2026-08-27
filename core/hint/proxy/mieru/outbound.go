@@ -615,16 +615,23 @@ func (mc *mieruConn) Read(p []byte) (int, error) {
 // the openSessionRequest payload.
 func buildSocks5ConnectRequest(target xray_net.Destination) []byte {
 	req := []byte{0x05, 0x01, 0x00}
-	if domain := target.Address.Domain(); len(domain) > 0 {
+	switch target.Address.Family() {
+	case xray_net.AddressFamilyDomain:
+		domain := target.Address.Domain()
 		req = append(req, 0x03, byte(len(domain)))
 		req = append(req, []byte(domain)...)
-	} else if ip := target.Address.IP(); len(ip) == 4 {
+	case xray_net.AddressFamilyIPv4:
+		ip := target.Address.IP()
+		if len(ip) != 4 {
+			ip = ip.To4()
+		}
 		req = append(req, 0x01)
-		req = append(req, ip...)
-	} else if ip := target.Address.IP(); len(ip) == 16 {
+		req = append(req, ip[:4]...)
+	case xray_net.AddressFamilyIPv6:
+		ip := target.Address.IP().To16()
 		req = append(req, 0x04)
-		req = append(req, ip...)
-	} else {
+		req = append(req, ip[:16]...)
+	default:
 		s := target.Address.String()
 		req = append(req, 0x03, byte(len(s)))
 		req = append(req, []byte(s)...)
