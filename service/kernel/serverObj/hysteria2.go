@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/v2rayA/v2rayA/kernel/coreObj"
 )
@@ -70,6 +71,10 @@ type hysteria2Params struct {
 	verifyPeerCertByName string
 	obfs                 string
 	obfsPassword         string
+	hopPorts             string
+	hopInterval          string
+	up                   string
+	down                 string
 }
 
 // parseLinkParams extracts the hysteria2 URL parameters, which are the source
@@ -106,6 +111,24 @@ func (s *Hysteria2) parseLinkParams() (p hysteria2Params) {
 	p.verifyPeerCertByName = q.Get("verify_peer_cert_by_name")
 	p.obfs = q.Get("obfs")
 	p.obfsPassword = q.Get("obfs-password")
+	// Port hopping (hysteria2 udpHop).
+	p.hopPorts = q.Get("mport")
+	if p.hopPorts == "" {
+		p.hopPorts = q.Get("ports")
+	}
+	if p.hopPorts == "" {
+		p.hopPorts = q.Get("hop-ports")
+	}
+	p.hopInterval = q.Get("hopInterval")
+	if p.hopInterval == "" {
+		p.hopInterval = q.Get("hop-interval")
+	}
+	if p.hopInterval == "" {
+		p.hopInterval = q.Get("hop_interval")
+	}
+	// Bandwidth / brutal limits.
+	p.up = q.Get("up")
+	p.down = q.Get("down")
 	return p
 }
 
@@ -144,17 +167,42 @@ func (s *Hysteria2) Configuration(info PriorInfo) (c Configuration, err error) {
 			Auth:    p.password,
 		},
 	}
+	finalMask := &coreObj.FinalMask{}
 	if p.obfs == "salamander" {
 		maskSettings, err := json.Marshal(map[string]string{"password": p.obfsPassword})
 		if err != nil {
 			return c, fmt.Errorf("hysteria2: marshal obfs settings: %w", err)
 		}
-		streamSettings.FinalMask = &coreObj.FinalMask{
-			Udp: []coreObj.UdpMask{{
-				Type:     "salamander",
-				Settings: maskSettings,
-			}},
+		finalMask.Udp = []coreObj.UdpMask{{
+			Type:     "salamander",
+			Settings: maskSettings,
+		}}
+	}
+	if p.hopPorts != "" {
+		interval := p.hopInterval
+		if interval == "" {
+			interval = "30"
 		}
+		finalMask.QuicParams = &coreObj.QuicParamsConfig{
+			UdpHop: &coreObj.UdpHopConfig{
+				Ports:    p.hopPorts,
+				Interval: interval,
+			},
+		}
+	}
+	if p.up != "" || p.down != "" {
+		if finalMask.QuicParams == nil {
+			finalMask.QuicParams = &coreObj.QuicParamsConfig{}
+		}
+		if p.up != "" {
+			finalMask.QuicParams.BrutalUp = normalizeBandwidth(p.up)
+		}
+		if p.down != "" {
+			finalMask.QuicParams.BrutalDown = normalizeBandwidth(p.down)
+		}
+	}
+	if len(finalMask.Udp) > 0 || finalMask.QuicParams != nil {
+		streamSettings.FinalMask = finalMask
 	}
 
 	return Configuration{
@@ -198,4 +246,21 @@ func (s *Hysteria2) GetName() string {
 
 func (s *Hysteria2) SetName(name string) {
 	s.Name = name
+}
+
+// normalizeBandwidth converts a hysteria2 bandwidth parameter into the unit
+// string form expected by xray's conf (e.g. "100mbps").
+func normalizeBandwidth(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	lower := strings.ToLower(v)
+	if strings.ContainsAny(lower, "kmgts") && strings.Contains(lower, "bps") {
+		return lower
+	}
+	if n, err := strconv.ParseFloat(v, 64); err == nil {
+		return strconv.FormatFloat(n, 'f', -1, 64) + "mbps"
+	}
+	return v
 }

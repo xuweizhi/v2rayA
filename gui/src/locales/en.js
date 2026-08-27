@@ -130,6 +130,12 @@ export default {
     unread: "NEW",
     openLink: "Open link",
   },
+  routingRules: {
+    title: "Routing Rules",
+    note: "Rules are matched before the auto-generated ones. Outbound can be direct/block/proxy or any connected node/group.",
+    domains: "Domains (one per line)",
+    domainPlaceholder: "domain:example.com\ngeosite:google\nwww.foo.com",
+  },
   connections: {
     title: "Connection Monitor",
     time: "Time",

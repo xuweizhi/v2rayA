@@ -92,8 +92,12 @@ type V2Ray struct {
 	// (brutal=up,down). Parsed and preserved, not yet applied by the core.
 	BrutalUp   string `json:"brutalUp,omitempty"`
 	BrutalDown string `json:"brutalDown,omitempty"`
-	V          string `json:"v"`
-	Protocol   string `json:"protocol"`
+	// TLSFragment/TLSTricks carry hiddify-style anti-censorship parameters.
+	// Parsed and preserved; not yet applied by the core.
+	TLSFragment string `json:"tlsFragment,omitempty"`
+	TLSTricks   string `json:"tlsTricks,omitempty"`
+	V           string `json:"v"`
+	Protocol    string `json:"protocol"`
 }
 
 // queryInt parses an integer query parameter; returns 0 if missing or invalid.
@@ -151,7 +155,9 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 		Alpn:        u.Query().Get("alpn"),
 		Mux:         u.Query().Get("mux"),
 		BrutalUp:    u.Query().Get("brutalUp"),
-		BrutalDown:  u.Query().Get("brutalDown"), PinnedPeerCertSha256: u.Query().Get("pinnedPeerCertSha256"),
+		BrutalDown:  u.Query().Get("brutalDown"),
+		TLSFragment: u.Query().Get("tlsfragment"),
+		TLSTricks:   u.Query().Get("tls-tricks"), PinnedPeerCertSha256: u.Query().Get("pinnedPeerCertSha256"),
 		VerifyPeerCertByName: u.Query().Get("verifyPeerCertByName"),
 		Key:                  u.Query().Get("key"),
 		V:                    vless,
@@ -815,6 +821,12 @@ func (v *V2Ray) ExportToURL() string {
 		}
 		if v.Mux != "" {
 			setValue(&query, "mux", v.Mux)
+		}
+		if v.TLSFragment != "" {
+			setValue(&query, "tlsfragment", v.TLSFragment)
+		}
+		if v.TLSTricks != "" {
+			setValue(&query, "tls-tricks", v.TLSTricks)
 		}
 		if v.BrutalUp != "" || v.BrutalDown != "" {
 			setValue(&query, "brutal", v.BrutalUp+","+v.BrutalDown)

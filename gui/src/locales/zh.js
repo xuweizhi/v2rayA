@@ -129,6 +129,12 @@ export default {
     unread: "新",
     openLink: "打开链接",
   },
+  routingRules: {
+    title: "路由规则",
+    note: "自定义规则优先于自动生成的规则。出站可选 直连/拦截/代理 或任意已连接节点/分组。",
+    domains: "域名（每行一个）",
+    domainPlaceholder: "domain:example.com\ngeosite:google\nwww.foo.com",
+  },
   connections: {
     title: "连接监控",
     time: "时间",

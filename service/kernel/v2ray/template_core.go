@@ -115,6 +115,8 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 	}
 	// 路由域名匹配器
 	t.Routing.DomainMatcher = "mph"
+	// user-defined routing rules take precedence over the auto-generated ones
+	t.PrependCustomRoutingRules()
 	//rule port routing
 	if err = t.setRulePortRouting(); err != nil {
 		return nil, err

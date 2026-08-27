@@ -265,7 +265,17 @@ type HysteriaSettings struct {
 	Auth    string `json:"auth,omitempty"`
 }
 type FinalMask struct {
-	Udp []UdpMask `json:"udp,omitempty"`
+	Udp        []UdpMask         `json:"udp,omitempty"`
+	QuicParams *QuicParamsConfig `json:"quicParams,omitempty"`
+}
+type QuicParamsConfig struct {
+	UdpHop     *UdpHopConfig `json:"udpHop,omitempty"`
+	BrutalUp   string        `json:"brutalUp,omitempty"`
+	BrutalDown string        `json:"brutalDown,omitempty"`
+}
+type UdpHopConfig struct {
+	Ports    string `json:"ports"`
+	Interval string `json:"interval"`
 }
 type UdpMask struct {
 	Type     string          `json:"type"`

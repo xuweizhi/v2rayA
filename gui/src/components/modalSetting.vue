@@ -355,6 +355,9 @@
         <button class="button" type="button" @click="handleClickDnsSetting">
           {{ $t("dns.title") }}
         </button>
+        <button class="button" type="button" @click="handleClickRoutingRules">
+          {{ $t("routingRules.title") }}
+        </button>
         <button class="button" type="button" @click="handleClickBackup">
           {{ $t("backup.title") }}
         </button>
@@ -395,6 +398,7 @@ import BSelect from "buefy/src/components/select/Select";
 import BCheckboxButton from "buefy/src/components/checkbox/CheckboxButton";
 import modalDnsSetting from "./modalDnsSetting";
 import modalBackup from "./modalBackup";
+import modalRoutingRules from "./modalRoutingRules";
 import modalDiagnose from "./modalDiagnose";
 import modalNotice from "./modalNotice";
 import axios from "../plugins/axios";
@@ -507,6 +511,14 @@ export default {
         if (res.data && res.data.code === "SUCCESS" && res.data.data) {
           this.unreadNotices = res.data.data.unread || 0;
         }
+      });
+    },
+    handleClickRoutingRules() {
+      this.$buefy.modal.open({
+        parent: this,
+        component: modalRoutingRules,
+        hasModalCard: true,
+        canCancel: true,
       });
     },
     handleClickBackup() {

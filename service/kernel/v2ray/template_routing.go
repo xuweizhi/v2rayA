@@ -176,6 +176,59 @@ func (t *Template) setRulePortRouting() error {
 	// because "The Same as the Rule Port" may need them
 	return t.AppendRoutingRuleByMode(t.Setting.RulePortMode, []string{"rule-http", "rule-socks"})
 }
+
+// PrependCustomRoutingRules inserts the user-defined routing rules at the
+// very beginning of the rule list so they take precedence over the
+// auto-generated ones. Rules referencing an unknown outbound tag are dropped
+// with a warning to keep the core startable.
+func (t *Template) PrependCustomRoutingRules() {
+	rules := t.Setting.RoutingRules
+	if len(rules) == 0 {
+		return
+	}
+	valid := t.outNames()
+	inserted := make([]coreObj.RoutingRule, 0, len(rules))
+	for i, r := range rules {
+		if r.Outbound == "" {
+			log.Warn("custom routing rule #%d dropped: empty outbound", i+1)
+			continue
+		}
+		if len(r.Domain) == 0 && len(r.IP) == 0 && r.Port == "" {
+			continue
+		}
+		isBalancer := false
+		if isBalancerBool, ok := valid[r.Outbound]; ok && isBalancerBool {
+			isBalancer = true
+		} else if !ok {
+			log.Warn("custom routing rule #%d dropped: unknown outbound %q", i+1, r.Outbound)
+			continue
+		}
+		rule := coreObj.RoutingRule{
+			Type:        "field",
+			InboundTag:  nil,
+			Domain:      deepcopy.Copy(r.Domain).([]string),
+			IP:          deepcopy.Copy(r.IP).([]string),
+			Port:        r.Port,
+			Network:     r.Network,
+			BalancerTag: "",
+		}
+		if isBalancer {
+			rule.BalancerTag = r.Outbound
+			rule.OutboundTag = ""
+		} else {
+			rule.OutboundTag = r.Outbound
+			rule.BalancerTag = ""
+		}
+		inserted = append(inserted, rule)
+	}
+	if len(inserted) > 0 {
+		tmp := make([]coreObj.RoutingRule, 0, len(inserted)+len(t.Routing.Rules))
+		tmp = append(tmp, inserted...)
+		tmp = append(tmp, t.Routing.Rules...)
+		t.Routing.Rules = tmp
+		log.Info("custom routing rules applied: %d", len(inserted))
+	}
+}
 func parseRoutingA(t *Template, routingInboundTags []string) error {
 	lines := strings.Split(configure.GetRoutingA(), "\n")
 	hardcodeReplacement := regexp.MustCompile(`\$\$.+?\$\$`)
