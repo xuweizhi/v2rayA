@@ -56,6 +56,15 @@
           </b-field>
         </div>
       </div>
+      <b-field :label="$t('backup.webdavConnectionMode')" label-position="on-border">
+        <b-select v-model="webdav.connectionMode" expanded>
+          <option value="followSubscription">{{ $t('backup.connectionModes.followSubscription') }}</option>
+          <option value="onlyDirect">{{ $t('backup.connectionModes.onlyDirect') }}</option>
+          <option value="onlyProxy">{{ $t('backup.connectionModes.onlyProxy') }}</option>
+          <option value="preferDirect">{{ $t('backup.connectionModes.preferDirect') }}</option>
+          <option value="preferProxy">{{ $t('backup.connectionModes.preferProxy') }}</option>
+        </b-select>
+      </b-field>
       <div class="backup-toolbar">
         <b-button size="is-small" @click="handleSaveWebdav">
           {{ $t("backup.saveWebdav") }}
@@ -108,7 +117,7 @@ export default {
     creating: false,
     uploading: false,
     listing: false,
-    webdav: { url: "", username: "", password: "" },
+    webdav: { url: "", username: "", password: "", connectionMode: "followSubscription" },
   }),
   created() {
     this.load();
@@ -118,6 +127,7 @@ export default {
         this.webdav.url = s.webdavUrl || "";
         this.webdav.username = s.webdavUsername || "";
         this.webdav.password = s.webdavPassword || "";
+        this.webdav.connectionMode = s.webdavConnectionMode || "followSubscription";
       }
     });
   },
@@ -151,19 +161,39 @@ export default {
     saveWebdavConfig() {
       // PUT the whole setting object with the webdav fields patched in.
       return this.$axios({ url: apiRoot + "/setting", method: "get" }).then((res) => {
-        if (!res.data || res.data.code !== "SUCCESS" || !res.data.data) {
+        if (
+          !res.data ||
+          res.data.code !== "SUCCESS" ||
+          !res.data.data ||
+          !res.data.data.setting
+        ) {
           return Promise.reject(new Error("failed to load setting"));
         }
         const s = Object.assign({}, res.data.data.setting);
         s.webdavUrl = this.webdav.url;
         s.webdavUsername = this.webdav.username;
         s.webdavPassword = this.webdav.password;
+        s.webdavConnectionMode = this.webdav.connectionMode;
         return this.$axios({ url: apiRoot + "/setting", method: "put", data: s });
+      }).then((res) => {
+        if (!res.data || res.data.code !== "SUCCESS") {
+          throw new Error(res.data?.message || this.$t("common.fail"));
+        }
+        return res;
+      });
+    },
+    showWebdavError(err) {
+      this.$buefy.toast.open({
+        message: err?.response?.data?.message || err?.message || this.$t("common.fail"),
+        type: "is-warning",
+        position: "is-top",
+        queue: false,
+        duration: 5000,
       });
     },
     handleSaveWebdav() {
-      this.saveWebdavConfig().then((res) => {
-        handleResponse(res, this, () => {
+      this.saveWebdavConfig()
+        .then(() => {
           this.$buefy.toast.open({
             message: this.$t("common.success"),
             type: "is-primary",
@@ -171,8 +201,8 @@ export default {
             duration: 3000,
             queue: false,
           });
-        });
-      });
+        })
+        .catch((err) => this.showWebdavError(err));
     },
     handleUpload() {
       this.uploading = true;
@@ -190,6 +220,7 @@ export default {
             this.handleListRemote();
           });
         })
+        .catch((err) => this.showWebdavError(err))
         .finally(() => {
           this.uploading = false;
         });

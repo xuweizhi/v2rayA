@@ -3,6 +3,7 @@ package configure
 type (
 	AutoUpdateMode          string
 	ProxyMode               string
+	WebdavConnectionMode    string
 	RulePortMode            string
 	PacRuleType             string
 	PacMatchType            string
@@ -38,6 +39,15 @@ const (
 	ProxyModePac    = ProxyMode("pac")
 	ProxyModeProxy  = ProxyMode("proxy")
 
+	// WebDAV can either inherit the subscription download route or select a
+	// direct / global-proxy route of its own. Prefer modes retry the alternate
+	// route after a transport-level failure.
+	WebdavConnectionFollowSubscription = WebdavConnectionMode("followSubscription")
+	WebdavConnectionOnlyDirect         = WebdavConnectionMode("onlyDirect")
+	WebdavConnectionOnlyProxy          = WebdavConnectionMode("onlyProxy")
+	WebdavConnectionPreferDirect       = WebdavConnectionMode("preferDirect")
+	WebdavConnectionPreferProxy        = WebdavConnectionMode("preferProxy")
+
 	WhitelistMode = RulePortMode("whitelist")
 	GfwlistMode   = RulePortMode("gfwlist")
 	CustomMode    = RulePortMode("custom")
@@ -62,6 +72,22 @@ const (
 	InboundSniffingHttpTLS     = InboundSniffing("http,tls")
 	InboundSniffingHttpTlsQuic = InboundSniffing("http,tls,quic")
 )
+
+// IsValidWebdavConnectionMode reports whether mode is safe to persist. It is
+// kept here with the constants so both the API and HTTP client share the same
+// contract.
+func IsValidWebdavConnectionMode(mode WebdavConnectionMode) bool {
+	switch mode {
+	case WebdavConnectionFollowSubscription,
+		WebdavConnectionOnlyDirect,
+		WebdavConnectionOnlyProxy,
+		WebdavConnectionPreferDirect,
+		WebdavConnectionPreferProxy:
+		return true
+	default:
+		return false
+	}
+}
 
 const (
 	DefaultProbeURL      = "https://www.gstatic.com/generate_204"

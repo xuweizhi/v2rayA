@@ -5,10 +5,10 @@ import (
 	"time"
 
 	"github.com/v2rayA/v2rayA/conf"
+	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/kernel/ipforward"
 	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/kernel/v2ray/asset"
-	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 )
 
@@ -27,6 +27,9 @@ func GetSetting() *configure.Setting {
 func UpdateSetting(setting *configure.Setting) (err error) {
 	if setting.LogLevel == "" {
 		setting.LogLevel = conf.GetEnvironmentConfig().LogLevel
+	}
+	if !configure.IsValidWebdavConnectionMode(setting.WebdavConnectionMode) {
+		return fmt.Errorf("invalid WebDAV connection mode")
 	}
 	if (setting.Transparent == configure.TransparentGfwlist || setting.RulePortMode == configure.GfwlistMode) && !asset.DoesV2rayAssetExist("LoyalsoldierSite.dat") {
 		return fmt.Errorf("cannot find GFWList files. update GFWList and try again")

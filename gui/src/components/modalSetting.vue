@@ -606,45 +606,56 @@ export default {
     },
     requestUpdateSetting() {
       let loading = this.$buefy.loading.open();
-      let cancel;
-      waitingConnected(
-        this.$axios({
-          url: apiRoot + "/setting",
-          method: "put",
-          data: {
-            novice: this.novice,
-            proxyModeWhenSubscribe: this.proxyModeWhenSubscribe,
-            pacAutoUpdateMode: this.pacAutoUpdateMode,
-            pacAutoUpdateIntervalHour: parseInt(this.pacAutoUpdateIntervalHour),
-            subscriptionAutoUpdateMode: this.subscriptionAutoUpdateMode,
-            subscriptionAutoUpdateIntervalHour: parseInt(
-              this.subscriptionAutoUpdateIntervalHour
-            ),
-            pacMode: this.pacMode,
-            tcpFastOpen: this.tcpFastOpen,
-            logLevel: this.logLevel,
-            inboundSniffing: this.inboundSniffing,
-            muxOn: this.muxOn,
-            mux: parseInt(this.mux),
-            transparent: this.transparent,
-            transparentType: this.transparentType,
-            ipforward: this.ipforward,
-            portSharing: this.portSharing,
-            routeOnly: this.routeOnly,
-            tproxyExcludedInterfaces: this.tproxyExcludedInterfaces,
-            tunAutoRoute: this.tunAutoRoute,
-            tunBypassInterfaces: this.tunBypassInterfacesComputed,
-            tunRouteShellType: this.tunRouteShellType,
-            tunRouteShellPath: this.tunRouteShellPath,
-            tunSetupScript: this.tunSetupScript,
-            tunTeardownScript: this.tunTeardownScript,
-            tunProcessBackend: this.tunProcessBackend,
-            tunExcludeProcesses: this.tunExcludeProcesses,
-          },
-          cancelToken: new axios.CancelToken(function executor(c) {
-            cancel = c;
-          }),
-        }).then((res) => {
+      const cancelSource = axios.CancelToken.source();
+      const editedSetting = {
+        novice: this.novice,
+        proxyModeWhenSubscribe: this.proxyModeWhenSubscribe,
+        pacAutoUpdateMode: this.pacAutoUpdateMode,
+        pacAutoUpdateIntervalHour: parseInt(this.pacAutoUpdateIntervalHour),
+        subscriptionAutoUpdateMode: this.subscriptionAutoUpdateMode,
+        subscriptionAutoUpdateIntervalHour: parseInt(
+          this.subscriptionAutoUpdateIntervalHour
+        ),
+        pacMode: this.pacMode,
+        tcpFastOpen: this.tcpFastOpen,
+        logLevel: this.logLevel,
+        inboundSniffing: this.inboundSniffing,
+        muxOn: this.muxOn,
+        mux: parseInt(this.mux),
+        transparent: this.transparent,
+        transparentType: this.transparentType,
+        ipforward: this.ipforward,
+        portSharing: this.portSharing,
+        routeOnly: this.routeOnly,
+        tproxyExcludedInterfaces: this.tproxyExcludedInterfaces,
+        tunAutoRoute: this.tunAutoRoute,
+        tunBypassInterfaces: this.tunBypassInterfacesComputed,
+        tunRouteShellType: this.tunRouteShellType,
+        tunRouteShellPath: this.tunRouteShellPath,
+        tunSetupScript: this.tunSetupScript,
+        tunTeardownScript: this.tunTeardownScript,
+        tunProcessBackend: this.tunProcessBackend,
+        tunExcludeProcesses: this.tunExcludeProcesses,
+      };
+      const request = this.$axios({ url: apiRoot + "/setting", method: "get" })
+        .then((res) => {
+          if (
+            !res.data ||
+            res.data.code !== "SUCCESS" ||
+            !res.data.data ||
+            !res.data.data.setting
+          ) {
+            throw new Error(res.data?.message || this.$t("common.fail"));
+          }
+          const setting = Object.assign({}, res.data.data.setting, editedSetting);
+          return this.$axios({
+            url: apiRoot + "/setting",
+            method: "put",
+            data: setting,
+            cancelToken: cancelSource.token,
+          });
+        })
+        .then((res) => {
           handleResponse(res, this, () => {
             this.$buefy.toast.open({
               message: res.data.code,
@@ -657,16 +668,27 @@ export default {
           });
           if (
             res.data.code !== "SUCCESS" &&
+            res.data.message &&
             res.data.message.indexOf("invalid config") >= 0
           ) {
             // FIXME: tricky
             this.$parent.$parent.runningState.running = this.$t("common.notRunning");
           }
-          loading.close();
-        }),
-        3 * 1000,
-        cancel
-      );
+        })
+        .catch((err) => {
+          if (axios.isCancel(err)) {
+            return;
+          }
+          this.$buefy.toast.open({
+            message: err?.response?.data?.message || err?.message || this.$t("common.fail"),
+            type: "is-warning",
+            position: "is-top",
+            queue: false,
+            duration: 5000,
+          });
+        })
+        .finally(() => loading.close());
+      waitingConnected(request, 3 * 1000, cancelSource.cancel);
     },
     handleClickSubmit() {
       if (this.muxOn === "yes" && !this.$refs.muxinput.checkHtml5Validity()) {

@@ -111,15 +111,20 @@ func RefreshNotices() error {
 	return db.Set("system", "notices", merged)
 }
 
-// filterExpiredNotices drops expired and stale (older than 30 days) notices.
+// filterExpiredNotices drops expired notices. For feeds that do not supply an
+// explicit expiry, retain the former 30-day freshness safeguard.
 func filterExpiredNotices(notices []Notice) []Notice {
-	now := time.Now().Unix()
+	return filterNoticesAt(notices, time.Now().Unix())
+}
+
+func filterNoticesAt(notices []Notice, now int64) []Notice {
 	out := make([]Notice, 0, len(notices))
 	for _, n := range notices {
-		if n.ExpireTime > 0 && n.ExpireTime < now {
-			continue
-		}
-		if n.UpdateTime < now-30*86400 {
+		if n.ExpireTime > 0 {
+			if n.ExpireTime < now {
+				continue
+			}
+		} else if n.UpdateTime < now-30*86400 {
 			continue
 		}
 		out = append(out, n)

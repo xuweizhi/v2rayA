@@ -64,6 +64,10 @@ func MigrateDnsRules(oldRules []DnsRule) []DnsRule {
 //   - 本函数使用 gjson 检测原始 JSON 中是否存在该字段
 //   - 仅当字段不存在于原始 JSON 时才设置默认值 true
 func MigrateSetting(setting *Setting) {
+	if !IsValidWebdavConnectionMode(setting.WebdavConnectionMode) {
+		setting.WebdavConnectionMode = WebdavConnectionFollowSubscription
+	}
+
 	// 监听地址默认值
 	if setting.DnsListenAddr == "" {
 		setting.DnsListenAddr = "0.0.0.0:52353"

@@ -7,39 +7,40 @@ import (
 )
 
 type Setting struct {
-	LogLevel                           string            `json:"logLevel"`
-	RulePortMode                       RulePortMode      `json:"pacMode"`
-	ProxyModeWhenSubscribe             ProxyMode         `json:"proxyModeWhenSubscribe"`
-	GFWListAutoUpdateMode              AutoUpdateMode    `json:"pacAutoUpdateMode"`
-	GFWListAutoUpdateIntervalHour      int               `json:"pacAutoUpdateIntervalHour"`
-	SubscriptionAutoUpdateMode         AutoUpdateMode    `json:"subscriptionAutoUpdateMode"`
-	SubscriptionAutoUpdateIntervalHour int               `json:"subscriptionAutoUpdateIntervalHour"`
-	AutoBackup                         bool              `json:"autoBackup"`
-	Novice                             bool              `json:"novice"`
-	WebdavUrl                          string            `json:"webdavUrl"`
-	WebdavUsername                     string            `json:"webdavUsername"`
-	WebdavPassword                     string            `json:"webdavPassword"`
-	RoutingRules                       []RoutingRuleItem `json:"routingRules,omitempty"`
-	TcpFastOpen                        DefaultYesNo      `json:"tcpFastOpen"`
-	MuxOn                              DefaultYesNo      `json:"muxOn"`
-	Mux                                int               `json:"mux"`
-	InboundSniffing                    InboundSniffing   `json:"inboundSniffing"`
-	Transparent                        TransparentMode   `json:"transparent"`
-	IpForward                          bool              `json:"ipforward"`
-	RouteOnly                          bool              `json:"routeOnly"`
-	PortSharing                        bool              `json:"portSharing"`
-	TransparentType                    TransparentType   `json:"transparentType"`
-	TproxyExcludedInterfaces           string            `json:"tproxyExcludedInterfaces"`
-	TunBypassInterfaces                string            `json:"tunBypassInterfaces"`
-	TunAutoRoute                       bool              `json:"tunAutoRoute"`
-	TunRouteShellType                  string            `json:"tunRouteShellType"`
-	TunRouteShellPath                  string            `json:"tunRouteShellPath"`
-	TunSetupScript                     string            `json:"tunSetupScript"`
-	TunTeardownScript                  string            `json:"tunTeardownScript"`
-	TunProcessBackend                  string            `json:"tunProcessBackend"`
-	TunExcludeProcesses                string            `json:"tunExcludeProcesses"`
-	SsBackend                          string            `json:"ssBackend"`
-	TrojanBackend                      string            `json:"trojanBackend"`
+	LogLevel                           string               `json:"logLevel"`
+	RulePortMode                       RulePortMode         `json:"pacMode"`
+	ProxyModeWhenSubscribe             ProxyMode            `json:"proxyModeWhenSubscribe"`
+	GFWListAutoUpdateMode              AutoUpdateMode       `json:"pacAutoUpdateMode"`
+	GFWListAutoUpdateIntervalHour      int                  `json:"pacAutoUpdateIntervalHour"`
+	SubscriptionAutoUpdateMode         AutoUpdateMode       `json:"subscriptionAutoUpdateMode"`
+	SubscriptionAutoUpdateIntervalHour int                  `json:"subscriptionAutoUpdateIntervalHour"`
+	AutoBackup                         bool                 `json:"autoBackup"`
+	Novice                             bool                 `json:"novice"`
+	WebdavUrl                          string               `json:"webdavUrl"`
+	WebdavUsername                     string               `json:"webdavUsername"`
+	WebdavPassword                     string               `json:"webdavPassword"`
+	WebdavConnectionMode               WebdavConnectionMode `json:"webdavConnectionMode"`
+	RoutingRules                       []RoutingRuleItem    `json:"routingRules,omitempty"`
+	TcpFastOpen                        DefaultYesNo         `json:"tcpFastOpen"`
+	MuxOn                              DefaultYesNo         `json:"muxOn"`
+	Mux                                int                  `json:"mux"`
+	InboundSniffing                    InboundSniffing      `json:"inboundSniffing"`
+	Transparent                        TransparentMode      `json:"transparent"`
+	IpForward                          bool                 `json:"ipforward"`
+	RouteOnly                          bool                 `json:"routeOnly"`
+	PortSharing                        bool                 `json:"portSharing"`
+	TransparentType                    TransparentType      `json:"transparentType"`
+	TproxyExcludedInterfaces           string               `json:"tproxyExcludedInterfaces"`
+	TunBypassInterfaces                string               `json:"tunBypassInterfaces"`
+	TunAutoRoute                       bool                 `json:"tunAutoRoute"`
+	TunRouteShellType                  string               `json:"tunRouteShellType"`
+	TunRouteShellPath                  string               `json:"tunRouteShellPath"`
+	TunSetupScript                     string               `json:"tunSetupScript"`
+	TunTeardownScript                  string               `json:"tunTeardownScript"`
+	TunProcessBackend                  string               `json:"tunProcessBackend"`
+	TunExcludeProcesses                string               `json:"tunExcludeProcesses"`
+	SsBackend                          string               `json:"ssBackend"`
+	TrojanBackend                      string               `json:"trojanBackend"`
 	// 新 DNS 模块监听配置
 	DnsListenAddr string `json:"dnsListenAddr"` // 监听地址，默认 "0.0.0.0:52353"
 
@@ -73,6 +74,7 @@ func NewSetting() (setting *Setting) {
 		SubscriptionAutoUpdateIntervalHour: 0,
 		AutoBackup:                         true,
 		Novice:                             true,
+		WebdavConnectionMode:               WebdavConnectionFollowSubscription,
 		TcpFastOpen:                        Default,
 		MuxOn:                              No,
 		Mux:                                8,

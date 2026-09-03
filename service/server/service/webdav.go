@@ -28,49 +28,88 @@ type webdavClient struct {
 	baseURL  string
 	username string
 	password string
-	client   *http.Client
+	clients  []*http.Client
 }
+
+type webdavBodyFactory func() (io.ReadCloser, error)
 
 func newWebdavClient() (*webdavClient, error) {
 	setting := configure.GetSettingNotNil()
 	if setting.WebdavUrl == "" {
 		return nil, fmt.Errorf("webdav is not configured")
 	}
-	c := httpClient.GetHttpClientAutomatically()
-	c.Timeout = 60 * time.Second
+	clients, err := httpClient.GetHttpClientsForWebdav(setting.WebdavConnectionMode)
+	if err != nil {
+		return nil, err
+	}
+	for i, client := range clients {
+		// Do not mutate http.DefaultClient or a shared subscription client.
+		clone := *client
+		clone.Timeout = 60 * time.Second
+		clients[i] = &clone
+	}
 	return &webdavClient{
 		baseURL:  strings.TrimSuffix(setting.WebdavUrl, "/"),
 		username: setting.WebdavUsername,
 		password: setting.WebdavPassword,
-		client:   c,
+		clients:  clients,
 	}, nil
 }
 
-func (w *webdavClient) do(method, remotePath string, body io.Reader) (*http.Response, error) {
-	req, err := http.NewRequest(method, w.baseURL+"/"+strings.TrimPrefix(remotePath, "/"), body)
-	if err != nil {
-		return nil, err
+func (w *webdavClient) do(method, remotePath string, bodyFactory webdavBodyFactory, headers http.Header) (*http.Response, error) {
+	if len(w.clients) == 0 {
+		return nil, fmt.Errorf("no WebDAV HTTP client configured")
 	}
-	if w.username != "" {
-		req.SetBasicAuth(w.username, w.password)
+
+	var lastErr error
+	for _, client := range w.clients {
+		var body io.ReadCloser
+		var err error
+		if bodyFactory != nil {
+			body, err = bodyFactory()
+			if err != nil {
+				return nil, err
+			}
+		}
+		req, err := http.NewRequest(method, w.baseURL+"/"+strings.TrimPrefix(remotePath, "/"), body)
+		if err != nil {
+			if body != nil {
+				_ = body.Close()
+			}
+			return nil, err
+		}
+		for key, values := range headers {
+			req.Header[key] = append([]string(nil), values...)
+		}
+		if w.username != "" {
+			req.SetBasicAuth(w.username, w.password)
+		}
+
+		resp, err := client.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		if body != nil {
+			_ = body.Close()
+		}
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		lastErr = err
 	}
-	return w.client.Do(req)
+	return nil, fmt.Errorf("webdav request failed through all configured routes: %w", lastErr)
 }
 
 // list returns the file names in the remote backup directory (depth 1).
 func (w *webdavClient) list() ([]WebdavItem, error) {
-	body := bytes.NewBufferString(`<?xml version="1.0" encoding="utf-8"?>
+	body := []byte(`<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:"><d:prop><d:displayname/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>`)
-	req, err := http.NewRequest("PROPFIND", w.baseURL+"/", body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Depth", "1")
-	req.Header.Set("Content-Type", "application/xml")
-	if w.username != "" {
-		req.SetBasicAuth(w.username, w.password)
-	}
-	resp, err := w.client.Do(req)
+	resp, err := w.do("PROPFIND", "", func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}, http.Header{
+		"Depth":        []string{"1"},
+		"Content-Type": []string{"application/xml"},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -150,12 +189,9 @@ func UploadLatestBackup() (WebdavItem, error) {
 	if err != nil {
 		return WebdavItem{}, err
 	}
-	f, err := os.Open(local)
-	if err != nil {
-		return WebdavItem{}, err
-	}
-	defer f.Close()
-	resp, err := w.do(http.MethodPut, item.Name, f)
+	resp, err := w.do(http.MethodPut, item.Name, func() (io.ReadCloser, error) {
+		return os.Open(local)
+	}, nil)
 	if err != nil {
 		return WebdavItem{}, err
 	}
@@ -175,7 +211,7 @@ func DownloadWebdavBackup(name string, dst string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := w.do(http.MethodGet, name, nil)
+	resp, err := w.do(http.MethodGet, name, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -201,7 +237,7 @@ func OpenWebdavBackup(name string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	resp, err := c.do(http.MethodGet, name, nil)
+	resp, err := c.do(http.MethodGet, name, nil, nil)
 	if err != nil {
 		return err
 	}
