@@ -8,7 +8,7 @@ import (
 
 // GetDiagnose runs the network self-check and returns a copyable report.
 func GetDiagnose(ctx *gin.Context) {
-	report := service.Diagnose(ctx.Query("domain"))
+	report := service.Diagnose(ctx.Query("domain"), ctx.Query("outbound"))
 	common.ResponseSuccess(ctx, gin.H{
 		"diagnose": report,
 	})

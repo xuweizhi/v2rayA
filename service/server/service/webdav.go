@@ -2,8 +2,12 @@ package service
 
 import (
 	"bytes"
+	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"net/url"
+	"sync"
 
 	jsoniter "github.com/json-iterator/go"
 	"io"
@@ -17,6 +21,7 @@ import (
 
 	"github.com/v2rayA/v2rayA/common/httpClient"
 	"github.com/v2rayA/v2rayA/conf"
+	"github.com/v2rayA/v2rayA/db"
 	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
@@ -251,15 +256,28 @@ func OpenWebdavBackup(name string, w io.Writer) error {
 
 // ---- restore ----
 
+var restoreMu sync.Mutex
+
 // RestoreFromBackup replaces the database with a backup and restarts the
 // service process. source is "local" (name is a local backup file) or
 // "webdav" (name is a remote file).
 func RestoreFromBackup(source, name string) error {
-	if filepath.Base(name) != name {
+	restoreMu.Lock()
+	defer restoreMu.Unlock()
+	if source != "local" && source != "webdav" {
+		return fmt.Errorf("invalid backup source")
+	}
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
 		return fmt.Errorf("invalid backup name")
 	}
 	configDir := conf.GetEnvironmentConfig().Config
 	staging := filepath.Join(configDir, "restore-staging.db")
+	marker := filepath.Join(configDir, "restore-pending.json")
+	if _, err := os.Stat(marker); err == nil {
+		return fmt.Errorf("a restore is already pending")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	var local string
 	if source == "webdav" {
 		if err := DownloadWebdavBackup(name, staging); err != nil {
@@ -273,16 +291,8 @@ func RestoreFromBackup(source, name string) error {
 		}
 		local = p
 	}
-	// Validate that the target is an SQLite database.
-	f, err := os.Open(local)
-	if err != nil {
+	if err := validateRestoreDatabase(local); err != nil {
 		return err
-	}
-	head := make([]byte, 16)
-	_, _ = f.Read(head)
-	f.Close()
-	if !strings.HasPrefix(string(head), "SQLite format 3") {
-		return fmt.Errorf("backup file is not a valid v2rayA database")
 	}
 	if source == "local" {
 		// Copy local backup to staging so the pending marker can reference a
@@ -292,7 +302,7 @@ func RestoreFromBackup(source, name string) error {
 			return err
 		}
 		defer src.Close()
-		dst, err := os.Create(staging)
+		dst, err := os.OpenFile(staging, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 		if err != nil {
 			return err
 		}
@@ -300,12 +310,23 @@ func RestoreFromBackup(source, name string) error {
 			dst.Close()
 			return err
 		}
-		dst.Close()
+		if err := dst.Close(); err != nil {
+			return err
+		}
+	}
+	// Validate the completed staging file, not just its source header.
+	if err := validateRestoreDatabase(staging); err != nil {
+		return err
 	}
 	// Persist the restore intent and restart the process. The database file
 	// is swapped during the next startup (before the DB is opened).
-	if err := os.WriteFile(filepath.Join(configDir, "restore-pending.json"),
-		[]byte(`{"staging":"`+staging+`"}`), 0o600); err != nil {
+	markerData, err := json.Marshal(struct {
+		Staging string `json:"staging"`
+	}{staging})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(marker, markerData, 0o600); err != nil {
 		return err
 	}
 	v2ray.ProcessManager.Stop(false)
@@ -321,44 +342,105 @@ func RestoreFromBackup(source, name string) error {
 // ApplyPendingRestore swaps in the staged database during startup. It is
 // called before the database is opened.
 func ApplyPendingRestore() error {
-	configDir := conf.GetEnvironmentConfig().Config
+	return applyPendingRestore(conf.GetEnvironmentConfig().Config)
+}
+
+func validateRestoreDatabase(filename string) error {
+	// Backups are standalone snapshots; never read or mutate sidecar files.
+	u := &url.URL{Scheme: "file", Path: filename, RawQuery: "mode=ro&immutable=1"}
+	database, err := db.OpenStandalone(u.String())
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	var check string
+	if err := database.QueryRow("PRAGMA integrity_check").Scan(&check); err != nil {
+		return fmt.Errorf("invalid backup database: %w", err)
+	}
+	if check != "ok" {
+		return fmt.Errorf("backup integrity check failed: %s", check)
+	}
+	for _, table := range []string{"system_config", "servers", "subscriptions", "accounts", "outbound_names", "outbound_settings", "outbound_connections"} {
+		var count int
+		if err := database.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&count); err != nil {
+			return err
+		}
+		if count != 1 {
+			return fmt.Errorf("backup is missing table %s", table)
+		}
+	}
+	return nil
+}
+
+func applyPendingRestore(configDir string) error {
+	return applyPendingRestoreFiles(configDir, os.Rename)
+}
+
+func applyPendingRestoreFiles(configDir string, rename func(string, string) error) (err error) {
 	marker := filepath.Join(configDir, "restore-pending.json")
 	data, err := os.ReadFile(marker)
-	if err != nil {
-		return nil // no pending restore
+	if os.IsNotExist(err) {
+		return nil
 	}
-	var m struct {
+	if err != nil {
+		return err
+	}
+	var pending struct {
 		Staging string `json:"staging"`
 	}
-	_ = jsonUnmarshal(data, &m)
-	_ = os.Remove(marker)
-	if m.Staging == "" {
-		return nil
+	if err := jsonUnmarshal(data, &pending); err != nil {
+		return fmt.Errorf("invalid restore marker: %w", err)
 	}
-	if _, err := os.Stat(m.Staging); err != nil {
-		log.Warn("restore staging file missing: %v", m.Staging)
-		return nil
+	if filepath.Clean(pending.Staging) != filepath.Join(configDir, "restore-staging.db") {
+		return fmt.Errorf("invalid restore staging path")
 	}
-	// Keep the current database as a safety copy before swapping.
+	if err := validateRestoreDatabase(pending.Staging); err != nil {
+		return err
+	}
 	dbPath := filepath.Join(configDir, "v2raya.db")
-	if _, err := os.Stat(dbPath); err == nil {
-		safety := filepath.Join(configDir, "v2raya.db.pre-restore-"+time.Now().Format("20060102-150405"))
-		if err := os.Rename(dbPath, safety); err != nil {
-			return fmt.Errorf("failed to preserve current database: %w", err)
+	safety := dbPath + ".pre-restore-" + time.Now().Format("20060102-150405.000000000")
+	// Keep the original file at dbPath until the final rename succeeds. Preserve
+	// WAL alongside the safety copy: committed data may not be in the main file yet.
+	if src, openErr := os.Open(dbPath); openErr == nil {
+		dst, err := os.OpenFile(safety, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			src.Close()
+			return err
 		}
-		log.Info("preserved current database as %v", safety)
+		_, copyErr := io.Copy(dst, src)
+		src.Close()
+		closeErr := dst.Close()
+		if err := errors.Join(copyErr, closeErr); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(openErr) {
+		return openErr
 	}
-	// Stale write-ahead files would corrupt the swapped-in database; remove
-	// them along with the swap.
-	for _, side := range []string{dbPath + "-wal", dbPath + "-shm"} {
-		if err := os.Remove(side); err == nil {
-			log.Info("removed stale sqlite sidecar %v", side)
+	moved := []string{}
+	defer func() {
+		if err == nil {
+			return
+		}
+		for _, suffix := range moved {
+			err = errors.Join(err, rename(safety+suffix, dbPath+suffix))
+		}
+	}()
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := rename(dbPath+suffix, safety+suffix); err == nil {
+			moved = append(moved, suffix)
+		} else if !os.IsNotExist(err) {
+			return err
 		}
 	}
-	if err := os.Rename(m.Staging, dbPath); err != nil {
+	if err := rename(pending.Staging, dbPath); err != nil {
 		return fmt.Errorf("failed to apply restored database: %w", err)
 	}
-	log.Info("restored database from backup")
+	// The database swap has committed; never restore old WAL onto the new DB.
+	moved = nil
+	if err := os.Remove(marker); err != nil {
+		return err
+	}
+	log.Info("restored database; previous database preserved at %v", safety)
 	return nil
 }
 

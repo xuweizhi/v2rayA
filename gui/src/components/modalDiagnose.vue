@@ -4,6 +4,12 @@
       <p class="modal-card-title">{{ $t("diagnose.title") }}</p>
     </header>
     <section class="modal-card-body">
+      <b-field :label="$t('diagnose.outbound')">
+        <b-select v-model="outbound" expanded>
+          <option value="direct">{{ $t('dns.direct') }}</option>
+          <option v-for="group in outbounds" :key="group" :value="group">{{ group }}</option>
+        </b-select>
+      </b-field>
       <div class="columns">
         <div class="column is-8">
           <b-field :label="$t('diagnose.domain')">
@@ -39,17 +45,24 @@
 import { handleResponse } from "@/assets/js/utils";
 export default {
   name: "ModalDiagnose",
-  data: () => ({
+  props: { initialOutbound: { type: String, default: 'proxy' } },
+  data() { return {
+    outbound: this.initialOutbound,
+    outbounds: ['proxy'],
     domain: "",
     loading: false,
     report: null,
-  }),
+  }; },
+  created() {
+    this.$axios.get(apiRoot + '/outbounds').then(res => handleResponse(res, this, () => { this.outbounds = res.data.data.outbounds; }));
+  },
   methods: {
     run() {
       this.loading = true;
       this.report = null;
       this.$axios({
-        url: apiRoot + "/diagnose?domain=" + encodeURIComponent(this.domain),
+        url: apiRoot + "/diagnose",
+        params: { domain: this.domain, outbound: this.outbound },
         method: "get",
         timeout: 60000,
       })

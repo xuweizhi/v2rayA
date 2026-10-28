@@ -3,13 +3,23 @@ package controller
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/v2rayA/v2rayA/common"
-	"github.com/v2rayA/v2rayA/kernel/touch"
 	"github.com/v2rayA/v2rayA/db/configure"
+	"github.com/v2rayA/v2rayA/kernel/touch"
 	"github.com/v2rayA/v2rayA/server/service"
 )
 
 /*修改Remarks*/
 func PatchSubscription(ctx *gin.Context) {
+	updatingMu.Lock()
+	if updating {
+		common.ResponseError(ctx, processingErr)
+		updatingMu.Unlock()
+		return
+	}
+	updating = true
+	updatingMu.Unlock()
+	defer func() { updatingMu.Lock(); updating = false; updatingMu.Unlock() }()
+
 	var data struct {
 		Subscription touch.Subscription `json:"subscription"`
 	}
@@ -57,4 +67,21 @@ func PutSubscription(ctx *gin.Context) {
 		return
 	}
 	getTouch(ctx)
+}
+
+func PostSubscriptionFilterPreview(ctx *gin.Context) {
+	var data struct {
+		ID    int                         `json:"id"`
+		Extra configure.SubscriptionExtra `json:"extra"`
+	}
+	if err := ctx.ShouldBindJSON(&data); err != nil {
+		common.ResponseError(ctx, err)
+		return
+	}
+	total, matched, err := service.PreviewSubscriptionFilter(data.ID, data.Extra)
+	if err != nil {
+		common.ResponseError(ctx, err)
+		return
+	}
+	common.ResponseSuccess(ctx, gin.H{"total": total, "matched": matched})
 }

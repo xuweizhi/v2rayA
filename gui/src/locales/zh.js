@@ -1,4 +1,11 @@
 export default {
+  dashboard: {
+    current: "当前代理组",
+    node: "选中节点",
+    pending: "尚未选中",
+    settings: "网络设置",
+    summary: "网络概览",
+  },
   common: {
     outboundSetting: "代理分组设置",
     setting: "设置",
@@ -61,6 +68,18 @@ export default {
     cancel: "取消",
   },
   subscription: {
+    filterField: "正则匹配字段",
+    filterName: "节点名称",
+    filterHost: "服务器地址",
+    protocols: "保留的协议",
+    protocolsHelp: "不选表示全部协议；与正则条件同时生效。",
+    preview: "预览过滤结果",
+    previewHelp: "预览当前已保存节点；保存后刷新订阅以应用过滤。",
+    previewResult: "当前 {total} 个节点中保留 {matched} 个；刷新订阅后应用。",
+    preferNodeDNS: "使用本订阅专属 DNS 解析节点地址",
+    nodeDNS: "自定义节点 DNS",
+    nodeDNSHelp: "每行一个。留空使用订阅提供的 DNS，按顺序失败切换；仅影响本订阅的节点域名。 TinyTun 模式暂不支持；启用前请切换为 redirect/tproxy。",
+    providerDNS: "订阅提供的 DNS",
     host: "域名",
     remarks: "别名",
     timeLastUpdate: "上次更新时间",
@@ -126,6 +145,7 @@ export default {
     remoteFiles: "远端文件",
   },
   diagnose: {
+    outbound: "DNS 测试代理组",
     title: "网络诊断",
     domain: "域名（可选）",
     run: "开始检测",
@@ -499,6 +519,9 @@ export default {
     inboundDeprecatedConfirm: "当前 RoutingA 配置包含已弃用的入站定义，生成的配置将不会包含这些入站端口。是否继续保存？",
   },
   outbound: {
+    preProxy: "前置代理组",
+    noPreProxy: "无（直接连接节点）",
+    preProxyHelp: "连接本组节点时经此前置组转发。前置组必须已连接；暂支持原生 VMess/VLESS/Trojan/SS/SOCKS/HTTP 节点，外部插件及其他协议会明确报错。",
     addMessage: "请输入你想要添加的代理分组名称：",
     deleteMessage:
       '确定要<b>删除</b>出站 "{outboundName}" 吗？注意，该操作是不可逆的。',

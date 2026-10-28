@@ -65,6 +65,11 @@ func buildCacheKey(query *DnsQuery, upstream *UpstreamInstance) CacheKey {
 	upstreamAddr := ""
 	if upstream != nil {
 		upstreamAddr = upstream.Addr
+		// A response obtained from a subscription's fallback must not be reused
+		// by another policy that only happens to share the primary resolver.
+		if len(upstream.Fallback) > 0 {
+			upstreamAddr += "|fallback:" + upstream.ID + ":" + strings.Join(upstream.Fallback, ",")
+		}
 	}
 	return CacheKey{
 		UpstreamAddr: upstreamAddr,

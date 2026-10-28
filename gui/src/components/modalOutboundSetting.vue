@@ -6,6 +6,12 @@
       </p>
     </header>
     <section class="modal-card-body">
+      <b-field :label="$t('outbound.preProxy')" :message="$t('outbound.preProxyHelp')">
+        <b-select v-model="setting.preProxy" expanded>
+          <option value="">{{ $t('outbound.noPreProxy') }}</option>
+          <option v-for="group in groups.filter(g => g !== outbound)" :key="group" :value="group">{{ group }}</option>
+        </b-select>
+      </b-field>
       <b-field label="ProbeURL" label-position="on-border">
         <b-input ref="probe_url" v-model="setting.probeURL" required expanded />
       </b-field>
@@ -57,7 +63,9 @@ export default {
     },
   },
   data: () => ({
+    groups: [],
     setting: {
+      preProxy: "",
       probeURL: "",
       probeInterval: "",
       type: "",
@@ -65,6 +73,7 @@ export default {
     backendReady: false,
   }),
   created() {
+    this.$axios.get(apiRoot + '/outbounds').then(res => handleResponse(res, this, () => { this.groups = res.data.data.outbounds; }));
     this.$axios({
       url: apiRoot + "/outbound",
       params: {

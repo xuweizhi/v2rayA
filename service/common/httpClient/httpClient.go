@@ -154,3 +154,12 @@ func GetHttpClientsForWebdav(mode configure.WebdavConnectionMode) ([]*http.Clien
 		return nil, fmt.Errorf("invalid WebDAV connection mode %q", mode)
 	}
 }
+
+// GetDirectDialer bypasses the system proxy and the active transparent rules.
+func GetDirectDialer() *net.Dialer {
+	d := &net.Dialer{Timeout: 8 * time.Second}
+	if v2ray.IsTransparentOn(configure.GetSettingNotNil()) {
+		d.Control = directSocketControl
+	}
+	return d
+}

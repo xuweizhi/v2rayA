@@ -118,6 +118,9 @@ func (ws *Whiches) GetNonDuplicated() (w []*Which) {
 	ts := make(map[Which]struct{})
 	//下标范围检测，并利用map的key值无重复特性去重
 	for i := range ws.Touches {
+		if ws.Touches[i] == nil {
+			continue
+		}
 		ind := ws.Touches[i].ID - 1
 		v := *ws.Touches[i]
 		switch v.TYPE {

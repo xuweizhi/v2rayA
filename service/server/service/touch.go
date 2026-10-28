@@ -23,7 +23,7 @@ func DeleteWhich(ws []*configure.Which) (err error) {
 		switch v.TYPE {
 		case configure.SubscriptionType: // Here a subscription is being deleted
 			// Check if the currently connected node is in this subscription, if so, disconnect
-			css := cssRaw.Get()
+			css := cssAfter
 			for i := len(css) - 1; i >= 0; i-- {
 				cs := css[i]
 				if cs != nil && cs.TYPE == configure.SubscriptionServerType {
@@ -42,7 +42,7 @@ func DeleteWhich(ws []*configure.Which) (err error) {
 			bDeletedSubscription = true
 		case configure.ServerType:
 			// Check if the currently connected node is this server, if so, disconnect
-			css := cssRaw.Get()
+			css := cssAfter
 			for i := len(css) - 1; i >= 0; i-- {
 				cs := css[i]
 				if cs != nil && cs.TYPE == configure.ServerType {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"strconv"
@@ -67,7 +68,8 @@ func (a *xrayDispatcherAdapter) Dispatch(ctx context.Context, network, addr, pro
 	// For "direct", no special tag is needed (uses default routing).
 	dnsCtx := ctx
 	if proxyTag != "" && proxyTag != "direct" {
-		dnsCtx = session.ContextWithInbound(dnsCtx, &session.Inbound{Tag: proxyTag})
+		tag := "v2raya-dns-" + base64.RawURLEncoding.EncodeToString([]byte(proxyTag))
+		dnsCtx = session.ContextWithInbound(dnsCtx, &session.Inbound{Tag: tag})
 	}
 	// Mark as DNS traffic to prevent recursive DNS resolution.
 	dnsCtx = session.ContextWithContent(dnsCtx, &session.Content{

@@ -1,154 +1,82 @@
 package gopeed
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"fmt"
-	"io"
-	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"reflect"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestDown(t *testing.T) {
-	type args struct {
-		request *Request
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{
-			"proxyee-down.ico",
-			args{
-				&Request{
-					"get",
-					"https://raw.githubusercontent.com/proxyee-down-org/proxyee-down/master/front/public/favicon.ico",
-					map[string]string{
-						"Host":            "github.com",
-						"User-Agent":      "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/72.0.3626.121 Safari/537.36",
-						"Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-						"Referer":         "http://github.com/proxyee-down-org/proxyee-down/releases",
-						"Accept-Encoding": "gzip, deflate, br",
-						"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-					},
-					nil,
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			os.Remove("favicon.ico")
-			err := Down(tt.args.request, "/tmp")
-			if err != nil {
-				t.Errorf("error down= %v", err)
-				return
+func TestDownloadRangesAndStreams(t *testing.T) {
+	for _, content := range []string{"", "a", "ab", strings.Repeat("payload", 1000)} {
+		for _, ranges := range []bool{false, true} {
+			if ranges && content == "" {
+				continue
 			}
-			downMd5 := fileMd5("favicon.ico")
-			os.Remove("favicon.ico")
-			if "8de7a6a2e786861013d61b77b2394012" != downMd5 {
-				t.Errorf("error md5= %v", downMd5)
-				return
-			}
-		})
+			t.Run(fmt.Sprintf("size=%d/range=%v", len(content), ranges), func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if ranges {
+						http.ServeContent(w, r, "data", time.Time{}, strings.NewReader(content))
+					} else {
+						w.(http.Flusher).Flush()
+						fmt.Fprint(w, content)
+					}
+				}))
+				defer server.Close()
+				to := filepath.Join(t.TempDir(), "result")
+				if err := Down(&Request{URL: server.URL}, to); err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(to)
+				if err != nil || string(got) != content {
+					t.Fatalf("download mismatch: %v", err)
+				}
+			})
+		}
 	}
 }
 
-func TestResolve(t *testing.T) {
-	// os.Setenv("HTTP_PROXY", "http://127.0.0.1:8888")
-	type args struct {
-		request *Request
-	}
-	tests := []struct {
-		name    string
-		args    args
-		want    *Response
-		wantErr bool
-	}{
-		{
-			"proxyee-down.ico",
-			args{
-				&Request{
-					"get",
-					"https://raw.githubusercontent.com/proxyee-down-org/proxyee-down/master/front/public/favicon.ico",
-					map[string]string{
-						"Host":            "github.com",
-						"User-Agent":      "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/72.0.3626.121 Safari/537.36",
-						"Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-						"Referer":         "http://github.com/proxyee-down-org/proxyee-down/releases",
-						"Accept-Encoding": "gzip, deflate, br",
-						"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-					},
-					nil,
-				},
-			},
-			&Response{"favicon.ico", 116093, true},
-			false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := Resolve(tt.args.request)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Resolve() error = %v, wantErr %v", err, tt.wantErr)
-				return
+func TestFailedChunkPreservesDestination(t *testing.T) {
+	for _, failure := range []string{"status", "ignored-range", "truncated"} {
+		t.Run(failure, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if requests.Add(1) == 1 {
+					w.Header().Set("Content-Range", "bytes 0-0/8")
+					w.WriteHeader(http.StatusPartialContent)
+					fmt.Fprint(w, "a")
+					return
+				}
+				switch failure {
+				case "status":
+					w.WriteHeader(http.StatusServiceUnavailable)
+				case "ignored-range":
+					fmt.Fprint(w, "abcdefgh")
+				case "truncated":
+					w.Header().Set("Content-Range", strings.Replace(r.Header.Get("Range"), "=", " ", 1)+"/8")
+					w.WriteHeader(http.StatusPartialContent)
+					fmt.Fprint(w, "a")
+				}
+			}))
+			defer server.Close()
+			dir := t.TempDir()
+			to := filepath.Join(dir, "result")
+			if err := os.WriteFile(to, []byte("original"), 0600); err != nil {
+				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Resolve() = %v, want %v", got, tt.want)
+			if err := Down(&Request{URL: server.URL}, to); err == nil {
+				t.Fatal("download should fail")
+			}
+			got, _ := os.ReadFile(to)
+			files, _ := os.ReadDir(dir)
+			if string(got) != "original" || len(files) != 1 {
+				t.Fatal("failed download modified destination or leaked temporary file")
 			}
 		})
 	}
-}
-
-func TestTemp(t *testing.T) {
-	f, err := os.Create("e:/testbt/test.data")
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := f.Truncate(1024 * 1024 * 512); err != nil {
-		log.Fatal(err)
-	}
-	bts := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9}
-	s := time.Now().UnixNano()
-	f.Write(bts)
-	fmt.Printf("write from 0 use: %d\n", time.Now().UnixNano()-s)
-	s = time.Now().UnixNano()
-	f.Seek(1024*1024*128, 0)
-	f.Write(bts)
-	fmt.Printf("write from 128M use %d\n", time.Now().UnixNano()-s)
-	s = time.Now().UnixNano()
-	f.Write(bts)
-	fmt.Printf("write from 128M+9b use %d\n", time.Now().UnixNano()-s)
-	s = time.Now().UnixNano()
-	f.Seek(0, 0)
-	f.Write(bts)
-	fmt.Printf("write from 0 agein use %d\n", time.Now().UnixNano()-s)
-	s = time.Now().UnixNano()
-	f.Seek(1024*1024*64, 0)
-	f.Write(bts)
-	fmt.Printf("write from agein 64M use %d\n", time.Now().UnixNano()-s)
-}
-
-func fileMd5(filePath string) string {
-	file, _ := os.Open(filePath)
-
-	// Tell the program to call the following function when the current function returns
-	defer file.Close()
-
-	// Open a new hash interface to write to
-	hash := md5.New()
-
-	// Copy the file in the hash interface and check for any error
-	if _, err := io.Copy(hash, file); err != nil {
-		return ""
-	}
-	return hex.EncodeToString(hash.Sum(nil))
-}
-
-func TestTemp2(t *testing.T) {
-	fmt.Println("123456789"[2:3])
 }

@@ -19,6 +19,7 @@
             :current-outbound="outboundName"
             :is-mobile="isMobile"
             @select="outboundName = $event"
+            @settings="handleClickOutboundSetting(null, $event)"
             @add-outbound="handleAddOutbound"
             @changed="handleGroupChanged"
             @group-deleted="handleGroupDeleted"
@@ -103,7 +104,10 @@
       :outbounds="outbounds"
       :observatory="observatory"
       @novice-mode-change="handleNoviceModeChange"
-    />
+    >
+      <DashboardSummary ref="dashboardSummary" :traffic="traffic" :running-state="runningState" :outbound="outboundName"
+        @traffic="handleClickTraffic" @diagnose="handleClickDiagnose" @settings="handleClickSetting" />
+    </node>
     <b-modal :active.sync="showCustomPorts" has-modal-card trap-focus aria-role="dialog" aria-modal
       class="modal-custom-ports">
       <ModalCustomAddress @close="showCustomPorts = false" />
@@ -128,9 +132,11 @@ import axios from "@/plugins/axios";
 import ModalLog from "@/components/modalLog";
 import ModalLogin from "@/components/modalLogin";
 import ModalTraffic from "@/components/modalTraffic";
+import ModalDiagnose from "@/components/modalDiagnose";
+import DashboardSummary from "@/components/dashboardSummary";
 
 export default {
-  components: { ModalCustomAddress, node, OutboundGroupPanel, ModalLogin },
+  components: { ModalCustomAddress, node, OutboundGroupPanel, ModalLogin, DashboardSummary },
   data() {
     return {
       ws: null,
@@ -430,6 +436,9 @@ export default {
         this.traffic.samples.splice(0, this.traffic.samples.length - 60);
       }
     },
+    handleClickDiagnose() {
+      this.$buefy.modal.open({ parent: this, component: ModalDiagnose, hasModalCard: true, props: { initialOutbound: this.outboundName } });
+    },
     handleClickTraffic() {
       this.$buefy.modal.open({
         parent: this,
@@ -590,7 +599,7 @@ export default {
       );
     },
     handleClickOutboundSetting(event, outbound) {
-      event.stopPropagation();
+      if (event) event.stopPropagation();
       const that = this;
       this.$buefy.modal.open({
         parent: this,
@@ -645,6 +654,9 @@ export default {
           },
           "novice-change"(novice) {
             that.handleNoviceModeChange(novice);
+          },
+          "settings-updated"() {
+            if (that.$refs.dashboardSummary) that.$refs.dashboardSummary.refreshSetting();
           },
         },
       });

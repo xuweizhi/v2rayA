@@ -14,6 +14,7 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
+	"github.com/mohae/deepcopy"
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/common/httpClient"
 	"github.com/v2rayA/v2rayA/common/resolv"
@@ -164,6 +165,7 @@ type subscriptionFetchResult struct {
 	infos   []serverObj.ServerObj
 	status  string
 	traffic SubscriptionUserInfo
+	nodeDNS []string
 }
 
 // ResolveSubscriptionWithClient downloads and parses a subscription. The
@@ -171,6 +173,9 @@ type subscriptionFetchResult struct {
 // filters) come from extra; password is the decrypt password for encrypted
 // subscriptions.
 func ResolveSubscriptionWithClient(source string, client *http.Client, password string, extra configure.SubscriptionExtra) (result subscriptionFetchResult, err error) {
+	if err = extra.Validate(); err != nil {
+		return result, err
+	}
 	c := *client
 	if c.Timeout < 30*time.Second {
 		c.Timeout = 30 * time.Second
@@ -244,6 +249,9 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 	var status string
 	if isClashYAML(raw) {
 		infos, status, err = resolveClashYAML(raw)
+		if err == nil {
+			result.nodeDNS, err = resolveClashNodeDNS(raw)
+		}
 	} else {
 		infos, status, err = ResolveByLines(raw)
 	}
@@ -258,16 +266,21 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 	} else {
 		status = sui.String()
 	}
-	return subscriptionFetchResult{infos: infos, status: status, traffic: sui}, nil
+	return subscriptionFetchResult{infos: infos, status: status, traffic: sui, nodeDNS: result.nodeDNS}, nil
 }
 
 // subscriptionDownloadClients returns the HTTP clients to try in order,
 // based on the per-subscription download strategy.
-func subscriptionDownloadClients(direct *http.Client, extra configure.SubscriptionExtra) ([]*http.Client, error) {
+func subscriptionDownloadClients(system *http.Client, extra configure.SubscriptionExtra) ([]*http.Client, error) {
 	strategy := extra.DownloadStrategy
 	if strategy == "" {
 		// Follow the system: the default client already honors the
 		// transparent proxy when active.
+		return []*http.Client{system}, nil
+	}
+	direct := httpClient.GetHttpClientDirect()
+	direct.Timeout = system.Timeout
+	if strategy == "onlyDirect" {
 		return []*http.Client{direct}, nil
 	}
 	ports := configure.GetPortsNotNil()
@@ -294,9 +307,10 @@ func subscriptionDownloadClients(direct *http.Client, extra configure.Subscripti
 		return []*http.Client{proxyClient}, nil
 	case "preferProxy":
 		return []*http.Client{proxyClient, direct}, nil
+	case "preferDirect":
+		return []*http.Client{direct, proxyClient}, nil
 	default:
-		// preferDirect and anything else
-		return []*http.Client{direct}, nil
+		return nil, fmt.Errorf("invalid subscription download strategy %q", strategy)
 	}
 }
 
@@ -323,14 +337,33 @@ func filterServersByExtra(infos []serverObj.ServerObj, extra configure.Subscript
 	}
 	out := make([]serverObj.ServerObj, 0, len(infos))
 	for _, info := range infos {
+		if info == nil {
+			continue
+		}
 		name := info.GetName()
+		if len(extra.IncludeProtocols) > 0 {
+			found := false
+			for _, protocol := range extra.IncludeProtocols {
+				if protocol == info.GetProtocol() {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		target := name
+		if extra.FilterField == "host" {
+			target = info.GetHostname()
+		}
 		if removed[name] {
 			continue
 		}
-		if includeRe != nil && !includeRe.MatchString(name) {
+		if includeRe != nil && !includeRe.MatchString(target) {
 			continue
 		}
-		if excludeRe != nil && excludeRe.MatchString(name) {
+		if excludeRe != nil && excludeRe.MatchString(target) {
 			continue
 		}
 		out = append(out, info)
@@ -341,6 +374,7 @@ func filterServersByExtra(infos []serverObj.ServerObj, extra configure.Subscript
 // applyServerFlags marks a server raw with its per-node flags (disabled,
 // favorite) from the subscription extra.
 func applyServerFlags(sr *configure.ServerRaw, extra configure.SubscriptionExtra) {
+	sr.Disabled, sr.Fav = false, false
 	if sr.ServerObj == nil {
 		return
 	}
@@ -388,6 +422,11 @@ func getDataUsageStatus(bytesUsed, bytesRemaining uint64) (status string) {
 
 func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	subscriptions := configure.GetSubscriptions()
+	if index < 0 || index >= len(subscriptions) {
+		return fmt.Errorf("subscription not found")
+	}
+	oldRaw := deepcopy.Copy(subscriptions[index]).(configure.SubscriptionRaw)
+	oldConnections := deepcopy.Copy(configure.GetConnectedServers()).(*configure.Whiches)
 	addr := subscriptions[index].Address
 	password := subscriptions[index].DecryptPassword
 	extra := subscriptions[index].Extra
@@ -520,6 +559,8 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	subscriptions[index].Status = string(touch.NewUpdateStatus())
 	subscriptions[index].Info = status
 	subscriptions[index].Extra.LastUpdateTime = time.Now().Unix()
+	dnsChanged := strings.Join(subscriptions[index].Extra.ProviderNodeDNS, "\n") != strings.Join(result.nodeDNS, "\n")
+	subscriptions[index].Extra.ProviderNodeDNS = result.nodeDNS
 	subscriptions[index].Extra.Upload = result.traffic.Upload
 	subscriptions[index].Extra.Download = result.traffic.Download
 	subscriptions[index].Extra.Total = result.traffic.Total
@@ -529,9 +570,9 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	}
 	// A remapped connection may point at a server whose config differs from the old
 	// one; the running core keeps using the old config until it is regenerated.
-	if connectedServerChanged && v2ray.ProcessManager.Running() {
+	if (connectedServerChanged || dnsChanged) && v2ray.ProcessManager.Running() {
 		if err := v2ray.UpdateV2RayConfig(); err != nil {
-			log.Warn("UpdateSubscription: failed to reload core after remapping connected servers: %v", err)
+			return restoreSubscriptionConfig(index, &oldRaw, oldConnections, err)
 		}
 	}
 	return nil
@@ -542,6 +583,14 @@ func ModifySubscriptionRemark(subscription touch.Subscription) (err error) {
 	if raw == nil {
 		return fmt.Errorf("failed to find the corresponding subscription")
 	}
+	if err := subscription.Extra.Validate(); err != nil {
+		return err
+	}
+	// Provider data comes from the downloaded profile, never from the editor.
+	subscription.Extra.ProviderNodeDNS = raw.Extra.ProviderNodeDNS
+	dnsChanged := strings.Join(raw.Extra.EffectiveNodeDNS(), "\n") != strings.Join(subscription.Extra.EffectiveNodeDNS(), "\n")
+	oldRaw := deepcopy.Copy(*raw).(configure.SubscriptionRaw)
+	oldConnections := deepcopy.Copy(configure.GetConnectedServers()).(*configure.Whiches)
 	raw.Remarks = subscription.Remarks
 	raw.Address = subscription.Address
 	raw.AutoSelect = subscription.AutoSelect
@@ -614,7 +663,26 @@ func ModifySubscriptionRemark(subscription touch.Subscription) (err error) {
 	for i := range raw.Servers {
 		applyServerFlags(&raw.Servers[i], raw.Extra)
 	}
-	return configure.SetSubscription(subscription.ID-1, raw)
+	if err := configure.SetSubscription(subscription.ID-1, raw); err != nil {
+		return err
+	}
+	if dnsChanged && v2ray.ProcessManager.Running() {
+		if err := v2ray.UpdateV2RayConfig(); err != nil {
+			return restoreSubscriptionConfig(subscription.ID-1, &oldRaw, oldConnections, err)
+		}
+	}
+	return nil
+}
+
+// Called only after a failed reload of a previously running core.
+func restoreSubscriptionConfig(index int, raw *configure.SubscriptionRaw, connections *configure.Whiches, cause error) error {
+	err := errors.Join(cause, configure.SetSubscription(index, raw), configure.OverwriteConnects(connections))
+	if !v2ray.ProcessManager.Running() {
+		if restoreErr := v2ray.UpdateV2RayConfig(); restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("restoring previous core failed: %w", restoreErr))
+		}
+	}
+	return err
 }
 
 func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error) {
@@ -695,4 +763,22 @@ func AutoSelectServersFromSubscriptions(shouldDisconnect bool) (err error) {
 		}
 	}
 	return nil
+}
+
+// PreviewSubscriptionFilter never downloads a profile or alters stored nodes.
+func PreviewSubscriptionFilter(id int, extra configure.SubscriptionExtra) (int, int, error) {
+	if err := extra.Validate(); err != nil {
+		return 0, 0, err
+	}
+	if id < 1 || id > configure.GetLenSubscriptions() {
+		return 0, 0, fmt.Errorf("subscription not found")
+	}
+	raw := configure.GetSubscription(id - 1)
+	var nodes []serverObj.ServerObj
+	for _, node := range raw.Servers {
+		if node.ServerObj != nil {
+			nodes = append(nodes, node.ServerObj)
+		}
+	}
+	return len(nodes), len(filterServersByExtra(nodes, extra)), nil
 }

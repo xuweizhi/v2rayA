@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,6 +26,9 @@ func GetSetting() *configure.Setting {
 }
 
 func UpdateSetting(setting *configure.Setting) (err error) {
+	if err := setting.Validate(); err != nil {
+		return err
+	}
 	if setting.LogLevel == "" {
 		setting.LogLevel = conf.GetEnvironmentConfig().LogLevel
 	}
@@ -34,6 +38,22 @@ func UpdateSetting(setting *configure.Setting) (err error) {
 	if (setting.Transparent == configure.TransparentGfwlist || setting.RulePortMode == configure.GfwlistMode) && !asset.DoesV2rayAssetExist("LoyalsoldierSite.dat") {
 		return fmt.Errorf("cannot find GFWList files. update GFWList and try again")
 	}
+	previous := GetSetting()
+	wasRunning := v2ray.ProcessManager.Running()
+	ipForwardWasOn := ipforward.IsIpForwardOn()
+	defer func() {
+		if err == nil {
+			return
+		}
+		err = errors.Join(err, configure.SetSetting(previous))
+		log.SetLogLevel(previous.LogLevel)
+		if ipforward.IsIpForwardOn() != ipForwardWasOn {
+			err = errors.Join(err, ipforward.WriteIpForward(ipForwardWasOn))
+		}
+		if wasRunning && !v2ray.ProcessManager.Running() {
+			err = errors.Join(err, v2ray.UpdateV2RayConfig())
+		}
+	}()
 	if setting.IpForward != ipforward.IsIpForwardOn() {
 		e := ipforward.WriteIpForward(setting.IpForward)
 		if e != nil {
@@ -53,15 +73,19 @@ func UpdateSetting(setting *configure.Setting) (err error) {
 			return fmt.Errorf("invalid config: %w", err)
 		}
 	}
-	if setting.GFWListAutoUpdateMode == configure.AutoUpdateAtIntervals {
-		conf.TickerUpdateGFWList.Reset(time.Duration(setting.GFWListAutoUpdateIntervalHour) * time.Hour)
-	} else {
-		conf.TickerUpdateGFWList.Reset(24 * time.Hour * 365 * 100)
+	if conf.TickerUpdateGFWList != nil {
+		if setting.GFWListAutoUpdateMode == configure.AutoUpdateAtIntervals {
+			conf.TickerUpdateGFWList.Reset(configure.AutoUpdateInterval(setting.GFWListAutoUpdateIntervalHour))
+		} else {
+			conf.TickerUpdateGFWList.Reset(24 * time.Hour * 365 * 100)
+		}
 	}
-	if setting.SubscriptionAutoUpdateMode == configure.AutoUpdateAtIntervals {
-		conf.TickerUpdateSubscription.Reset(time.Duration(setting.SubscriptionAutoUpdateIntervalHour) * time.Hour)
-	} else {
-		conf.TickerUpdateSubscription.Reset(24 * time.Hour * 365 * 100)
+	if conf.TickerUpdateSubscription != nil {
+		if setting.SubscriptionAutoUpdateMode == configure.AutoUpdateAtIntervals {
+			conf.TickerUpdateSubscription.Reset(configure.AutoUpdateInterval(setting.SubscriptionAutoUpdateIntervalHour))
+		} else {
+			conf.TickerUpdateSubscription.Reset(24 * time.Hour * 365 * 100)
+		}
 	}
 	return
 }

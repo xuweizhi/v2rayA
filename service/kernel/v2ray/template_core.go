@@ -3,6 +3,7 @@ package v2ray
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -34,13 +35,17 @@ type Template struct {
 	// DnsModuleConfig 是新 DNS 模块的配置，由 v2raya-core 启动时解析并启动 DNS 监听器。
 	DnsModuleConfig json.RawMessage `json:"dns_module,omitempty"`
 
-	Variant       where.Variant          `json:"-"`
-	CoreVersion   string                 `json:"-"`
-	OutboundTags  []string               `json:"-"`
-	ApiCloses     []func()               `json:"-"`
-	ApiPort       int                    `json:"-"`
-	Setting       *configure.Setting     `json:"-"`
-	serverInfoMap map[string]*serverInfo `json:"-"` // outbound tag -> server info
+	Variant           where.Variant      `json:"-"`
+	CoreVersion       string             `json:"-"`
+	OutboundTags      []string           `json:"-"`
+	ApiCloses         []func()           `json:"-"`
+	ApiPort           int                `json:"-"`
+	Setting           *configure.Setting `json:"-"`
+	ProbePorts        map[string]int     `json:"-"`
+	ProbePaths        map[string]string  `json:"-"`
+	internalRoutes    []coreObj.RoutingRule
+	probeReservations []net.Listener
+	serverInfoMap     map[string]*serverInfo `json:"-"` // outbound tag -> server info
 }
 
 func (t *Template) Close() error {
@@ -67,6 +72,7 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 	}
 	tmplJson.Variant, tmplJson.CoreVersion, _ = where.GetV2rayServiceVersion()
 	t = &tmplJson
+	defer t.releaseProbeReservations()
 	t.Setting = setting
 	// log
 	logLevel := setting.LogLevel
@@ -101,14 +107,27 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 		return nil, err
 	}
 	t.OutboundTags = outboundTags
+	if err = t.applyPreProxies(serverData); err != nil {
+		return nil, err
+	}
 
 	//set inbound ports according to the setting
 	if err = t.setInbound(setting); err != nil {
 		return nil, err
 	}
+	if err = t.addProbeInbounds(serverData); err != nil {
+		return nil, err
+	}
 	// When TinyTun is active it handles DNS routing natively; v2ray only forwards traffic.
 	// Skip the DNS module for that mode.
 	isTinyTunMode := setting.TransparentType == configure.TransparentTun && IsTransparentOn(setting)
+	if isTinyTunMode {
+		for _, info := range serverInfos {
+			if len(info.NodeDNS) > 0 && net.ParseIP(info.Info.GetHostname()) == nil {
+				return nil, fmt.Errorf("subscription node DNS is not supported in TinyTun mode; disable it for this subscription or use redirect/tproxy")
+			}
+		}
+	}
 	if !isTinyTunMode {
 		//生成新 DNS 模块配置
 		if err = t.setDNS(serverInfos); err != nil {
@@ -156,6 +175,8 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 	// add spare tire outbound routing. Fix: https://github.com/v2rayA/v2rayA/issues/447
 	t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{Type: "field", Port: "0-65535", OutboundTag: "proxy"})
 
+	// Internal routes must precede user rules and node-address direct rules.
+	t.Routing.Rules = append(t.internalRoutes, t.Routing.Rules...)
 	// Set group routing. This should be put in the end of routing setters.
 	t.setGroupRouting()
 

@@ -31,6 +31,15 @@ func validateSQLiteDriver() error {
 	return nil
 }
 
+// OpenStandalone opens an independent database using the driver selected for
+// this architecture. It never initializes or changes the application's DB.
+func OpenStandalone(dsn string) (*sql.DB, error) {
+	if err := validateSQLiteDriver(); err != nil {
+		return nil, err
+	}
+	return sql.Open(sqliteDriverName, dsn)
+}
+
 // SetReadOnly sets the database to read-only mode.
 // In read-only mode, a temporary copy of the database is created.
 func SetReadOnly() {

@@ -36,12 +36,16 @@ func StartV2ray() (err error) {
 }
 
 func Disconnect(which configure.Which, clearOutbound bool) (err error) {
+	if which.Outbound == "" {
+		which.Outbound = "proxy"
+	}
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("failed to disconnect: %w", err)
 		}
 	}()
 	lastConnected := configure.GetConnectedServersByOutbound(which.Outbound)
+	wasRunning := v2ray.ProcessManager.Running()
 	if clearOutbound {
 		err = configure.ClearConnects(which.Outbound)
 	} else {
@@ -51,11 +55,13 @@ func Disconnect(which configure.Which, clearOutbound bool) (err error) {
 		return
 	}
 	//update the v2ray config and restart v2ray
-	if v2ray.ProcessManager.Running() {
+	if wasRunning {
 		defer func() {
-			if err != nil && lastConnected != nil && v2ray.ProcessManager.Running() {
-				_ = configure.OverwriteConnects(lastConnected)
-				_ = v2ray.UpdateV2RayConfig()
+			if err != nil {
+				err = errors.Join(err, restoreOutboundConnections(which.Outbound, lastConnected))
+				if !v2ray.ProcessManager.Running() {
+					err = errors.Join(err, v2ray.UpdateV2RayConfig())
+				}
 			}
 		}()
 		if err = v2ray.UpdateV2RayConfig(); err != nil {
@@ -98,6 +104,15 @@ func Connect(which *configure.Which) (err error) {
 	if which == nil {
 		return fmt.Errorf("which can not be nil")
 	}
+	if which.Outbound == "" {
+		which.Outbound = "proxy"
+	}
+	if _, err = which.LocateServerRaw(); err != nil {
+		return err
+	}
+	if !outboundExists(which.Outbound) {
+		return fmt.Errorf("outbound %q does not exist", which.Outbound)
+	}
 	setting := GetSetting()
 	if err = checkSupport([]*configure.Which{which}); err != nil {
 		if !errors.Is(err, V2OnlyFeatureError) {
@@ -116,11 +131,14 @@ func Connect(which *configure.Which) (err error) {
 	}
 	//locate server
 	currentConnected := configure.GetConnectedServersByOutbound(which.Outbound)
+	wasRunning := v2ray.ProcessManager.Running()
 	defer func() {
 		// if error occurs, restore the result of connecting
-		if err != nil && currentConnected != nil && v2ray.ProcessManager.Running() {
-			_ = configure.OverwriteConnects(currentConnected)
-			_ = v2ray.UpdateV2RayConfig()
+		if err != nil {
+			err = errors.Join(err, restoreOutboundConnections(which.Outbound, currentConnected))
+			if wasRunning && !v2ray.ProcessManager.Running() {
+				err = errors.Join(err, v2ray.UpdateV2RayConfig())
+			}
 		}
 	}()
 	//save the result of connecting to database
@@ -136,6 +154,22 @@ func Connect(which *configure.Which) (err error) {
 	return
 }
 
+func outboundExists(name string) bool {
+	for _, group := range configure.GetOutbounds() {
+		if group == name {
+			return true
+		}
+	}
+	return false
+}
+
+func restoreOutboundConnections(group string, previous *configure.Whiches) error {
+	if previous.Len() == 0 {
+		return configure.ClearConnects(group)
+	}
+	return configure.OverwriteConnects(previous)
+}
+
 // ReplaceOutboundConnections atomically replaces members of one outbound group.
 // It updates v2ray config once after DB changes, and rolls back on failure.
 func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err error) {
@@ -149,6 +183,10 @@ func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err
 
 	if outbound == "" {
 		outbound = "proxy"
+	}
+
+	if !outboundExists(outbound) {
+		return fmt.Errorf("outbound %q does not exist", outbound)
 	}
 
 	// Normalize outbound and deduplicate touches.
@@ -167,6 +205,9 @@ func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err
 			}
 		default:
 			return fmt.Errorf("invalid touch type at index %d: %q", i, wt.TYPE)
+		}
+		if _, err := wt.LocateServerRaw(); err != nil {
+			return err
 		}
 		wt.Outbound = outbound
 		key := fmt.Sprintf("%s/%d/%d", wt.TYPE, wt.ID, wt.Sub)

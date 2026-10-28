@@ -17,15 +17,17 @@ type Resp struct {
 var RespCache = lru.New(lru.FixedLength, 10)
 
 const (
-	SUCCESS         = "SUCCESS"
-	FAIL            = "FAIL"
-	UNAUTHORIZED    = "UNAUTHORIZED"
-	RequestIdHeader = "X-V2raya-Request-Id"
+	SUCCESS                = "SUCCESS"
+	FAIL                   = "FAIL"
+	UNAUTHORIZED           = "UNAUTHORIZED"
+	RequestIdHeader        = "X-V2raya-Request-Id"
+	RequestCacheContextKey = "v2raya.request-cache-key"
 )
 
 // 当code为FAIL时，data为string类型返回给前端的消息
 func Response(ctx *gin.Context, code Code, data interface{}) (status int, body gin.H) {
-	if reqId := ctx.GetHeader(RequestIdHeader); reqId != "" {
+	// Only authenticated requests admitted by ReqCache may use response caching.
+	if reqId := ctx.GetString(RequestCacheContextKey); reqId != "" {
 		if resp := RespCache.Get(reqId); resp != nil {
 			resp, ok := resp.(Resp)
 			if !ok {

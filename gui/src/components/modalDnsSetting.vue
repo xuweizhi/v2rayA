@@ -72,6 +72,11 @@
         </div>
       </div>
 
+      <b-field :label="$t('diagnose.outbound')">
+        <b-select v-model="probeOutbound" expanded>
+          <option v-for="group in outbounds" :key="group" :value="group">{{ group }}</option>
+        </b-select>
+      </b-field>
       <div class="dns-add-row">
         <b-button
           size="is-small"
@@ -111,7 +116,7 @@
           style="max-height: 240px"
         >
           <b-table-column field="kind" :label="$t('dns.kind')" width="80" v-slot="p">
-            {{ p.row.kind === "direct" ? $t("dns.direct") : $t("dns.proxy") }}
+            {{ p.row.path || p.row.outbound }}
           </b-table-column>
           <b-table-column field="server" :label="$t('dns.colServer')" v-slot="p">
             {{ p.row.server }}
@@ -152,6 +157,7 @@ export default {
   data: () => ({
     rules: DEFAULT_RULES.map((r) => ({ ...r })),
     outbounds: ["proxy"],
+    probeOutbound: "proxy",
     autoSetupLoading: false,
     autoSetupResult: null,
   }),
@@ -203,6 +209,7 @@ export default {
       this.autoSetupResult = null;
       this.$axios({
         url: apiRoot + "/dnsAutoSetup",
+        params: { outbound: this.probeOutbound },
         method: "post",
         timeout: 60000,
       })

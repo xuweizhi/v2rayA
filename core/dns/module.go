@@ -90,6 +90,16 @@ func (m *DnsModule) Start() error {
 			if upstream.Bootstrap {
 				continue
 			}
+			if isEncryptedDNS(upstream.Protocol) {
+				host, port, err := encryptedDNSAddress(upstream.Addr, upstream.Protocol)
+				if err != nil {
+					return err
+				}
+				if ip, ok := resolved[host]; ok {
+					m.config.Upstreams[i].DialAddress = net.JoinHostPort(ip, port)
+				}
+				continue
+			}
 			before := upstream.Addr
 			// 从上游地址中提取主机名
 			host, port, err := net.SplitHostPort(upstream.Addr)
@@ -118,6 +128,9 @@ func (m *DnsModule) Start() error {
 
 	// 为所有缺失端口的上游地址补充默认端口
 	for i, upstream := range m.config.Upstreams {
+		if upstream.Protocol == "https" || upstream.Protocol == "doh" {
+			continue
+		}
 		if _, _, err := net.SplitHostPort(upstream.Addr); err != nil {
 			// 没有端口号，根据协议补充
 			port := "53"

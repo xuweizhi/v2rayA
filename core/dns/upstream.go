@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -24,6 +25,9 @@ func BuildUpstreamKey(addr, proxyTag string) string {
 
 // UpstreamInstance represents a single DNS upstream server instance.
 type UpstreamInstance struct {
+	DialAddress    string
+	Fallback       []string
+	attemptTimeout time.Duration
 	// ID is the unique identifier for this upstream.
 	ID string
 	// Addr is the upstream server address (e.g., "8.8.8.8:53").
@@ -85,13 +89,15 @@ func NewUpstreamManager(configs []UpstreamConfig) *UpstreamManager {
 		}
 
 		instance := &UpstreamInstance{
-			ID:        id,
-			Addr:      cfg.Addr,
-			Protocol:  net,
-			ProxyTag:  proxyTag,
-			Healthy:   true,
-			Bootstrap: cfg.Bootstrap,
-			Client:    newMarkedDnsClient(net),
+			ID:          id,
+			DialAddress: cfg.DialAddress,
+			Fallback:    cfg.Fallback,
+			Addr:        cfg.Addr,
+			Protocol:    net,
+			ProxyTag:    proxyTag,
+			Healthy:     true,
+			Bootstrap:   cfg.Bootstrap,
+			Client:      newMarkedDnsClient(net),
 		}
 
 		compositeKey := instance.CompositeKey()
@@ -164,13 +170,15 @@ func (m *UpstreamManager) GetOrCreateUpstream(config UpstreamConfig) *UpstreamIn
 	}
 
 	instance := &UpstreamInstance{
-		ID:        id,
-		Addr:      config.Addr,
-		Protocol:  net,
-		ProxyTag:  proxyTag,
-		Healthy:   true,
-		Bootstrap: config.Bootstrap,
-		Client:    newMarkedDnsClient(net),
+		ID:          id,
+		DialAddress: config.DialAddress,
+		Fallback:    config.Fallback,
+		Addr:        config.Addr,
+		Protocol:    net,
+		ProxyTag:    proxyTag,
+		Healthy:     true,
+		Bootstrap:   config.Bootstrap,
+		Client:      newMarkedDnsClient(net),
 	}
 
 	m.upstreams[compositeKey] = instance
@@ -185,57 +193,48 @@ func (m *UpstreamManager) GetOrCreateUpstream(config UpstreamConfig) *UpstreamIn
 // HealthCheck performs a health check on all upstream servers.
 // Returns a map of composite key → health status.
 func (m *UpstreamManager) HealthCheck() map[string]bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	results := make(map[string]bool, len(m.upstreams))
-
-	for key, upstream := range m.upstreams {
-		healthy := m.pingUpstream(upstream)
-		upstream.Healthy = healthy
-		results[key] = healthy
-		log.Printf("[dns upstream] health check: %s (%s, proxy=%s) → healthy=%v",
-			key, upstream.Addr, upstream.ProxyTag, healthy)
-	}
-
-	return results
+	return m.healthCheck("")
 }
 
-// HealthCheckByProxyTag performs a health check on upstream instances
-// matching the given proxy tag. This allows per-channel health checks.
 func (m *UpstreamManager) HealthCheckByProxyTag(proxyTag string) map[string]bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	return m.healthCheck(proxyTag)
+}
 
-	results := make(map[string]bool)
+func (m *UpstreamManager) healthCheck(proxyTag string) map[string]bool {
+	// Network IO must not hold the manager lock. Publish new immutable instances
+	// so readers already holding an upstream never race with health-state writes.
+	m.mu.RLock()
+	snapshot := make(map[string]*UpstreamInstance, len(m.upstreams))
 	for key, upstream := range m.upstreams {
-		if upstream.ProxyTag == proxyTag {
-			healthy := m.pingUpstream(upstream)
-			upstream.Healthy = healthy
-			results[key] = healthy
+		if proxyTag == "" || upstream.ProxyTag == proxyTag {
+			snapshot[key] = upstream
 		}
 	}
-
+	m.mu.RUnlock()
+	results := make(map[string]bool, len(snapshot))
+	for key, upstream := range snapshot {
+		healthy := m.pingUpstream(upstream)
+		updated := *upstream
+		updated.Healthy = healthy
+		m.mu.Lock()
+		if m.upstreams[key] == upstream {
+			m.upstreams[key] = &updated
+			for id, indexed := range m.upstreamsByID {
+				if indexed == upstream {
+					m.upstreamsByID[id] = &updated
+				}
+			}
+		}
+		m.mu.Unlock()
+		results[key] = healthy
+	}
 	return results
 }
 
-// pingUpstream performs a simple reachability check by sending an SOA query.
 func (m *UpstreamManager) pingUpstream(upstream *UpstreamInstance) bool {
-	client := upstream.Client
-	if client == nil {
-		return false
-	}
-
-	msg := new(dns.Msg)
-	msg.SetQuestion(".", dns.TypeSOA)
-	msg.RecursionDesired = true
-
-	// upstream.Client is always built by newMarkedDnsClient, whose Dialer
-	// sets SO_MARK=0x80 on every socket (UDP included — miekg/dns dials via
-	// net.Dialer, which honors Control for all socket types). The mark lets
-	// health-check pings bypass the transparent-proxy DNS redirect rules.
-	_, _, err := client.Exchange(msg, upstream.Addr)
-	return err == nil
+	// Probe the configured transport and route, including DoH/DoT and proxies.
+	response, err := m.exchangeOne(upstream, &DnsQuery{Name: ".", QType: QueryType(dns.TypeSOA)})
+	return err == nil && response != nil && response.Rcode == dns.RcodeSuccess
 }
 
 // ListUpstreams returns a snapshot of all upstream instances.

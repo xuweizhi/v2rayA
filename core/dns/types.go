@@ -112,11 +112,13 @@ type CacheConfig struct {
 
 // UpstreamConfig holds DNS upstream server configuration.
 type UpstreamConfig struct {
-	ID        string `json:"id"`
-	Addr      string `json:"addr"`
-	Protocol  string `json:"protocol,omitempty"`
-	ProxyTag  string `json:"proxy_tag,omitempty"`
-	Bootstrap bool   `json:"bootstrap,omitempty"`
+	DialAddress string   `json:"-"`
+	Fallback    []string `json:"fallback,omitempty"`
+	ID          string   `json:"id"`
+	Addr        string   `json:"addr"`
+	Protocol    string   `json:"protocol,omitempty"`
+	ProxyTag    string   `json:"proxy_tag,omitempty"`
+	Bootstrap   bool     `json:"bootstrap,omitempty"`
 }
 
 // RuleConfig holds DNS routing rule configuration.

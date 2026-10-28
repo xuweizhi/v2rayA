@@ -245,7 +245,6 @@ func Run() error {
 	root := engine.Group(app.BaseUrl)
 	noAuth := root.Group("api",
 		nocache,
-		reqCache.ReqCache,
 	)
 	{
 		noAuth.GET("version", controller.GetVersion)
@@ -296,6 +295,7 @@ func Run() error {
 		auth.GET("dnsRules", controller.GetDnsRules)
 		auth.PUT("dnsRules", controller.PutDnsRules)
 		auth.POST("dnsAutoSetup", controller.PostDnsAutoSetup)
+		auth.POST("subscriptionFilterPreview", controller.PostSubscriptionFilterPreview)
 		auth.GET("backups", controller.GetBackups)
 		auth.POST("backup", controller.PostBackup)
 		auth.GET("backupDownload", controller.GetBackupDownload)

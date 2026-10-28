@@ -1,11 +1,9 @@
 package gopeed
 
 import (
+	"bytes"
+	"context"
 	"fmt"
-	gonanoid "github.com/matoous/go-nanoid"
-	"github.com/v2rayA/v2rayA/common"
-	"github.com/v2rayA/v2rayA/pkg/util/copyfile"
-	"github.com/v2rayA/v2rayA/pkg/util/log"
 	"io"
 	"mime"
 	"net/http"
@@ -13,10 +11,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
-	"sync"
+	"time"
 )
 
 type Download interface {
@@ -31,7 +27,7 @@ func Resolve(request *Request) (*Response, error) {
 		return nil, err
 	}
 	// Use "Range" header to resolve
-	httpRequest.Header.Add("Range", "bytes=0-0")
+	httpRequest.Header.Set("Range", "bytes=0-0")
 	httpClient := BuildHTTPClient()
 	response, err := httpClient.Do(httpRequest)
 	if err != nil {
@@ -63,74 +59,60 @@ func Resolve(request *Request) (*Response, error) {
 	if ret.Name == "" {
 		ret.Name = "unknow"
 	}
-	// Is support range
-	ret.Range = response.StatusCode == 206
-	// Get file size
+	ret.Name = filepath.Base(strings.ReplaceAll(ret.Name, "\\", "/"))
+	ret.Range = response.StatusCode == http.StatusPartialContent
 	if ret.Range {
-		contentRange := response.Header.Get("Content-Range")
-		if contentRange != "" {
-			// e.g. bytes 0-1000/1001 => 1001
-			total := subLastSlash(contentRange)
-			if total != "" && total != "*" {
-				parse, err := strconv.ParseInt(total, 10, 64)
-				if err != nil {
-					return nil, err
-				}
-				ret.Size = parse
-			}
+		var start, end int64
+		if _, err := fmt.Sscanf(response.Header.Get("Content-Range"), "bytes %d-%d/%d", &start, &end, &ret.Size); err != nil || start != 0 || end != 0 || ret.Size <= 0 {
+			return nil, fmt.Errorf("invalid Content-Range: %q", response.Header.Get("Content-Range"))
 		}
 	} else {
-		contentLength := response.Header.Get("Content-Length")
-		if contentLength != "" {
-			ret.Size, _ = strconv.ParseInt(contentLength, 10, 64)
-		}
+		ret.Size = response.ContentLength
 	}
 	return ret, nil
 }
 
-// Down
+// Down downloads into an adjacent temporary file and only publishes it after
+// every chunk has been received and validated.
 func Down(request *Request, to string) error {
 	response, err := Resolve(request)
 	if err != nil {
 		return err
 	}
-	// allocate file
-	nanoid, _ := gonanoid.Nanoid()
-	filename := response.Name + "." + nanoid
-	tmpPath := filepath.Join(os.TempDir(), filename)
-	file, err := os.Create(tmpPath)
+	file, err := os.CreateTemp(filepath.Dir(to), ".v2raya-download-*")
 	if err != nil {
 		return err
 	}
+	defer os.Remove(file.Name())
 	defer file.Close()
-	if err := file.Truncate(response.Size); err != nil {
-		return err
-	}
-	// support range
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	if response.Range {
-		cons := common.Max(4, runtime.NumCPU())
-		chunkSize := response.Size / int64(cons)
-		waitGroup := &sync.WaitGroup{}
-		waitGroup.Add(cons)
-		for i := 0; i < cons; i++ {
-			start := int64(i) * chunkSize
-			end := start + chunkSize
-			if i == cons-1 {
-				end = response.Size
-			}
-			go downChunk(request, response, file, start, end-1, waitGroup)
+		workers := int64(4)
+		if response.Size < workers {
+			workers = response.Size
 		}
-		waitGroup.Wait()
+		results := make(chan error, workers)
+		for i := int64(0); i < workers; i++ {
+			start, end := response.Size*i/workers, response.Size*(i+1)/workers-1
+			go func() { results <- downChunk(ctx, request, response, file, start, end) }()
+		}
+		for i := int64(0); i < workers; i++ {
+			if chunkErr := <-results; chunkErr != nil && err == nil {
+				err = chunkErr
+				cancel()
+			}
+		}
 	} else {
-		downChunk(request, response, file, 0, response.Size, nil)
+		err = downChunk(ctx, request, response, file, 0, response.Size-1)
 	}
-	err = copyfile.CopyFile(tmpPath, to)
 	if err != nil {
 		return err
 	}
-	file.Close()
-	_ = os.Remove(tmpPath)
-	return nil
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), to)
 }
 
 func subLastSlash(str string) string {
@@ -143,7 +125,7 @@ func subLastSlash(str string) string {
 
 func BuildHTTPRequest(request *Request) (*http.Request, error) {
 	// Build request
-	httpRequest, err := http.NewRequest(strings.ToUpper(request.Method), request.URL, nil)
+	httpRequest, err := http.NewRequest(strings.ToUpper(request.Method), request.URL, bytes.NewReader(request.Content))
 	if err != nil {
 		return nil, err
 	}
@@ -157,41 +139,43 @@ func BuildHTTPClient() *http.Client {
 	// Cookie handle
 	jar, _ := cookiejar.New(nil)
 
-	return &http.Client{Jar: jar}
+	return &http.Client{Jar: jar, Timeout: 2 * time.Minute}
 }
 
-func downChunk(request *Request, response *Response, file *os.File, start int64, end int64, waitGroup *sync.WaitGroup) {
-	if waitGroup != nil {
-		defer waitGroup.Done()
-	}
-	httpRequest, _ := BuildHTTPRequest(request)
-	httpRequest.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", start, end))
-	log.Info("down<%v> %d-%d\n", response.Name, start, end)
-	httpClient := BuildHTTPClient()
-	httpResponse, err := httpClient.Do(httpRequest)
+func downChunk(ctx context.Context, request *Request, response *Response, file *os.File, start, end int64) error {
+	httpRequest, err := BuildHTTPRequest(request)
 	if err != nil {
-		log.Warn("%v", err)
-		return
+		return err
+	}
+	httpRequest = httpRequest.WithContext(ctx)
+	if response.Range {
+		httpRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+	} else {
+		httpRequest.Header.Del("Range")
+	}
+	httpResponse, err := BuildHTTPClient().Do(httpRequest)
+	if err != nil {
+		return err
 	}
 	defer httpResponse.Body.Close()
-	buf := make([]byte, 8192)
-	writeIndex := start
-	for {
-		n, err := httpResponse.Body.Read(buf)
-		if n > 0 {
-			writeSize, err := file.WriteAt(buf[0:n], writeIndex)
-			if err != nil {
-				log.Warn("%v", err)
-				return
-			}
-			writeIndex += int64(writeSize)
+	if response.Range {
+		expected := fmt.Sprintf("bytes %d-%d/%d", start, end, response.Size)
+		if httpResponse.StatusCode != http.StatusPartialContent || httpResponse.Header.Get("Content-Range") != expected {
+			return fmt.Errorf("invalid range response: status=%d range=%q", httpResponse.StatusCode, httpResponse.Header.Get("Content-Range"))
 		}
-		if err != nil {
-			if err != io.EOF {
-				log.Warn("%v", err)
-				return
-			}
-			break
-		}
+	} else if httpResponse.StatusCode != http.StatusOK {
+		return fmt.Errorf("download status error: %d", httpResponse.StatusCode)
 	}
+	var reader io.Reader = httpResponse.Body
+	if response.Range {
+		reader = io.LimitReader(reader, end-start+2)
+	}
+	written, err := io.Copy(io.NewOffsetWriter(file, start), reader)
+	if err != nil {
+		return err
+	}
+	if response.Range && written != end-start+1 || !response.Range && response.Size >= 0 && written != response.Size {
+		return fmt.Errorf("download size mismatch: received %d bytes", written)
+	}
+	return nil
 }

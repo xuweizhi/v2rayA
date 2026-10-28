@@ -84,6 +84,7 @@
       {{ $t("version.coreVersionMismatch", { err: coreVersionErr || "" }) }}
     </b-message>
     <div v-if="ready" class="hero-body">
+      <slot />
       <b-field
         v-if="
           overHeight ||

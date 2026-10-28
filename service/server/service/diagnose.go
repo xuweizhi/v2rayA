@@ -30,7 +30,10 @@ type DiagnoseReport struct {
 }
 
 // Diagnose runs the network self-check and builds a copyable report.
-func Diagnose(domain string) (report DiagnoseReport) {
+func Diagnose(domain, outbound string) (report DiagnoseReport) {
+	if outbound == "" {
+		outbound = "proxy"
+	}
 	report.Version = conf.Version
 	report.OS = runtime.GOOS + "/" + runtime.GOARCH
 	report.CoreRunning = v2ray.ProcessManager.Running()
@@ -106,6 +109,31 @@ func Diagnose(domain string) (report DiagnoseReport) {
 		}
 	}
 
+	// Query the configured DNS servers through the requested runtime group.
+	_, path, routeErr := dnsProbeRoute(outbound)
+	if routeErr != nil {
+		lines = append(lines, "DNS 测试路径: "+routeErr.Error())
+	} else {
+		lines = append(lines, "DNS 测试路径: "+path)
+		var servers []string
+		for _, rule := range rules {
+			if rule.Server != "" && rule.Server != "localhost" {
+				servers = append(servers, rule.Server)
+			}
+		}
+		if len(servers) == 0 {
+			servers = proxyDNSServers
+		}
+		results := measureDNSList(servers, outbound)
+		report.DnsLatency = append(report.DnsLatency, results...)
+		for _, item := range results {
+			if item.Ok {
+				lines = append(lines, fmt.Sprintf("  %s: DNS 查询成功 (%dms)", item.Server, item.LatencyMs))
+			} else {
+				lines = append(lines, fmt.Sprintf("  %s: 失败 (%s)", item.Server, item.Error))
+			}
+		}
+	}
 	// Rule detection for the target domain
 	if domain != "" {
 		if tmpl := v2ray.ProcessManager.GetRunningTemplate(); tmpl != nil {

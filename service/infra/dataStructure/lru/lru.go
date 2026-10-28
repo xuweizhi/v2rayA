@@ -72,6 +72,11 @@ func (l *LRU) Insert(key interface{}, val interface{}) (removed []*EncapsulatedV
 }
 
 func (l *LRU) insert(key interface{}, val interface{}) (removed []*EncapsulatedValue) {
+	if node, exists := l.index[key]; exists {
+		node.Value = &EncapsulatedValue{Value: val, LastUseTime: time.Now()}
+		l.list.MoveToFront(node)
+		return nil
+	}
 	ev := &EncapsulatedValue{
 		Value:       val,
 		LastUseTime: time.Now(),

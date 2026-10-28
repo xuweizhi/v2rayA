@@ -50,8 +50,10 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 			}
 			var selector []string
 
-			for _, vi := range serverData.OutboundName2ServerObjs[outbound] {
-				selector = append(selector, GroupWrapper(vi.GetName()))
+			for i, info := range serverData.ServerInfos {
+				if info.OutboundName == outbound {
+					selector = append(selector, t.OutboundTags[i])
+				}
 			}
 
 			t.Routing.Balancers = append(t.Routing.Balancers, coreObj.Balancer{

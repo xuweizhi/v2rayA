@@ -1,10 +1,11 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"github.com/go-leo/slicex"
-	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/db/configure"
+	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"reflect"
 	"strconv"
 )
@@ -15,7 +16,17 @@ func GetPorts() configure.Ports {
 }
 
 func SetPorts(ports *configure.Ports) (err error) {
+	if ports == nil {
+		return fmt.Errorf("ports are required")
+	}
+	for _, port := range []int{ports.Socks5, ports.Http, ports.Socks5WithPac, ports.HttpWithPac, ports.Vmess, ports.Api.Port} {
+		if port < 0 || port > 65535 {
+			return fmt.Errorf("invalid port: %d", port)
+		}
+	}
 	origin := GetPorts()
+	previous := origin
+	wasRunning := v2ray.ProcessManager.Running()
 	set := map[int]struct{}{}
 	cnt := 0
 	if ports.Socks5 != 0 {
@@ -37,6 +48,15 @@ func SetPorts(ports *configure.Ports) (err error) {
 	if ports.Vmess != 0 {
 		set[ports.Vmess] = struct{}{}
 		cnt++
+	}
+	if ports.Api.Port != 0 {
+		set[ports.Api.Port] = struct{}{}
+		cnt++
+	}
+	for _, inbound := range configure.GetCustomInbounds() {
+		if _, exists := set[inbound.Port]; exists {
+			return fmt.Errorf("port %d is used by custom inbound %q", inbound.Port, inbound.Tag)
+		}
 	}
 	if cnt > len(set) {
 		return fmt.Errorf("ports duplicate. check it")
@@ -86,8 +106,13 @@ func SetPorts(ports *configure.Ports) (err error) {
 	if err = configure.SetPorts(&origin); err != nil {
 		return err
 	}
-	if v2ray.ProcessManager.Running() {
-		err = v2ray.UpdateV2RayConfig()
+	if wasRunning {
+		if err = v2ray.UpdateV2RayConfig(); err != nil {
+			err = errors.Join(err, configure.SetPorts(&previous))
+			if !v2ray.ProcessManager.Running() {
+				err = errors.Join(err, v2ray.UpdateV2RayConfig())
+			}
+		}
 	}
 	return
 }

@@ -51,11 +51,10 @@ func PostBackupRestore(ctx *gin.Context) {
 		common.ResponseError(ctx, logError("bad request"))
 		return
 	}
+	if err := service.RestoreFromBackup(body.Source, body.Name); err != nil {
+		common.ResponseError(ctx, logError(err))
+		return
+	}
+	// RestoreFromBackup schedules re-exec only after staging has succeeded.
 	common.ResponseSuccess(ctx, nil)
-	// Restart happens asynchronously so the response reaches the client.
-	go func() {
-		if err := service.RestoreFromBackup(body.Source, body.Name); err != nil {
-			_ = err
-		}
-	}()
 }

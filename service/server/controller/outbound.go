@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/v2rayA/v2rayA/common"
-	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/db/configure"
+	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/server/service"
 )
 
@@ -41,6 +41,16 @@ func GetOutbound(ctx *gin.Context) {
 }
 
 func PutOutbound(ctx *gin.Context) {
+	updatingMu.Lock()
+	if updating {
+		common.ResponseError(ctx, processingErr)
+		updatingMu.Unlock()
+		return
+	}
+	updating = true
+	updatingMu.Unlock()
+	defer func() { updatingMu.Lock(); updating = false; updatingMu.Unlock() }()
+
 	var data struct {
 		Outbound string                    `json:"outbound"`
 		Setting  configure.OutboundSetting `json:"setting"`
@@ -49,6 +59,7 @@ func PutOutbound(ctx *gin.Context) {
 		common.ResponseError(ctx, logError("bad request"))
 		return
 	}
+	old := configure.GetOutboundSetting(data.Outbound)
 	if err := configure.SetOutboundSetting(data.Outbound, data.Setting); err != nil {
 		common.ResponseError(ctx, logError(err))
 		return
@@ -56,7 +67,14 @@ func PutOutbound(ctx *gin.Context) {
 	if v2ray.ProcessManager.Running() && configure.GetConnectedServers().Len() > 0 {
 		err := v2ray.UpdateV2RayConfig()
 		if err != nil {
-			common.ResponseError(ctx, fmt.Errorf("invalid config: %w", err))
+			_ = configure.SetOutboundSetting(data.Outbound, old)
+			if !v2ray.ProcessManager.Running() {
+				if restoreErr := v2ray.UpdateV2RayConfig(); restoreErr != nil {
+					err = fmt.Errorf("%w; restoring previous core failed: %v", err, restoreErr)
+				}
+			}
+			common.ResponseError(ctx, fmt.Errorf("invalid config (previous settings restored): %w", err))
+			return
 		}
 	}
 	common.ResponseSuccess(ctx, nil)
@@ -89,6 +107,10 @@ func DeleteOutbound(ctx *gin.Context) {
 		return
 	}
 
+	if err := configure.CheckOutboundDependencies(data.Outbound); err != nil {
+		common.ResponseError(ctx, err)
+		return
+	}
 	// Check if any custom inbound is bound to this outbound group
 	boundInbounds := configure.GetCustomInboundsByOutbound(data.Outbound)
 	if len(boundInbounds) > 0 {

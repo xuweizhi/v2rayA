@@ -1,9 +1,11 @@
 package jwt
 
 import (
-	"crypto/sha256"
-	gonanoid "github.com/matoous/go-nanoid"
-	"github.com/v2rayA/v2rayA/db/configure"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"github.com/v2rayA/v2rayA/db"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 	"sync"
 )
@@ -12,28 +14,32 @@ var secret []byte
 var once sync.Once
 
 func genSecret() {
-	// In order to reduce the number of times to enter the password,
-	// if there is a subscription, the secret is the hash value of all subscription addresses.
-	// Otherwise, the hash value of all server addresses.
-	if sub := configure.GetSubscriptions(); len(sub) > 0 {
-		sha := sha256.New()
-		for _, s := range sub {
-			sha.Write([]byte(s.Address))
-		}
-		secret = sha.Sum(nil)
-	} else if servers := configure.GetServers(); len(servers) > 0 {
-		sha := sha256.New()
-		for _, s := range servers {
-			sha.Write([]byte(s.ServerObj.GetHostname()))
-		}
-		secret = sha.Sum(nil)
-	} else {
-		id, err := gonanoid.Nanoid()
-		if err != nil {
-			log.Fatal("failed to genSecret: %v", err)
-		}
-		secret = []byte(id)
+	var err error
+	secret, err = loadSigningSecret(db.GetDB())
+	if err != nil {
+		log.Fatal("failed to load JWT signing secret: %v", err)
 	}
+}
+
+// Persist random key material so tokens survive restarts without deriving the
+// signing key from publicly knowable node hostnames or subscription URLs.
+func loadSigningSecret(database *sql.DB) ([]byte, error) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	if _, err := database.Exec("INSERT INTO system_config (key, value) VALUES ('auth:jwt-secret', ?) ON CONFLICT(key) DO NOTHING", hex.EncodeToString(key)); err != nil {
+		return nil, err
+	}
+	var encoded string
+	if err := database.QueryRow("SELECT value FROM system_config WHERE key = 'auth:jwt-secret'").Scan(&encoded); err != nil {
+		return nil, err
+	}
+	key, err := hex.DecodeString(encoded)
+	if err != nil || len(key) != 32 {
+		return nil, fmt.Errorf("invalid stored JWT signing secret")
+	}
+	return key, nil
 }
 func getSecret() []byte {
 	once.Do(genSecret)

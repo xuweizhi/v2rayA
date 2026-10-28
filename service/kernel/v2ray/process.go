@@ -332,6 +332,11 @@ func getConnectedServerObjs() ([]serverObj.ServerObj, []serverInfo, error) {
 			Info:         sr.ServerObj,
 			OutboundName: cs.Outbound,
 		})
+		if cs.TYPE == configure.SubscriptionServerType {
+			if sub := configure.GetSubscription(cs.Sub); sub != nil {
+				serverInfos[len(serverInfos)-1].NodeDNS = sub.Extra.EffectiveNodeDNS()
+			}
+		}
 		serverObjs = append(serverObjs, sr.ServerObj)
 	}
 	return serverObjs, serverInfos, nil

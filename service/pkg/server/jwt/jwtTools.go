@@ -23,8 +23,8 @@ func stripBearerPrefixFromTokenString(tok string) (string, error) {
 // AuthorizationArgumentExtractor extracts bearer token from Argument header
 // Uses PostExtractionFilter to strip "Bearer " prefix from header
 var AuthorizationArgumentExtractor = &request.PostExtractionFilter{
-	request.ArgumentExtractor{"Authorization"},
-	stripBearerPrefixFromTokenString,
+	Extractor: request.ArgumentExtractor{"Authorization"},
+	Filter:    stripBearerPrefixFromTokenString,
 }
 
 func JWTAuth(Admin bool) gin.HandlerFunc {
@@ -75,7 +75,7 @@ func JWTAuth(Admin bool) gin.HandlerFunc {
 			}
 		}
 		//将用户名丢入参数
-		if name, ok := mapClaims["name"]; ok && name != nil {
+		if name, ok := mapClaims["uname"].(string); ok && name != "" {
 			ctx.Set("Name", name)
 		}
 	}

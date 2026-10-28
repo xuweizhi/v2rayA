@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	url2 "net/url"
 	"strings"
@@ -77,20 +78,30 @@ func Import(url string, which *configure.Which, password string) (err error) {
 				return fmt.Errorf("bad request: invalid index")
 			}
 
-			if err = configure.SetServer(ind, &configure.ServerRaw{ServerObj: obj}); err != nil {
-				log.Warn("Import: SetServer failed: %v", err)
+			old, locateErr := which.LocateServerRaw()
+			if locateErr != nil {
+				return locateErr
+			}
+			updated := *old
+			updated.ServerObj = obj
+			updated.Latency = ""
+			if err = setImportedServer(*which, &updated); err != nil {
 				return
 			}
 			log.Info("Import: SetServer success for index %v", ind)
 			css := configure.GetConnectedServers()
-			if css.Len() > 0 {
+			if v2ray.ProcessManager.Running() && css.Len() > 0 {
 				for _, cs := range css.Get() {
-					if which.TYPE == cs.TYPE && which.ID == cs.ID {
+					if which.TYPE == cs.TYPE && which.ID == cs.ID && (which.TYPE != configure.SubscriptionServerType || which.Sub == cs.Sub) {
 						log.Info("Import: updating connected v2ray config")
 						if err = v2ray.UpdateV2RayConfig(); err != nil {
-							log.Warn("Import: UpdateV2RayConfig failed: %v", err)
+							err = errors.Join(err, setImportedServer(*which, old))
+							if !v2ray.ProcessManager.Running() {
+								err = errors.Join(err, v2ray.UpdateV2RayConfig())
+							}
 							return
 						}
+						break
 					}
 				}
 			}
@@ -120,9 +131,9 @@ func Import(url string, which *configure.Which, password string) (err error) {
 				source = u.String()
 			}
 		}
-		c := httpClient.GetHttpClientAutomatically()
+		c := *httpClient.GetHttpClientAutomatically()
 		c.Timeout = 90 * time.Second
-		result, err := ResolveSubscriptionWithClient(source, c, password, configure.SubscriptionExtra{})
+		result, err := ResolveSubscriptionWithClient(source, &c, password, configure.SubscriptionExtra{})
 		if err != nil {
 			return fmt.Errorf("failed to resolve subscription address: %w", err)
 		}
@@ -147,11 +158,13 @@ func Import(url string, which *configure.Which, password string) (err error) {
 			uniqueServers = append(uniqueServers, s)
 		}
 		extra := configure.SubscriptionExtra{
-			Upload:         result.traffic.Upload,
-			Download:       result.traffic.Download,
-			Total:          result.traffic.Total,
-			Expire:         result.traffic.Expire.Unix(),
-			LastUpdateTime: time.Now().Unix(),
+			Upload:          result.traffic.Upload,
+			Download:        result.traffic.Download,
+			Total:           result.traffic.Total,
+			Expire:          result.traffic.Expire.Unix(),
+			LastUpdateTime:  time.Now().Unix(),
+			ProviderNodeDNS: result.nodeDNS,
+			PreferNodeDNS:   len(result.nodeDNS) > 0,
 		}
 		err = configure.AppendSubscriptions([]*configure.SubscriptionRaw{{
 			Address:         source,
@@ -166,4 +179,19 @@ func Import(url string, which *configure.Which, password string) (err error) {
 		}
 	}
 	return
+}
+
+func setImportedServer(which configure.Which, server *configure.ServerRaw) error {
+	if which.TYPE == configure.ServerType {
+		return configure.SetServer(which.ID-1, server)
+	}
+	if which.TYPE != configure.SubscriptionServerType {
+		return fmt.Errorf("unsupported node type")
+	}
+	sub := configure.GetSubscription(which.Sub)
+	if sub == nil || which.ID < 1 || which.ID > len(sub.Servers) {
+		return fmt.Errorf("subscription node not found")
+	}
+	sub.Servers[which.ID-1] = *server
+	return configure.SetSubscription(which.Sub, sub)
 }

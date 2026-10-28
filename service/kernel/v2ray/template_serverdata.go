@@ -12,6 +12,7 @@ type serverInfo struct {
 	Info         serverObj.ServerObj
 	OutboundName string
 	PluginPort   int
+	NodeDNS      []string
 }
 
 func GroupWrapper(ps string) string {

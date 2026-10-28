@@ -10,6 +10,7 @@ import (
 
 	yaml "gopkg.in/yaml.v3"
 
+	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/kernel/serverObj"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 )
@@ -443,4 +444,18 @@ func clashHysteria2ToServerObj(p map[string]interface{}) (serverObj.ServerObj, e
 		u.RawQuery = encoded
 	}
 	return serverObj.ParseHysteria2URL(u.String())
+}
+
+// resolveClashNodeDNS reads only the provider's node resolver list; ordinary
+// traffic DNS from the profile is deliberately not imported.
+func resolveClashNodeDNS(raw string) ([]string, error) {
+	var cfg struct {
+		DNS struct {
+			Servers []string `yaml:"proxy-server-nameserver"`
+		} `yaml:"dns"`
+	}
+	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
+		return nil, err
+	}
+	return configure.NormalizeNodeDNS(cfg.DNS.Servers)
 }

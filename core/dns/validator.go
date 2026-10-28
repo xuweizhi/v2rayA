@@ -2,6 +2,7 @@ package dns
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/miekg/dns"
 )
@@ -32,6 +33,9 @@ func ValidateResponse(msg *dns.Msg) error {
 
 	// Verify question is well-formed.
 	q := msg.Question[0]
+	if q.Qclass != dns.ClassINET {
+		return fmt.Errorf("dns validator: unexpected question class %d", q.Qclass)
+	}
 	if q.Name == "" {
 		return fmt.Errorf("dns validator: empty question name")
 	}
@@ -141,12 +145,15 @@ func ValidateQuestionMatch(msg *dns.Msg, expectedName string, expectedQType Quer
 	if msg == nil {
 		return fmt.Errorf("dns validator: nil message")
 	}
-	if len(msg.Question) == 0 {
-		return fmt.Errorf("dns validator: no question in response")
+	if len(msg.Question) != 1 {
+		return fmt.Errorf("dns validator: expected exactly one question")
 	}
 
 	q := msg.Question[0]
-	if q.Name != dns.Fqdn(expectedName) {
+	if q.Qclass != dns.ClassINET {
+		return fmt.Errorf("dns validator: unexpected question class %d", q.Qclass)
+	}
+	if !strings.EqualFold(q.Name, dns.Fqdn(expectedName)) {
 		return fmt.Errorf("dns validator: question name mismatch: got %q, expected %q",
 			q.Name, dns.Fqdn(expectedName))
 	}

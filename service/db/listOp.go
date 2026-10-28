@@ -60,9 +60,14 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 		if err != nil {
 			return err
 		}
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
 		parsed := gjson.ParseBytes(b)
 		var subID int64
-		if err := db.QueryRow("SELECT id FROM subscriptions WHERE sort = ?", index).Scan(&subID); err != nil {
+		if err := tx.QueryRow("SELECT id FROM subscriptions WHERE sort = ?", index).Scan(&subID); err != nil {
 			if err == sql.ErrNoRows {
 				return fmt.Errorf("ListSet: subscription at index %d not found", index)
 			}
@@ -79,7 +84,7 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 		decryptPassword := parsed.Get("decryptPassword").String()
 		extraJSON := subExtraFromJSON(b)
 
-		result, err := db.Exec(
+		result, err := tx.Exec(
 			"UPDATE subscriptions SET address = ?, remarks = ?, status = ?, info = ?, auto_select = ?, decrypt_password = ?, extra_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			address, remarks, status, info, autoSelect, decryptPassword, extraJSON, subID,
 		)
@@ -91,30 +96,31 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 			return fmt.Errorf("ListSet: subscription at index %d not found", index)
 		}
 
-		// Update servers within this subscription.
-		// Clean up outbound_connections first to satisfy foreign key constraint;
-		// otherwise the delete fails and the insert below duplicates the list.
-		if _, err := db.Exec(`
-			DELETE FROM outbound_connections
-			WHERE server_id IN (SELECT id FROM servers WHERE type = 'subscription_server' AND sub_id = ?)
-		`, subID); err != nil {
-			return fmt.Errorf("ListSet: failed to clear outbound connections of subscription %d: %w", index, err)
-		}
-		if _, err := db.Exec("DELETE FROM servers WHERE type = 'subscription_server' AND sub_id = ?", subID); err != nil {
-			return fmt.Errorf("ListSet: failed to clear old servers of subscription %d: %w", index, err)
-		}
-
+		// Update by sort position to retain stable row IDs and references. All
+		// metadata, node writes and removals commit together.
 		servers := parsed.Get("servers").Array()
 		for j, s := range servers {
-			_, err := db.Exec(
-				"INSERT INTO servers (type, sub_id, config_json, sort) VALUES ('subscription_server', ?, ?, ?)",
-				subID, s.Raw, j,
-			)
+			result, err := tx.Exec("UPDATE servers SET config_json = ?, updated_at = CURRENT_TIMESTAMP WHERE type = 'subscription_server' AND sub_id = ? AND sort = ?", s.Raw, subID, j)
 			if err != nil {
-				return fmt.Errorf("ListSet: failed to update subscription server %d/%d: %w", index, j, err)
+				return err
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rows == 0 {
+				if _, err = tx.Exec("INSERT INTO servers (type, sub_id, config_json, sort) VALUES ('subscription_server', ?, ?, ?)", subID, s.Raw, j); err != nil {
+					return err
+				}
 			}
 		}
-		return nil
+		if _, err := tx.Exec("DELETE FROM outbound_connections WHERE server_id IN (SELECT id FROM servers WHERE type = 'subscription_server' AND sub_id = ? AND sort >= ?)", subID, len(servers)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM servers WHERE type = 'subscription_server' AND sub_id = ? AND sort >= ?", subID, len(servers)); err != nil {
+			return err
+		}
+		return tx.Commit()
 
 	default:
 		return fmt.Errorf("ListSet: unsupported bucket/key: %s/%s", bucket, key)

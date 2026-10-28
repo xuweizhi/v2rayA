@@ -23,7 +23,7 @@
         <b-table-column :label="$t('operations.name')" width="190" v-slot="p">
           <a
             class="button is-small is-success"
-            :href="apiRoot + '/backupDownload?filename=' + encodeURIComponent(p.row.name) + '&Authorization=' + encodeURIComponent(localStorage['token'] || '')"
+            :href="backupDownloadUrl(p.row.name, false)"
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -86,7 +86,7 @@
         <b-table-column :label="$t('operations.name')" width="190" v-slot="p">
           <a
             class="button is-small is-success"
-            :href="apiRoot + '/webdavBackupDownload?filename=' + encodeURIComponent(p.row.name) + '&Authorization=' + encodeURIComponent(localStorage['token'] || '')"
+            :href="backupDownloadUrl(p.row.name, true)"
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -132,6 +132,10 @@ export default {
     });
   },
   methods: {
+    backupDownloadUrl(name, remote) {
+      const endpoint = remote ? "/webdavBackupDownload" : "/backupDownload";
+      return apiRoot + endpoint + "?filename=" + encodeURIComponent(name) + "&Authorization=" + encodeURIComponent(window.localStorage.getItem("token") || "");
+    },
     load() {
       this.$axios({ url: apiRoot + "/backups", method: "get" }).then((res) => {
         handleResponse(res, this, () => {

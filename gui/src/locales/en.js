@@ -1,4 +1,11 @@
 export default {
+  dashboard: {
+    current: "Current proxy group",
+    node: "Selected node",
+    pending: "No node selected",
+    settings: "Network settings",
+    summary: "Network overview",
+  },
   common: {
     outboundSetting: "Proxy Group Setting",
     setting: "Setting",
@@ -61,6 +68,18 @@ export default {
     cancel: "cancel",
   },
   subscription: {
+    filterField: "Regex target",
+    filterName: "Node name",
+    filterHost: "Server hostname",
+    protocols: "Included protocols",
+    protocolsHelp: "Select none for all protocols. Combined with the regex filters.",
+    preview: "Preview filters",
+    previewHelp: "Preview saved nodes only. Refresh the subscription after saving to apply filters.",
+    previewResult: "Keep {matched} of {total} saved nodes. Applied on subscription refresh.",
+    preferNodeDNS: "Use subscription DNS for node hostnames",
+    nodeDNS: "Custom node DNS",
+    nodeDNSHelp: "One per line. Leave empty for provider DNS. Resolvers are tried in order and only match this subscription’s node hostnames. TinyTun mode is not supported; use redirect/tproxy.",
+    providerDNS: "Provider DNS",
     host: "Host",
     remarks: "Remarks",
     timeLastUpdate: "Datetime of Last Update",
@@ -127,6 +146,7 @@ export default {
     remoteFiles: "Remote Files",
   },
   diagnose: {
+    outbound: "DNS test proxy group",
     title: "Diagnose",
     domain: "Domain (optional)",
     run: "Run",
@@ -507,6 +527,9 @@ export default {
     inboundDeprecatedConfirm: "This RoutingA configuration contains deprecated inbound definitions. The generated config will not include those inbound ports. Continue saving?",
   },
   outbound: {
+    preProxy: "Upstream proxy group",
+    noPreProxy: "None (connect to nodes directly)",
+    preProxyHelp: "Connect to this group through the selected group, which must be active. Native VMess/VLESS/Trojan/SS/SOCKS/HTTP nodes are supported; external plugins and other protocols return an explicit error.",
     addMessage: "Please input the proxy group name you want to add:",
     deleteMessage:
       'Be sure to <b>DELETE</b> the outbound "{outboundName}"? It is not reversible.',

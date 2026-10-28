@@ -429,6 +429,14 @@ func InitDefaultOutbound() error {
 }
 
 func AddOutbound(outbound string) (err error) {
+	if strings.TrimSpace(outbound) == "" || strings.HasPrefix(outbound, "v2raya-") {
+		return fmt.Errorf("invalid or reserved outbound name")
+	}
+	for _, existing := range GetOutbounds() {
+		if existing == outbound {
+			return fmt.Errorf("outbound %q already exists", outbound)
+		}
+	}
 	if outbound == "proxy" ||
 		outbound == "direct" ||
 		outbound == "block" {
@@ -442,6 +450,17 @@ func AddOutbound(outbound string) (err error) {
 }
 
 func SetOutboundSetting(outbound string, setting OutboundSetting) (err error) {
+	settings := map[string]OutboundSetting{}
+	for _, name := range GetOutbounds() {
+		settings[name] = GetOutboundSetting(name)
+	}
+	if _, exists := settings[outbound]; !exists {
+		return fmt.Errorf("outbound %q does not exist", outbound)
+	}
+	settings[outbound] = setting
+	if err := ValidatePreProxies(settings); err != nil {
+		return err
+	}
 	if _, err := time.ParseDuration(setting.ProbeInterval); err != nil {
 		return err
 	}
@@ -457,6 +476,9 @@ func GetOutboundSetting(outbound string) (setting OutboundSetting) {
 }
 
 func RemoveOutbound(outbound string) (err error) {
+	if err := CheckOutboundDependencies(outbound); err != nil {
+		return err
+	}
 	if err = db.BucketClear(fmt.Sprintf("outbound.%v", outbound)); err != nil {
 		return err
 	}
@@ -548,4 +570,13 @@ func GetLastKernelExitStatus() string {
 	var s string
 	_ = db.Get("system", "lastKernelExit", &s)
 	return s
+}
+
+func CheckOutboundDependencies(outbound string) error {
+	for _, group := range GetOutbounds() {
+		if GetOutboundSetting(group).PreProxy == outbound {
+			return fmt.Errorf("group %q uses %q as its pre-proxy; remove that dependency first", group, outbound)
+		}
+	}
+	return nil
 }

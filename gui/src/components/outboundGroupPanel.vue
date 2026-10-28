@@ -59,6 +59,7 @@
           <!-- Expanded: nodes in this group -->
           <div v-if="expandedGroup === outbound" class="ogp-nodes-inline" @click.stop>
             <div class="ogp-nodes-actions">
+              <b-button size="is-small" icon-left="cog" @click.stop="$emit('settings', outbound)">{{ $t('common.setting') }}</b-button>
               <b-button
                 size="is-small"
                 type="is-warning"

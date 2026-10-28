@@ -419,9 +419,9 @@ func TestRouteResultWithProxyTag(t *testing.T) {
 
 func TestHealthCheckIsolation(t *testing.T) {
 	configs := []UpstreamConfig{
-		newTestUpstreamConfig("google-direct", "8.8.8.8:53", "direct"),
-		newTestUpstreamConfig("google-proxy", "8.8.8.8:53", "proxy"),
-		newTestUpstreamConfig("cloudflare-direct", "1.1.1.1:53", "direct"),
+		newTestUpstreamConfig("google-direct", "127.0.0.1:1", "direct"),
+		newTestUpstreamConfig("google-proxy", "127.0.0.1:1", "proxy"),
+		newTestUpstreamConfig("cloudflare-direct", "127.0.0.2:1", "direct"),
 	}
 	mgr := NewUpstreamManager(configs)
 
@@ -432,9 +432,9 @@ func TestHealthCheckIsolation(t *testing.T) {
 	}
 
 	// Each composite key should have its own health result.
-	directKey := BuildUpstreamKey("8.8.8.8:53", "direct")
-	proxyKey := BuildUpstreamKey("8.8.8.8:53", "proxy")
-	cfKey := BuildUpstreamKey("1.1.1.1:53", "direct")
+	directKey := BuildUpstreamKey("127.0.0.1:1", "direct")
+	proxyKey := BuildUpstreamKey("127.0.0.1:1", "proxy")
+	cfKey := BuildUpstreamKey("127.0.0.2:1", "direct")
 
 	if _, ok := results[directKey]; !ok {
 		t.Errorf("expected health result for %s", directKey)
@@ -551,8 +551,8 @@ func TestExchangeProxyRouting(t *testing.T) {
 	// This tests the routing decision, not the actual network exchange.
 
 	tests := []struct {
-		name     string
-		proxyTag string
+		name           string
+		proxyTag       string
 		expectViaProxy bool
 	}{
 		{"empty tag = direct", "", false},
@@ -710,8 +710,8 @@ func TestBuildCacheKeyWithProxyTags(t *testing.T) {
 
 func TestExchangeProxyTagRoutingDecision(t *testing.T) {
 	tests := []struct {
-		name     string
-		proxyTag string
+		name      string
+		proxyTag  string
 		wantProxy bool
 	}{
 		{"direct connection", "direct", false},

@@ -303,6 +303,7 @@ type GrpcSettings struct {
 	InitialWindowsSize  int    `json:"initial_windows_size,omitempty"`
 }
 type Sockopt struct {
+	DialerProxy string  `json:"dialerProxy,omitempty"`
 	Mark        *int    `json:"mark,omitempty"`
 	Tos         *int    `json:"tos,omitempty"`
 	TCPFastOpen *bool   `json:"tcpFastOpen,omitempty"`

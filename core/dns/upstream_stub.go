@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"golang.org/x/net/proxy"
 )
 
 // ProxyAddrResolver is a function type that resolves a proxy tag to a
@@ -56,14 +57,58 @@ func (m *UpstreamManager) SetDispatcher(d RouteDispatcher) {
 //  9. If UDP response is truncated, automatically falls back to TCP.
 //  10. On failure, retries once after a short delay.
 //  11. Wraps the response into DnsResponse.
+//
+// Exchange tries only the explicitly configured fallback resolvers. It never
+// consults an unrelated subscription or the default proxy DNS on failure.
 func (m *UpstreamManager) Exchange(upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
+	if upstream == nil {
+		return nil, fmt.Errorf("nil DNS upstream")
+	}
+	candidates := []*UpstreamInstance{upstream}
+	seen := map[string]bool{upstream.ID: true}
+	for _, id := range upstream.Fallback {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		candidate, ok := m.GetUpstream(id)
+		if !ok {
+			return nil, fmt.Errorf("DNS fallback %q not found", id)
+		}
+		candidates = append(candidates, candidate)
+	}
+	var lastErr error
+	for _, candidate := range candidates {
+		if len(candidates) > 1 {
+			// Keep node-DNS fallback within the listener's five-second budget,
+			// including resolvers that drop packets instead of refusing them.
+			copy := *candidate
+			copy.attemptTimeout = 4 * time.Second / time.Duration(len(candidates))
+			candidate = &copy
+		}
+		response, err := m.exchangeOne(candidate, query)
+		if err == nil && response != nil && response.Rcode != dns.RcodeServerFailure && response.Rcode != dns.RcodeRefused {
+			return response, nil
+		}
+		if err == nil {
+			err = fmt.Errorf("DNS upstream %q returned no usable response", candidate.ID)
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+func (m *UpstreamManager) exchangeOne(upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
 	if upstream == nil {
 		return nil, nil
 	}
 
+	if upstream.Protocol == "https" || upstream.Protocol == "doh" || upstream.Protocol == "tcp-tls" || upstream.Protocol == "tls" || upstream.Protocol == "dot" {
+		return m.exchangeEncrypted(upstream, query)
+	}
 	// Route through proxy if a proxy channel is specified — use dispatcher or SOCKS5.
 	if upstream.ProxyTag != "" && upstream.ProxyTag != "direct" {
-		if m.dispatcher != nil {
+		if m.getDispatcher() != nil {
 			return m.exchangeViaDispatcher(upstream, query)
 		}
 		return m.exchangeViaProxy(upstream, query)
@@ -111,20 +156,28 @@ func (m *UpstreamManager) exchangeDirect(upstream *UpstreamInstance, query *DnsQ
 	// The Control function sets the socket mark to 0x80, which iptables
 	// DNS_MARK/TP_OUT chains check and RETURN (skip), preventing the loop.
 	client := newMarkedDnsClient(protocol)
+	ctx := context.Background()
+	attempts := 2
+	if upstream.attemptTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, upstream.attemptTimeout)
+		defer cancel()
+		attempts = 1
+	}
 
 	// Attempt the exchange with retry logic.
 	var resp *dns.Msg
 	var rtt time.Duration
 	var err error
 
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
 			log.Printf("[dns upstream] retry %d: %s %s → %s", attempt+1,
 				dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr)
 			time.Sleep(100 * time.Millisecond)
 		}
 
-		resp, rtt, err = client.Exchange(msg, upstream.Addr)
+		resp, rtt, err = client.ExchangeContext(ctx, msg, upstream.Addr)
 
 		if err != nil {
 			log.Printf("[dns upstream] attempt %d error: %s %s → %s: %v", attempt+1,
@@ -138,7 +191,7 @@ func (m *UpstreamManager) exchangeDirect(upstream *UpstreamInstance, query *DnsQ
 				dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr)
 
 			tcpClient := newMarkedDnsClient("tcp")
-			resp, rtt, err = tcpClient.Exchange(msg, upstream.Addr)
+			resp, rtt, err = tcpClient.ExchangeContext(ctx, msg, upstream.Addr)
 			if err != nil {
 				log.Printf("[dns upstream] TCP fallback error (attempt %d): %s %s → %s: %v", attempt+1,
 					dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr, err)
@@ -205,7 +258,7 @@ func (m *UpstreamManager) exchangeDirect(upstream *UpstreamInstance, query *DnsQ
 //  2. Establishes a TCP connection through the SOCKS5 proxy.
 //  3. Sends the DNS query over TCP (DNS over TCP is required for proxy).
 //  4. Reads and parses the response.
-//  5. Falls back to direct connection if no proxy address is available.
+//  5. Fails if the requested proxy channel is unavailable.
 func (m *UpstreamManager) exchangeViaProxy(upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
 	if upstream == nil {
 		return nil, nil
@@ -217,15 +270,7 @@ func (m *UpstreamManager) exchangeViaProxy(upstream *UpstreamInstance, query *Dn
 	// Get the proxy address for the configured tag.
 	proxyAddr := m.resolveProxyAddr(upstream.ProxyTag)
 	if proxyAddr == "" {
-		log.Printf("[dns upstream] no proxy address for tag %q, falling back to direct", upstream.ProxyTag)
-		// Fallback: create a temporary upstream with ProxyTag="direct" and retry
-		directUpstream := &UpstreamInstance{
-			Addr:     upstream.Addr,
-			Protocol: "tcp",
-			ProxyTag: "direct",
-			Client:   m.getClientForProtocol(upstream, "tcp"),
-		}
-		return m.Exchange(directUpstream, query)
+		return nil, fmt.Errorf("DNS proxy %q is unavailable", upstream.ProxyTag)
 	}
 
 	// Build DNS query message.
@@ -315,121 +360,45 @@ func (m *UpstreamManager) exchangeViaProxy(upstream *UpstreamInstance, query *Dn
 // It implements the SOCKS5 protocol to establish a connection through
 // the proxy, then sends the DNS query over TCP.
 func (m *UpstreamManager) exchangeViaSocks5(proxyAddr, targetAddr string, msg *dns.Msg) (*dns.Msg, error) {
-	// Establish TCP connection to the SOCKS5 proxy.
-	conn, err := net.DialTimeout("tcp", proxyAddr, 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	dialer, err := proxy.SOCKS5("tcp", proxyAddr, nil, markedDialer())
 	if err != nil {
-		return nil, fmt.Errorf("socks5 dial: %w", err)
+		return nil, err
+	}
+	conn, err := dialer.(proxy.ContextDialer).DialContext(ctx, "tcp", targetAddr)
+	if err != nil {
+		return nil, err
 	}
 	defer conn.Close()
+	deadline, _ := ctx.Deadline()
+	return exchangeDNSConn(conn, msg, deadline)
+}
 
-	// SOCKS5 handshake: send greeting (no auth)
-	_, err = conn.Write([]byte{0x05, 0x01, 0x00})
+// dns.Conn reads the full TCP length prefix and payload, including fragmented
+// SOCKS5/TCP packets. IDs still need checking when using Conn directly.
+func exchangeDNSConn(conn net.Conn, msg *dns.Msg, deadline time.Time) (*dns.Msg, error) {
+	if err := conn.SetDeadline(deadline); err != nil {
+		return nil, err
+	}
+	client := &dns.Conn{Conn: conn}
+	if err := client.WriteMsg(msg); err != nil {
+		return nil, err
+	}
+	response, err := client.ReadMsg()
 	if err != nil {
-		return nil, fmt.Errorf("socks5 greeting: %w", err)
+		return nil, err
 	}
+	if response.Id != msg.Id {
+		return nil, dns.ErrId
+	}
+	return response, nil
+}
 
-	// Read server response
-	buf := make([]byte, 2)
-	if _, err := conn.Read(buf); err != nil {
-		return nil, fmt.Errorf("socks5 greeting response: %w", err)
-	}
-	if buf[0] != 0x05 {
-		return nil, fmt.Errorf("socks5: invalid version: %d", buf[0])
-	}
-
-	// Parse target host and port for SOCKS5 request.
-	host, portStr, err := net.SplitHostPort(targetAddr)
-	if err != nil {
-		host = targetAddr
-		portStr = "53"
-	}
-	port := 53
-	if p, err := net.LookupPort("tcp", portStr); err == nil {
-		port = p
-	}
-
-	// Build SOCKS5 connect request (ATYP: 0x01 for IPv4, 0x03 for domain)
-	var req []byte
-	ip := net.ParseIP(host)
-	if ip != nil {
-		if ip4 := ip.To4(); ip4 != nil {
-			// IPv4
-			req = []byte{0x05, 0x01, 0x00, 0x01}
-			req = append(req, ip4...)
-		} else {
-			// IPv6
-			req = []byte{0x05, 0x01, 0x00, 0x04}
-			req = append(req, ip.To16()...)
-		}
-	} else {
-		// Domain name
-		req = []byte{0x05, 0x01, 0x00, 0x03}
-		req = append(req, byte(len(host)))
-		req = append(req, []byte(host)...)
-	}
-	req = append(req, byte(port>>8), byte(port))
-
-	if _, err := conn.Write(req); err != nil {
-		return nil, fmt.Errorf("socks5 connect request: %w", err)
-	}
-
-	// Read SOCKS5 response
-	respBuf := make([]byte, 256)
-	n, err := conn.Read(respBuf)
-	if err != nil {
-		return nil, fmt.Errorf("socks5 connect response: %w", err)
-	}
-	if n < 2 || respBuf[0] != 0x05 || respBuf[1] != 0x00 {
-		return nil, fmt.Errorf("socks5 connect failed: version=%d status=%d", respBuf[0], respBuf[1])
-	}
-
-	// DNS over TCP: prepend length prefix.
-	packed, err := msg.Pack()
-	if err != nil {
-		return nil, fmt.Errorf("dns pack: %w", err)
-	}
-
-	tcpMsg := make([]byte, 2+len(packed))
-	tcpMsg[0] = byte(len(packed) >> 8)
-	tcpMsg[1] = byte(len(packed))
-	copy(tcpMsg[2:], packed)
-
-	// Send DNS query.
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if _, err := conn.Write(tcpMsg); err != nil {
-		return nil, fmt.Errorf("dns write via socks5: %w", err)
-	}
-
-	// Read DNS response (TCP length-prefixed).
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-
-	// Read the 2-byte length prefix.
-	if _, err := conn.Read(tcpMsg[:2]); err != nil {
-		return nil, fmt.Errorf("dns read length via socks5: %w", err)
-	}
-	respLen := int(tcpMsg[0])<<8 | int(tcpMsg[1])
-	if respLen < 0 || respLen > 65535 {
-		return nil, fmt.Errorf("dns invalid response length: %d", respLen)
-	}
-
-	// Read the full DNS response.
-	respData := make([]byte, respLen)
-	totalRead := 0
-	for totalRead < respLen {
-		n, err := conn.Read(respData[totalRead:])
-		if err != nil {
-			return nil, fmt.Errorf("dns read data via socks5: %w", err)
-		}
-		totalRead += n
-	}
-
-	// Unpack the DNS response.
-	dnsResp := new(dns.Msg)
-	if err := dnsResp.Unpack(respData); err != nil {
-		return nil, fmt.Errorf("dns unpack: %w", err)
-	}
-
-	return dnsResp, nil
+func (m *UpstreamManager) getDispatcher() RouteDispatcher {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.dispatcher
 }
 
 // resolveProxyAddr resolves a proxy tag to a SOCKS5 proxy address.
@@ -441,9 +410,7 @@ func (m *UpstreamManager) resolveProxyAddr(proxyTag string) string {
 	m.mu.RUnlock()
 
 	if resolver != nil {
-		if addr := resolver(proxyTag); addr != "" {
-			return addr
-		}
+		return resolver(proxyTag)
 	}
 
 	// Fallback: check well-known default proxy addresses.
@@ -540,8 +507,9 @@ func (m *UpstreamManager) ExchangeRaw(upstream *UpstreamInstance, msg *dns.Msg) 
 // This replaces the external SOCKS5 proxy approach with v2raya-core's built-in
 // routing logic, supporting any outbound type (VMESS, VLESS, Trojan, etc.).
 func (m *UpstreamManager) exchangeViaDispatcher(upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
-	if upstream == nil || m.dispatcher == nil {
-		return nil, nil
+	dispatcher := m.getDispatcher()
+	if upstream == nil || dispatcher == nil {
+		return nil, fmt.Errorf("DNS dispatcher is unavailable")
 	}
 
 	dnsLogf("[dns upstream] exchange via xray routing: %s %s → %s (proxyTag=%s)",
@@ -562,71 +530,24 @@ func (m *UpstreamManager) exchangeViaDispatcher(upstream *UpstreamInstance, quer
 		builder.AddECSSubnet(msg, query.ClientIP)
 	}
 
-	// Pack DNS query for TCP transport.
-	packed, err := msg.Pack()
-	if err != nil {
-		return nil, fmt.Errorf("dns pack: %w", err)
+	timeout := 5 * time.Second
+	if upstream.attemptTimeout > 0 {
+		timeout = upstream.attemptTimeout
 	}
-
-	// Dispatch through xray-core's routing via TCP.
-	// The proxyTag is passed to the dispatcher, which sets session.ContextWithInbound
-	// internally (like xray-core's DNS module), so xray's routing engine
-	// determines the outbound based on routing rules.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	start := time.Now()
-	conn, err := m.dispatcher.Dispatch(context.Background(), "tcp", upstream.Addr, upstream.ProxyTag)
+	conn, err := dispatcher.Dispatch(ctx, "tcp", upstream.Addr, upstream.ProxyTag)
 	if err != nil {
-		log.Printf("[dns upstream] dispatcher error: %s %s → %s: %v",
-			dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr, err)
-
-		// Retry once
-		time.Sleep(100 * time.Millisecond)
-		conn, err = m.dispatcher.Dispatch(context.Background(), "tcp", upstream.Addr, upstream.ProxyTag)
-		if err != nil {
-			return nil, fmt.Errorf("dns upstream: dispatcher retry failed: %w", err)
-		}
+		return nil, fmt.Errorf("DNS dispatch: %w", err)
 	}
 	defer conn.Close()
-
-	// DNS over TCP: prepend 2-byte length prefix.
-	tcpMsg := make([]byte, 2+len(packed))
-	tcpMsg[0] = byte(len(packed) >> 8)
-	tcpMsg[1] = byte(len(packed))
-	copy(tcpMsg[2:], packed)
-
-	// Send DNS query.
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if _, err := conn.Write(tcpMsg); err != nil {
-		return nil, fmt.Errorf("dns write via dispatcher: %w", err)
+	deadline, _ := ctx.Deadline()
+	dnsResp, err := exchangeDNSConn(conn, msg, deadline)
+	if err != nil {
+		return nil, fmt.Errorf("DNS dispatcher exchange: %w", err)
 	}
-
-	// Read 2-byte length prefix.
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	if _, err := conn.Read(tcpMsg[:2]); err != nil {
-		return nil, fmt.Errorf("dns read length via dispatcher: %w", err)
-	}
-	respLen := int(tcpMsg[0])<<8 | int(tcpMsg[1])
-	if respLen < 0 || respLen > 65535 {
-		return nil, fmt.Errorf("dns invalid response length: %d", respLen)
-	}
-
-	// Read full DNS response.
-	respData := make([]byte, respLen)
-	totalRead := 0
-	for totalRead < respLen {
-		n, err := conn.Read(respData[totalRead:])
-		if err != nil {
-			return nil, fmt.Errorf("dns read data via dispatcher: %w", err)
-		}
-		totalRead += n
-	}
-
 	rtt := time.Since(start)
-
-	// Unpack DNS response.
-	dnsResp := new(dns.Msg)
-	if err := dnsResp.Unpack(respData); err != nil {
-		return nil, fmt.Errorf("dns unpack: %w", err)
-	}
 
 	// Validate response.
 	if err := ValidateResponse(dnsResp); err != nil {

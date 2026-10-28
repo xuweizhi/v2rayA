@@ -173,6 +173,9 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 			if strings.HasPrefix(upstreamAddr, "https://") {
 				proto = "https"
 				// DoH 地址保留完整 URL，端口由 URL 隐含
+			} else if strings.HasPrefix(upstreamAddr, "udp://") {
+				addr = strings.TrimPrefix(upstreamAddr, "udp://")
+				needDefaultPort = true
 			} else if strings.HasPrefix(upstreamAddr, "tcp://") {
 				proto = "tcp"
 				addr = strings.TrimPrefix(upstreamAddr, "tcp://")
@@ -208,7 +211,12 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 		}
 
 		// 如果是域名地址，加入 bootstrap 列表，由 v2raya-core 用系统 DNS 解析
-		if !strings.Contains(upstreamAddr, "://") {
+		if strings.Contains(upstreamAddr, "://") {
+			u, e := url.Parse(upstreamAddr)
+			if e == nil && u.Hostname() != "" && net.ParseIP(u.Hostname()) == nil {
+				bootstrapList = append(bootstrapList, u.Hostname())
+			}
+		} else {
 			host, _, err := net.SplitHostPort(addr)
 			if err != nil {
 				host = addr
@@ -226,7 +234,11 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 		// 构建 proxy_map：为每个非直连的出站标签创建 SOCKS5 映射
 		if outboundTag != "direct" && outboundTag != "block" {
 			if _, exists := proxyMap[outboundTag]; !exists {
-				proxyMap[outboundTag] = fmt.Sprintf("127.0.0.1:%d", socksPort)
+				port := socksPort
+				if p := t.ProbePorts[outboundTag]; p > 0 {
+					port = p
+				}
+				proxyMap[outboundTag] = fmt.Sprintf("127.0.0.1:%d", port)
 			}
 		}
 
@@ -364,17 +376,23 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 			"bootstrap": false,
 		}}, upstreams...)
 		rulesList = append([]map[string]interface{}{{
-			"id":            "rule-node",
-			"upstream":      "upstream-node",
-			"action":        "route",
-			"policy":        "single",
-			"domain":        nil,
-			"domain_suffix": nodeDomains,
-			"ip":            nil,
-			"client_ip":     nil,
+			"id":        "rule-node",
+			"upstream":  "upstream-node",
+			"action":    "route",
+			"policy":    "single",
+			"domain":    nodeDomains,
+			"ip":        nil,
+			"client_ip": nil,
 		}}, rulesList...)
 	}
 
+	privateUpstreams, privateRules, privateBootstrap, err := nodeDNSRules(serverInfos)
+	if err != nil {
+		return err
+	}
+	upstreams = append(privateUpstreams, upstreams...)
+	rulesList = append(privateRules, rulesList...)
+	bootstrapList = append(bootstrapList, privateBootstrap...)
 	cfg["upstreams"] = upstreams
 	cfg["rules"] = rulesList
 

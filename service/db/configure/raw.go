@@ -31,6 +31,13 @@ type SubscriptionExtra struct {
 	IncludeRegex string `json:"includeRegex,omitempty"`
 	// ExcludeRegex drops nodes whose name matches this regular expression.
 	ExcludeRegex string `json:"excludeRegex,omitempty"`
+	// FilterField selects the regular-expression target: name (default) or host.
+	FilterField      string   `json:"filterField,omitempty"`
+	IncludeProtocols []string `json:"includeProtocols,omitempty"`
+	// NodeDNS overrides the provider list without changing global DNS settings.
+	PreferNodeDNS   bool     `json:"preferNodeDNS,omitempty"`
+	NodeDNS         []string `json:"nodeDNS,omitempty"`
+	ProviderNodeDNS []string `json:"providerNodeDNS,omitempty"`
 	// UpdateIntervalHour is the per-subscription auto-update interval in hours.
 	// 0 means follow the global setting.
 	UpdateIntervalHour int `json:"updateIntervalHour,omitempty"`

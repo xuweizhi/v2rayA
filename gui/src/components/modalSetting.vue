@@ -664,6 +664,7 @@ export default {
               queue: false,
             });
             this.$emit("novice-change", this.novice);
+            this.$emit("settings-updated");
             this.$parent.close();
           });
           if (
