@@ -114,9 +114,6 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 				}
 			}
 		}
-		if _, err := tx.Exec("DELETE FROM outbound_connections WHERE server_id IN (SELECT id FROM servers WHERE type = 'subscription_server' AND sub_id = ? AND sort >= ?)", subID, len(servers)); err != nil {
-			return err
-		}
 		if _, err := tx.Exec("DELETE FROM servers WHERE type = 'subscription_server' AND sub_id = ? AND sort >= ?", subID, len(servers)); err != nil {
 			return err
 		}
@@ -394,11 +391,6 @@ func ListRemove(bucket, key string, indexes []int) error {
 	switch bucket + "/" + key {
 	case "touch/servers":
 		for _, idx := range indexes {
-			// Clean up outbound_connections first to satisfy foreign key constraint
-			_, _ = db.Exec(`
-				DELETE FROM outbound_connections
-				WHERE server_id IN (SELECT id FROM servers WHERE type = 'server' AND sort = ?)
-			`, idx)
 			_, err := db.Exec("DELETE FROM servers WHERE type = 'server' AND sort = ?", idx)
 			if err != nil {
 				return err
@@ -423,11 +415,6 @@ func ListRemove(bucket, key string, indexes []int) error {
 				}
 				return err
 			}
-			// Clean up outbound_connections first to satisfy foreign key constraint
-			_, _ = db.Exec(`
-				DELETE FROM outbound_connections
-				WHERE server_id IN (SELECT id FROM servers WHERE type = 'subscription_server' AND sub_id = ?)
-			`, subID)
 			_, err = db.Exec("DELETE FROM servers WHERE type = 'subscription_server' AND sub_id = ?", subID)
 			if err != nil {
 				return err

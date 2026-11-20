@@ -360,7 +360,7 @@ func validateRestoreDatabase(filename string) error {
 	if check != "ok" {
 		return fmt.Errorf("backup integrity check failed: %s", check)
 	}
-	for _, table := range []string{"system_config", "servers", "subscriptions", "accounts", "outbound_names", "outbound_settings", "outbound_connections"} {
+	for _, table := range []string{"system_config", "servers", "subscriptions", "accounts", "outbound_names"} {
 		var count int
 		if err := database.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&count); err != nil {
 			return err

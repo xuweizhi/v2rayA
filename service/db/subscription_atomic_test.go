@@ -13,8 +13,6 @@ func TestSubscriptionUpdateAtomicAndPreservesReferences(t *testing.T) {
 	for _, q := range []string{
 		"INSERT INTO subscriptions (id, address, remarks, sort) VALUES (1,'https://example.test','old',0)",
 		"INSERT INTO servers (id,type,sub_id,config_json,sort) VALUES (1,'subscription_server',1,'{\"name\":\"old\"}',0)",
-		"INSERT INTO outbound_names (name) VALUES ('proxy')",
-		"INSERT INTO outbound_connections (outbound_name,server_id) VALUES ('proxy',1)",
 		"CREATE TRIGGER reject_test_node BEFORE INSERT ON servers WHEN NEW.config_json LIKE '%reject%' BEGIN SELECT RAISE(ABORT,'test failure'); END",
 	} {
 		if _, err := database.Exec(q); err != nil {
@@ -26,7 +24,7 @@ func TestSubscriptionUpdateAtomicAndPreservesReferences(t *testing.T) {
 		t.Fatal("expected injected write failure")
 	}
 	var remark, config string
-	var count int
+	var rowID int
 	if err := database.QueryRow("SELECT remarks FROM subscriptions WHERE id=1").Scan(&remark); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +38,7 @@ func TestSubscriptionUpdateAtomicAndPreservesReferences(t *testing.T) {
 	if err := ListSet("touch", "subscriptions", 0, value); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM outbound_connections WHERE server_id=1").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("reference lost: %d %v", count, err)
+	if err := database.QueryRow("SELECT id FROM servers WHERE sub_id=1 AND sort=0").Scan(&rowID); err != nil || rowID != 1 {
+		t.Fatalf("node row identity changed: %d %v", rowID, err)
 	}
 }

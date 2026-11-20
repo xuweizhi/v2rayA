@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 
 func resetReviewDB(t *testing.T) {
 	t.Helper()
-	for _, table := range []string{"outbound_connections", "outbound_settings", "outbound_names", "servers", "subscriptions", "system_config"} {
+	for _, table := range []string{"outbound_names", "servers", "subscriptions", "system_config"} {
 		if _, err := db.GetDB().Exec("DELETE FROM " + table); err != nil {
 			t.Fatal(err)
 		}

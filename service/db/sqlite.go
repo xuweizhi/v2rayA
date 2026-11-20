@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/v2rayA/v2rayA/conf"
@@ -13,7 +15,7 @@ import (
 )
 
 var (
-	onceDB   sync.Once
+	dbMu     sync.Mutex
 	sqlDB    *sql.DB
 	dbPath   string
 	readOnly bool
@@ -38,6 +40,19 @@ func OpenStandalone(dsn string) (*sql.DB, error) {
 		return nil, err
 	}
 	return sql.Open(sqliteDriverName, dsn)
+}
+
+func openSQLiteFile(path, query string) (*sql.DB, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	path = filepath.ToSlash(path)
+	if !strings.HasPrefix(path, "/") { // Windows drive letter
+		path = "/" + path
+	}
+	u := url.URL{Scheme: "file", Path: path, RawQuery: query}
+	return OpenStandalone(u.String())
 }
 
 // SetReadOnly sets the database to read-only mode.
@@ -77,7 +92,7 @@ func initDB() {
 	if err = validateSQLiteDriver(); err != nil {
 		log.Fatal("SQLite driver is unavailable: %v", err)
 	}
-	sqlDB, err = sql.Open(sqliteDriverName, dbPath)
+	sqlDB, err = openSQLiteFile(dbPath, "")
 	if err != nil {
 		log.Fatal("sql.Open: %v", err)
 	}
@@ -109,13 +124,21 @@ func initDB() {
 
 // GetDB returns the singleton SQLite database connection
 func GetDB() *sql.DB {
-	onceDB.Do(initDB)
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	if sqlDB == nil {
+		initDB()
+	}
 	return sqlDB
 }
 
 // DBPath returns the path to the SQLite database file
 func DBPath() string {
-	onceDB.Do(initDB)
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	if sqlDB == nil {
+		initDB()
+	}
 	return dbPath
 }
 
@@ -129,27 +152,24 @@ func Open() error {
 	boltPath := filepath.Join(confPath, "bolt.db")
 	sqlitePath := filepath.Join(confPath, "v2raya.db")
 
-	// Check if old BoltDB database exists
 	if _, err := os.Stat(boltPath); err == nil {
-		// bolt.db exists — migration is required
-		// Do NOT create or initialize SQLite at this point
 		return ErrNeedMigration
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect BoltDB: %w", err)
 	}
-
-	// bolt.db does not exist, proceed with normal SQLite initialization
-	// Check if SQLite already exists before creating it
-	if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
-		// Database file does not exist — this is a fresh install
+	// An overlapping startup may already have published a migrated database.
+	// Exclusive creation keeps that file intact.
+	f, err := os.OpenFile(sqlitePath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+	switch {
+	case err == nil:
 		IsNewDB = true
-		// Create an empty file so sql.Open does not fail
-		f, err := os.Create(sqlitePath)
-		if err != nil {
-			return fmt.Errorf("failed to create SQLite database file: %w", err)
+		if err := f.Close(); err != nil {
+			return err
 		}
-		f.Close()
-	} else {
-		// Database file already exists — this is a restart
+	case os.IsExist(err):
 		IsNewDB = false
+	default:
+		return fmt.Errorf("open SQLite database file: %w", err)
 	}
 
 	GetDB()
@@ -158,10 +178,14 @@ func Open() error {
 
 // Close closes the SQLite database connection
 func Close() error {
-	if sqlDB != nil {
-		return sqlDB.Close()
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	if sqlDB == nil {
+		return nil
 	}
-	return nil
+	err := sqlDB.Close()
+	sqlDB = nil
+	return err
 }
 
 // ReadModifyWrite executes a function within a read-write transaction.

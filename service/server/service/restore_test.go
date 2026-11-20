@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/v2rayA/v2rayA/db"
 )
 
 func restoreFixture(t *testing.T, filename, value string) {
@@ -160,4 +162,72 @@ func TestRestorePreservesCommittedWALInSafetyCopy(t *testing.T) {
 		return
 	}
 	t.Fatal("safety copy missing")
+}
+
+func TestRestoreAcrossOutboundSchemas(t *testing.T) {
+	for _, layout := range []string{"legacy", "current"} {
+		t.Run(layout, func(t *testing.T) {
+			dir := t.TempDir()
+			staged := stageRestore(t, dir)
+			database, err := db.OpenStandalone(staged)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.InitSchema(database); err != nil {
+				t.Fatal(err)
+			}
+			const groupSetting = `{"preProxy":"entrance","probeURL":"https://example.test/health"}`
+			queries := []string{
+				"INSERT INTO outbound_names(name) VALUES ('exit')",
+				"INSERT INTO subscriptions(address, decrypt_password, extra_json) VALUES ('https://example.test/sub', 'fixture', '{\"preferNodeDNS\":true}')",
+				"INSERT INTO servers(id, type, sub_id, sort) VALUES (7, 'subscription_server', 1, 0)",
+			}
+			if layout == "legacy" {
+				queries = append(queries,
+					"CREATE TABLE outbound_connections(id INTEGER PRIMARY KEY, outbound_name TEXT, sort INTEGER, server_id INTEGER REFERENCES servers(id))",
+					"CREATE TABLE outbound_settings(outbound_name TEXT PRIMARY KEY, setting_json TEXT)",
+					"INSERT INTO outbound_connections(outbound_name, sort, server_id) VALUES ('exit',0,7)",
+					"INSERT INTO outbound_settings VALUES ('exit','"+groupSetting+"')",
+				)
+			} else {
+				queries = append(queries,
+					`INSERT INTO system_config VALUES ('outbound.exit:connectedServers','{"touches":[{"_type":"subscriptionServer","id":1,"sub":0,"outbound":"exit"}]}')`,
+					"INSERT INTO system_config VALUES ('outbound.exit:setting','"+groupSetting+"')",
+				)
+			}
+			for _, q := range queries {
+				if _, err := database.Exec(q); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := database.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := applyPendingRestore(dir); err != nil {
+				t.Fatal(err)
+			}
+			restored, err := db.OpenStandalone(filepath.Join(dir, "v2raya.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer restored.Close()
+			if err := db.MigrateSchema(restored); err != nil {
+				t.Fatal(err)
+			}
+			var setting, memberType, password, extra string
+			var index, subIndex int
+			if err := restored.QueryRow("SELECT value FROM system_config WHERE key='outbound.exit:setting'").Scan(&setting); err != nil || setting != groupSetting {
+				t.Fatalf("restored setting %q, err %v", setting, err)
+			}
+			if err := restored.QueryRow(`SELECT json_extract(value,'$.touches[0]._type'), json_extract(value,'$.touches[0].id'), json_extract(value,'$.touches[0].sub') FROM system_config WHERE key = 'outbound.exit:connectedServers'`).Scan(&memberType, &index, &subIndex); err != nil || memberType != "subscriptionServer" || index != 1 || subIndex != 0 {
+				t.Fatalf("restored member %s/%d/%d, err %v", memberType, index, subIndex, err)
+			}
+			if err := restored.QueryRow("SELECT decrypt_password, extra_json FROM subscriptions").Scan(&password, &extra); err != nil || password != "fixture" || extra != `{"preferNodeDNS":true}` {
+				t.Fatalf("restored subscription options %q, %q, err %v", password, extra, err)
+			}
+			if _, err := restored.Exec("PRAGMA foreign_keys=ON; DELETE FROM servers WHERE id=7"); err != nil {
+				t.Fatalf("stale foreign key: %v", err)
+			}
+		})
+	}
 }

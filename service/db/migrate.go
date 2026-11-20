@@ -1,10 +1,15 @@
 package db
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/tidwall/gjson"
 	"github.com/v2rayA/v2rayA/conf"
@@ -14,7 +19,7 @@ import (
 
 // MigrateFromBoltDB migrates data from BoltDB to SQLite.
 // It opens bolt.db, reads all data, creates a fresh SQLite database,
-// writes data to SQLite, verifies integrity, then renames bolt.db to bolt.db.bak.
+// writes data to SQLite, verifies integrity, then renames bolt.db to a backup.
 // This function does NOT use GetDB() — it creates its own SQLite connection
 // so that migration can happen before the normal SQLite initialization.
 func MigrateFromBoltDB() error {
@@ -22,57 +27,90 @@ func MigrateFromBoltDB() error {
 	boltPath := filepath.Join(confPath, "bolt.db")
 	sqlitePath := filepath.Join(confPath, "v2raya.db")
 
-	// Check if BoltDB file exists
-	if _, err := os.Stat(boltPath); os.IsNotExist(err) {
-		log.Info("No BoltDB file found at %s, skipping migration", boltPath)
-		return nil
+	if _, err := os.Stat(boltPath); err != nil {
+		if os.IsNotExist(err) {
+			log.Info("No BoltDB file found at %s, skipping migration", boltPath)
+			return nil
+		}
+		return fmt.Errorf("failed to inspect BoltDB: %w", err)
 	}
 
-	// Check if SQLite already exists (migration already done or fresh start)
 	if _, err := os.Stat(sqlitePath); err == nil {
-		log.Info("SQLite database already exists at %s, skipping migration", sqlitePath)
-		return nil
+		// Both files: the SQLite one is authoritative when it holds data.
+		// An earlier release built it in place, so a failed migration could
+		// leave an empty or partial file next to the intact bolt.db; that one
+		// is discarded and the migration runs again.
+		holdsData, err := sqliteHoldsData(sqlitePath)
+		if err != nil {
+			return fmt.Errorf("inspect existing SQLite database: %w", err)
+		}
+		if holdsData {
+			backupPath, err := moveBoltAside(boltPath)
+			if err != nil {
+				return fmt.Errorf("SQLite database already exists but bolt.db could not be moved aside: %w", err)
+			}
+			log.Warn("SQLite database already exists; moved stale bolt.db to %s", backupPath)
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to inspect SQLite database: %w", err)
 	}
 
 	log.Warn("Migrating from BoltDB to SQLite...")
 
 	// Open BoltDB (read-only)
 	boltDB, err := bbolt.Open(boltPath, 0600, &bbolt.Options{ReadOnly: true})
+	if os.IsNotExist(err) { // Another startup already published SQLite and archived BoltDB.
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("failed to open BoltDB: %w", err)
 	}
-	defer boltDB.Close()
+	defer func() {
+		if boltDB != nil {
+			_ = boltDB.Close()
+		}
+	}()
 
-	// Create a fresh SQLite database independently (do NOT use GetDB)
-	sqldb, err := createSQLiteDB(sqlitePath)
+	tempFile, err := os.CreateTemp(confPath, ".v2raya.db.migrate-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary SQLite database: %w", err)
+	}
+	tempPath := tempFile.Name()
+	if err := tempFile.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("failed to close temporary SQLite database: %w", err)
+	}
+	defer func() {
+		_ = os.Remove(tempPath)
+		_ = os.Remove(tempPath + "-journal")
+	}()
+
+	// Create a fresh SQLite database independently (do NOT use GetDB).
+	sqldb, err := createSQLiteDB(tempPath)
 	if err != nil {
 		return fmt.Errorf("failed to create SQLite database for migration: %w", err)
 	}
-	defer sqldb.Close()
+	defer func() {
+		if sqldb != nil {
+			_ = sqldb.Close()
+		}
+	}()
 
 	// Perform migration in a single transaction
 	tx, err := sqldb.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin SQLite transaction: %w", err)
 	}
-	defer func() {
-		if p := recover(); p != nil {
-			_ = tx.Rollback()
-			panic(p)
-		}
-	}()
+	defer tx.Rollback()
 
 	// Migrate system bucket
 	if err := migrateSystemBucket(boltDB, tx); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("failed to migrate system bucket: %w", err)
 	}
 
 	// Migrate touch bucket (servers and subscriptions)
-	// subIDMap maps BoltDB subscription index (0-based) -> SQLite subscription ID
-	subIDMap, err := migrateTouchBucket(boltDB, tx)
-	if err != nil {
-		_ = tx.Rollback()
+	if err := migrateTouchBucket(boltDB, tx); err != nil {
 		return fmt.Errorf("failed to migrate touch bucket: %w", err)
 	}
 
@@ -81,8 +119,7 @@ func MigrateFromBoltDB() error {
 	// and requiring re-registration ensures users set up fresh bcrypt-based credentials.
 
 	// Migrate outbounds bucket
-	if err := migrateOutboundsBucket(boltDB, tx, subIDMap); err != nil {
-		_ = tx.Rollback()
+	if err := migrateOutboundsBucket(boltDB, tx); err != nil {
 		return fmt.Errorf("failed to migrate outbounds bucket: %w", err)
 	}
 
@@ -96,51 +133,161 @@ func MigrateFromBoltDB() error {
 		return fmt.Errorf("migration verification failed: %w", err)
 	}
 
-	// Close BoltDB before renaming
-	boltDB.Close()
+	if err := sqldb.Close(); err != nil {
+		return fmt.Errorf("failed to close migrated SQLite database: %w", err)
+	}
+	sqldb = nil
+	if err := boltDB.Close(); err != nil {
+		return fmt.Errorf("failed to close BoltDB: %w", err)
+	}
+	boltDB = nil
 
-	// Rename old BoltDB to .bak as backup
-	backupPath := boltPath + ".bak"
-	if err := os.Rename(boltPath, backupPath); err != nil {
-		return fmt.Errorf("failed to rename bolt.db to bolt.db.bak: %w", err)
+	if err := publishMigration(tempPath, sqlitePath); err != nil {
+		return fmt.Errorf("failed to publish migrated SQLite database: %w", err)
+	}
+	backupPath, err := moveBoltAside(boltPath)
+	if err != nil {
+		// Startup retries archiving when both files exist.
+		return fmt.Errorf("failed to back up bolt.db: %w", err)
 	}
 
-	log.Warn("Migration completed successfully. Old BoltDB backed up to bolt.db.bak")
+	log.Warn("Migration completed successfully. Old BoltDB backed up to %s", backupPath)
 	return nil
 }
 
-// createSQLiteDB creates a new SQLite database file at the given path,
-// opens a connection, configures PRAGMAs, and initializes the schema.
-func createSQLiteDB(dbPath string) (*sql.DB, error) {
-	// Ensure the database file exists
-	f, err := os.Create(dbPath)
+// An interrupted migration creates tables before committing any rows. Inspect
+// the existing database read-only, including its WAL. An unreadable database
+// or a schema from another application must never be discarded as empty.
+func sqliteHoldsData(path string) (bool, error) {
+	database, err := openSQLiteFile(path, "mode=ro")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create SQLite database file: %w", err)
+		return false, err
 	}
-	f.Close()
-
-	if err := validateSQLiteDriver(); err != nil {
-		return nil, err
-	}
-
-	db, err := sql.Open(sqliteDriverName, dbPath)
+	defer database.Close()
+	tx, err := database.Begin()
 	if err != nil {
-		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
+		return false, err
 	}
+	defer tx.Rollback()
+	return hasMigrationData(tx)
+}
 
-	// Configure PRAGMAs for WAL mode and performance
-	pragmas := []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=NORMAL",
-		"PRAGMA busy_timeout=5000",
-		"PRAGMA foreign_keys=ON",
-		"PRAGMA cache_size=-8000",
+func hasMigrationData(tx *sql.Tx) (bool, error) {
+	rows, err := tx.Query("SELECT name FROM sqlite_master WHERE type='table' AND substr(name,1,7) != 'sqlite_'")
+	if err != nil {
+		return false, err
 	}
-	for _, p := range pragmas {
-		if _, err := db.Exec(p); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("failed to set PRAGMA %s: %w", p, err)
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			rows.Close()
+			return false, err
 		}
+		switch table {
+		case "system_config", "servers", "subscriptions", "accounts", "outbound_names", "outbound_settings", "outbound_connections":
+			tables = append(tables, table)
+		default:
+			rows.Close()
+			return false, fmt.Errorf("unexpected table %q", table)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return false, err
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	for _, table := range tables {
+		var nonempty bool
+		if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM " + table + ")").Scan(&nonempty); err != nil {
+			return false, err
+		}
+		if nonempty {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Publish without replacing a database another startup may already be using.
+// On filesystems supporting hard links the verified stage becomes visible at
+// its final name atomically. An existing empty database (including a WAL from
+// an earlier attempt), or a filesystem without links, uses a SQLite transaction.
+func publishMigration(stage, path string) error {
+	if err := os.Link(stage, path); err == nil {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	database, err := openSQLiteFile(path, "_txlock=immediate")
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+	if _, err := database.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		return err
+	}
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	holdsData, err := hasMigrationData(tx)
+	if err != nil || holdsData {
+		return err
+	}
+	if _, err := tx.Exec("ATTACH DATABASE ? AS migrated", stage); err != nil {
+		return err
+	}
+	// hasMigrationData verified these tables are empty. Recreate the current
+	// schema so an abandoned older schema does not lose fork-specific columns.
+	applicationTables := []string{"system_config", "servers", "subscriptions", "accounts", "outbound_names"}
+	for _, table := range append([]string{"outbound_connections", "outbound_settings"}, applicationTables...) {
+		if _, err := tx.Exec("DROP TABLE IF EXISTS main." + table); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(schemaSQL); err != nil {
+		return err
+	}
+	for _, table := range applicationTables {
+		if _, err := tx.Exec("INSERT INTO main." + table + " SELECT * FROM migrated." + table); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func moveBoltAside(boltPath string) (string, error) {
+	backupPath := boltPath + ".bak"
+	for suffix := 1; ; suffix++ {
+		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+			break
+		} else if err != nil {
+			return "", err
+		}
+		backupPath = fmt.Sprintf("%s.bak.%d", boltPath, suffix)
+	}
+	if err := os.Rename(boltPath, backupPath); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	return backupPath, nil
+}
+
+// createSQLiteDB creates a new SQLite database file at the given path,
+// opens a connection and initializes the schema.
+func createSQLiteDB(dbPath string) (*sql.DB, error) {
+	db, err := openSQLiteFile(dbPath, "")
+	if err != nil {
+		return nil, err
 	}
 
 	// Initialize schema
@@ -180,12 +327,9 @@ func migrateSystemBucket(boltDB *bbolt.DB, tx *sql.Tx) error {
 	})
 }
 
-// migrateTouchBucket migrates the touch bucket (servers and subscriptions)
-// Returns a map of BoltDB subscription index (0-based) -> SQLite subscription ID
-// for use in outbound connection migration.
-func migrateTouchBucket(boltDB *bbolt.DB, tx *sql.Tx) (map[int64]int64, error) {
-	var subIDMap map[int64]int64
-	err := boltDB.View(func(btx *bbolt.Tx) error {
+// migrateTouchBucket migrates the touch bucket (servers and subscriptions).
+func migrateTouchBucket(boltDB *bbolt.DB, tx *sql.Tx) error {
+	return boltDB.View(func(btx *bbolt.Tx) error {
 		bkt := btx.Bucket([]byte("touch"))
 		if bkt == nil {
 			log.Info("No touch bucket found, skipping")
@@ -203,19 +347,13 @@ func migrateTouchBucket(boltDB *bbolt.DB, tx *sql.Tx) (map[int64]int64, error) {
 		// Migrate subscriptions
 		subsJSON := bkt.Get([]byte("subscriptions"))
 		if subsJSON != nil {
-			var err error
-			subIDMap, err = migrateSubscriptions(subsJSON, tx)
-			if err != nil {
+			if err := migrateSubscriptions(subsJSON, tx); err != nil {
 				return err
 			}
 		}
 
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return subIDMap, nil
 }
 
 // migrateServers migrates the servers JSON array to the servers table
@@ -255,30 +393,27 @@ func migrateServers(data []byte, tx *sql.Tx) error {
 }
 
 // migrateSubscriptions migrates the subscriptions JSON array to the subscriptions table.
-// Returns a map of BoltDB subscription index (0-based) -> SQLite subscription ID.
-func migrateSubscriptions(data []byte, tx *sql.Tx) (map[int64]int64, error) {
+func migrateSubscriptions(data []byte, tx *sql.Tx) error {
 	if !gjson.ValidBytes(data) {
-		return nil, fmt.Errorf("invalid JSON for subscriptions")
+		return fmt.Errorf("invalid JSON for subscriptions")
 	}
 
 	parsed := gjson.ParseBytes(data)
 	if !parsed.IsArray() {
-		return nil, fmt.Errorf("subscriptions data is not an array")
+		return fmt.Errorf("subscriptions data is not an array")
 	}
 
 	results := parsed.Array()
 	if len(results) == 0 {
-		return nil, nil
+		return nil
 	}
 
-	subIDMap := make(map[int64]int64, len(results))
-
 	subStmt, err := tx.Prepare(`
-		INSERT INTO subscriptions (address, remarks, status, info, auto_select, sort)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO subscriptions (address, remarks, status, info, auto_select, decrypt_password, extra_json, sort)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer subStmt.Close()
 
@@ -287,7 +422,7 @@ func migrateSubscriptions(data []byte, tx *sql.Tx) (map[int64]int64, error) {
 		VALUES ('subscription_server', ?, '', 0, '', ?, '', '', '', ?)
 	`)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer serverStmt.Close()
 
@@ -301,36 +436,33 @@ func migrateSubscriptions(data []byte, tx *sql.Tx) (map[int64]int64, error) {
 			autoSelect = 1
 		}
 
-		res, err := subStmt.Exec(address, remarks, status, info, autoSelect, i)
+		res, err := subStmt.Exec(address, remarks, status, info, autoSelect, r.Get("decryptPassword").String(), subExtraFromJSON([]byte(r.Raw)), i)
 		if err != nil {
-			return nil, fmt.Errorf("failed to insert subscription %d: %w", i, err)
+			return fmt.Errorf("failed to insert subscription %d: %w", i, err)
 		}
 
 		subID, err := res.LastInsertId()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get last insert id for subscription %d: %w", i, err)
+			return fmt.Errorf("failed to get last insert id for subscription %d: %w", i, err)
 		}
-
-		// Record the mapping: BoltDB index (0-based) -> SQLite subscription ID
-		subIDMap[int64(i)] = subID
 
 		// Migrate servers within this subscription
 		servers := r.Get("servers").Array()
 		for j, s := range servers {
 			configJSON := s.Raw
 			if _, err := serverStmt.Exec(subID, configJSON, j); err != nil {
-				return nil, fmt.Errorf("failed to insert subscription server %d/%d: %w", i, j, err)
+				return fmt.Errorf("failed to insert subscription server %d/%d: %w", i, j, err)
 			}
 		}
 
 		log.Info("Migrated subscription %d with %d servers", i, len(servers))
 	}
 
-	return subIDMap, nil
+	return nil
 }
 
 // migrateOutboundsBucket migrates the outbounds bucket
-func migrateOutboundsBucket(boltDB *bbolt.DB, tx *sql.Tx, subIDMap map[int64]int64) error {
+func migrateOutboundsBucket(boltDB *bbolt.DB, tx *sql.Tx) error {
 	return boltDB.View(func(btx *bbolt.Tx) error {
 		// Migrate outbound names from outbounds/names set
 		outboundsBkt := btx.Bucket([]byte("outbounds"))
@@ -364,7 +496,7 @@ func migrateOutboundsBucket(boltDB *bbolt.DB, tx *sql.Tx, subIDMap map[int64]int
 				// Migrate connectedServers
 				connData := outboundBkt.Get([]byte("connectedServers"))
 				if connData != nil {
-					if err := migrateOutboundConnections(outboundName, connData, tx, subIDMap); err != nil {
+					if err := migrateOutboundConnections(outboundName, connData, tx); err != nil {
 						return err
 					}
 				}
@@ -381,8 +513,20 @@ func migrateOutboundNames(data []byte, tx *sql.Tx) error {
 		return fmt.Errorf("failed to insert default outbound name: %w", err)
 	}
 
-	// Try to extract names from the gob data
-	names := extractStringsFromGob(data)
+	// Bolt's set was map[[32]byte]interface{}, keyed by the member hash.
+	var members map[[32]byte]interface{}
+	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&members); err != nil {
+		return fmt.Errorf("decode outbound names: %w", err)
+	}
+	names := make([]string, 0, len(members))
+	for _, member := range members {
+		name, ok := member.(string)
+		if !ok {
+			return fmt.Errorf("invalid outbound name of type %T", member)
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	for i, name := range names {
 		if name == "" {
 			continue
@@ -396,27 +540,6 @@ func migrateOutboundNames(data []byte, tx *sql.Tx) error {
 	return nil
 }
 
-// extractStringsFromGob attempts to extract string values from gob-encoded data
-func extractStringsFromGob(data []byte) []string {
-	var names []string
-	current := make([]byte, 0)
-	for i := 0; i < len(data); i++ {
-		if data[i] >= 32 && data[i] < 127 {
-			current = append(current, data[i])
-		} else {
-			if len(current) > 1 {
-				s := string(current)
-				if s != "map" && s != "uint8" && s != "string" && s != "interface" &&
-					len(s) > 2 && s != "false" && s != "true" {
-					names = append(names, s)
-				}
-			}
-			current = make([]byte, 0)
-		}
-	}
-	return names
-}
-
 // migrateOutboundSetting migrates an outbound setting
 func migrateOutboundSetting(outboundName string, data []byte, tx *sql.Tx) error {
 	// Ensure outbound name exists
@@ -424,88 +547,25 @@ func migrateOutboundSetting(outboundName string, data []byte, tx *sql.Tx) error 
 		return err
 	}
 
-	if _, err := tx.Exec("INSERT OR REPLACE INTO outbound_settings (outbound_name, setting_json) VALUES (?, ?)",
-		outboundName, string(data)); err != nil {
+	key := makeKey("outbound."+outboundName, "setting")
+	if _, err := tx.Exec("INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)", key, string(data)); err != nil {
 		return fmt.Errorf("failed to insert outbound setting for %s: %w", outboundName, err)
 	}
 	log.Info("Migrated outbound setting: %s", outboundName)
 	return nil
 }
 
-// migrateOutboundConnections migrates connected servers for an outbound.
-// subIDMap maps BoltDB subscription index (0-based) -> SQLite subscription ID.
-func migrateOutboundConnections(outboundName string, data []byte, tx *sql.Tx, subIDMap map[int64]int64) error {
-	if !gjson.ValidBytes(data) {
-		return nil
-	}
-
-	// Ensure the outbound name exists in outbound_names table to satisfy
-	// the FOREIGN KEY constraint on outbound_connections.outbound_name.
-	// This is critical because migrateOutboundSetting may not be called
-	// if the outbound bucket has connectedServers but no setting data.
+// migrateOutboundConnections preserves Bolt ordinals because configure.Which
+// resolves them against the ordered server and subscription lists at runtime.
+func migrateOutboundConnections(outboundName string, data []byte, tx *sql.Tx) error {
 	if _, err := tx.Exec("INSERT OR IGNORE INTO outbound_names (name, sort) VALUES (?, 0)", outboundName); err != nil {
 		return fmt.Errorf("failed to ensure outbound name %s exists: %w", outboundName, err)
 	}
 
-	parsed := gjson.ParseBytes(data)
-	touches := parsed.Get("touches").Array()
-
-	stmt, err := tx.Prepare(`
-		INSERT INTO outbound_connections (outbound_name, server_id, sort)
-		VALUES (?, ?, ?)
-	`)
-	if err != nil {
-		return err
+	key := makeKey("outbound."+outboundName, "connectedServers")
+	if _, err := tx.Exec("INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)", key, string(data)); err != nil {
+		return fmt.Errorf("failed to insert outbound connections for %s: %w", outboundName, err)
 	}
-	defer stmt.Close()
-
-	for i, t := range touches {
-		touchType := t.Get("_type").String()
-		id := t.Get("id").Int()
-
-		var serverID int64
-		switch touchType {
-		case "server":
-			// In BoltDB, server IDs are 1-based sequential numbers.
-			// After migration to SQLite, servers get new auto-increment IDs.
-			// We look up the server by type='server' and sort=(id-1) since
-			// sort is set to the array index (0-based) during migration.
-			if err := tx.QueryRow(
-				"SELECT id FROM servers WHERE type = 'server' AND sort = ?",
-				id-1,
-			).Scan(&serverID); err != nil {
-				log.Warn("Could not find server with sort=%d (original id=%d): %v — skipping connection entry", id-1, id, err)
-				continue
-			}
-		case "subscriptionServer":
-			// In BoltDB, subscription server IDs are 1-based within each subscription.
-			// The "sub" field in the touch data is the BoltDB subscription index (0-based).
-			// We need to map it to the SQLite subscription ID using subIDMap.
-			boltSubIdx := t.Get("sub").Int()
-			sqlSubID, ok := subIDMap[boltSubIdx]
-			if !ok {
-				log.Warn("Could not find SQLite subscription ID for BoltDB subscription index %d — skipping connection entry", boltSubIdx)
-				continue
-			}
-			if err := tx.QueryRow(
-				"SELECT id FROM servers WHERE type = 'subscription_server' AND sub_id = ? AND sort = ?",
-				sqlSubID, id-1,
-			).Scan(&serverID); err != nil {
-				log.Warn("Could not find subscription server for sub_id=%d (BoltDB sub=%d), sort=%d: %v — skipping connection entry", sqlSubID, boltSubIdx, id-1, err)
-				continue
-			}
-		default:
-			continue
-		}
-
-		if _, err := stmt.Exec(outboundName, serverID, i); err != nil {
-			// Log the error and skip this connection entry rather than failing the entire migration.
-			// This provides resilience against edge cases where server references may be stale.
-			log.Warn("Failed to insert outbound connection for %s (server_id=%d, sort=%d): %v — skipping", outboundName, serverID, i, err)
-			continue
-		}
-	}
-
 	return nil
 }
 
@@ -524,7 +584,9 @@ func verifyMigration(boltDB *bbolt.DB, sqldb *sql.DB) error {
 			})
 
 			var sqlCount int
-			sqldb.QueryRow("SELECT COUNT(*) FROM system_config").Scan(&sqlCount)
+			if err := sqldb.QueryRow("SELECT COUNT(*) FROM system_config WHERE key LIKE 'system:%'").Scan(&sqlCount); err != nil {
+				return fmt.Errorf("failed to count migrated system config: %w", err)
+			}
 
 			if boltCount != sqlCount {
 				return fmt.Errorf("system config count mismatch: BoltDB=%d, SQLite=%d", boltCount, sqlCount)
@@ -539,7 +601,9 @@ func verifyMigration(boltDB *bbolt.DB, sqldb *sql.DB) error {
 			if serversData != nil {
 				boltServerCount := len(gjson.ParseBytes(serversData).Array())
 				var sqlServerCount int
-				sqldb.QueryRow("SELECT COUNT(*) FROM servers WHERE type = 'server'").Scan(&sqlServerCount)
+				if err := sqldb.QueryRow("SELECT COUNT(*) FROM servers WHERE type = 'server'").Scan(&sqlServerCount); err != nil {
+					return err
+				}
 				if boltServerCount != sqlServerCount {
 					return fmt.Errorf("server count mismatch: BoltDB=%d, SQLite=%d", boltServerCount, sqlServerCount)
 				}
@@ -551,7 +615,9 @@ func verifyMigration(boltDB *bbolt.DB, sqldb *sql.DB) error {
 			if subsData != nil {
 				boltSubCount := len(gjson.ParseBytes(subsData).Array())
 				var sqlSubCount int
-				sqldb.QueryRow("SELECT COUNT(*) FROM subscriptions").Scan(&sqlSubCount)
+				if err := sqldb.QueryRow("SELECT COUNT(*) FROM subscriptions").Scan(&sqlSubCount); err != nil {
+					return err
+				}
 				if boltSubCount != sqlSubCount {
 					return fmt.Errorf("subscription count mismatch: BoltDB=%d, SQLite=%d", boltSubCount, sqlSubCount)
 				}
@@ -559,7 +625,29 @@ func verifyMigration(boltDB *bbolt.DB, sqldb *sql.DB) error {
 			}
 		}
 
-		return nil
+		return btx.ForEach(func(name []byte, bucket *bbolt.Bucket) error {
+			if bucket == nil || !strings.HasPrefix(string(name), "outbound.") {
+				return nil
+			}
+			for _, key := range []string{"setting", "connectedServers"} {
+				value := bucket.Get([]byte(key))
+				if value == nil {
+					continue
+				}
+				fullKey := makeKey(string(name), key)
+				var migrated string
+				if err := sqldb.QueryRow("SELECT value FROM system_config WHERE key = ?", fullKey).Scan(&migrated); err != nil {
+					return fmt.Errorf("failed to read migrated %s: %w", fullKey, err)
+				}
+				if migrated != string(value) {
+					return fmt.Errorf("outbound config mismatch for %s", fullKey)
+				}
+				if err := verifyOutboundValue(key, []byte(migrated)); err != nil {
+					return fmt.Errorf("invalid migrated %s: %w", fullKey, err)
+				}
+			}
+			return nil
+		})
 	})
 
 	if err != nil {
@@ -568,4 +656,29 @@ func verifyMigration(boltDB *bbolt.DB, sqldb *sql.DB) error {
 
 	log.Warn("Migration verification passed!")
 	return nil
+}
+
+func verifyOutboundValue(key string, value []byte) error {
+	switch key {
+	case "setting":
+		var setting struct {
+			ProbeURL      string `json:"probeURL"`
+			ProbeInterval string `json:"probeInterval"`
+			Type          string `json:"type"`
+			Selected      string `json:"selected,omitempty"`
+		}
+		return json.Unmarshal(value, &setting)
+	case "connectedServers":
+		var whiches struct {
+			Touches []struct {
+				Type     string `json:"_type"`
+				ID       int    `json:"id"`
+				Sub      int    `json:"sub"`
+				Outbound string `json:"outbound"`
+			} `json:"touches"`
+		}
+		return json.Unmarshal(value, &whiches)
+	default:
+		return nil
+	}
 }

@@ -59,22 +59,6 @@ CREATE TABLE IF NOT EXISTS outbound_names (
     name TEXT PRIMARY KEY,
     sort INTEGER NOT NULL DEFAULT 0
 );
-
-CREATE TABLE IF NOT EXISTS outbound_connections (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    outbound_name TEXT NOT NULL,
-    server_id INTEGER NOT NULL,
-    sort INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (outbound_name) REFERENCES outbound_names(name),
-    FOREIGN KEY (server_id) REFERENCES servers(id),
-    UNIQUE(outbound_name, server_id)
-);
-
-CREATE TABLE IF NOT EXISTS outbound_settings (
-    outbound_name TEXT PRIMARY KEY,
-    setting_json TEXT NOT NULL DEFAULT '{}',
-    FOREIGN KEY (outbound_name) REFERENCES outbound_names(name)
-);
 `
 
 // InitSchema creates all tables if they don't exist
@@ -82,7 +66,6 @@ func InitSchema(db *sql.DB) error {
 	log.Info("Initializing database schema")
 	_, err := db.Exec(schemaSQL)
 	if err != nil {
-		log.Fatal("Failed to initialize database schema: %v", err)
 		return err
 	}
 	log.Info("Database schema initialized successfully")
@@ -142,5 +125,70 @@ func MigrateSchema(db *sql.DB) error {
 		}
 	}
 
-	return nil
+	return migrateLegacyOutboundTables(db)
+}
+
+// Earlier SQLite releases stored migrated group memberships as server row IDs.
+// The runtime uses list positions and keeps both group values in system_config.
+func migrateLegacyOutboundTables(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var connections, settings bool
+	err = tx.QueryRow(`SELECT
+		EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='outbound_connections'),
+		EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='outbound_settings')`).Scan(&connections, &settings)
+	if err != nil {
+		return err
+	}
+	if connections {
+		if err := recoverOutboundConnections(tx); err != nil {
+			return fmt.Errorf("recover old outbound members: %w", err)
+		}
+		if _, err := tx.Exec("DROP TABLE outbound_connections"); err != nil {
+			return err
+		}
+	}
+	if settings {
+		// A group edited since the old migration already has an authoritative key.
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO system_config(key, value)
+			SELECT 'outbound.' || outbound_name || ':setting', setting_json FROM outbound_settings
+			WHERE setting_json IS NOT NULL AND setting_json NOT IN ('', '{}')`); err != nil {
+			return fmt.Errorf("recover old outbound settings: %w", err)
+		}
+		if _, err := tx.Exec("DROP TABLE outbound_settings"); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func recoverOutboundConnections(tx *sql.Tx) error {
+	// Server lists are one-based in Which. Subscription indexes are zero-based.
+	// A deleted server/subscription can leave a stale foreign key in older DBs.
+	_, err := tx.Exec(`WITH nodes AS (
+			SELECT id, type, sub_id,
+				row_number() OVER (PARTITION BY type, sub_id ORDER BY sort, id) AS node_index
+			FROM servers
+		), subs AS (
+			SELECT id, row_number() OVER (ORDER BY sort, id) - 1 AS sub_index FROM subscriptions
+		)
+		INSERT OR IGNORE INTO system_config(key, value)
+		SELECT 'outbound.' || outbound_name || ':connectedServers',
+			json_object('touches', json_group_array(json_object(
+				'_type', node_type, 'id', node_index, 'sub', sub_index, 'outbound', outbound_name)))
+		FROM (
+			SELECT c.outbound_name, s.node_index,
+				CASE s.type WHEN 'server' THEN 'server' ELSE 'subscriptionServer' END AS node_type,
+				COALESCE(sub.sub_index, 0) AS sub_index
+			FROM outbound_connections c
+			JOIN nodes s ON s.id = c.server_id
+			LEFT JOIN subs sub ON s.sub_id = sub.id
+			WHERE s.type = 'server' OR (s.type = 'subscription_server' AND sub.id IS NOT NULL)
+			ORDER BY c.outbound_name, c.sort, c.id
+		) GROUP BY outbound_name`)
+	return err
 }
