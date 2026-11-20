@@ -44,6 +44,7 @@
 </template>
 
 <script>
+import { isBackendRequest } from "@/assets/js/backend";
 import { handleResponse } from "@/assets/js/utils";
 import i18n from "@/plugins/i18n";
 
@@ -81,6 +82,7 @@ export default {
           },
         }).then((res) => {
           handleResponse(res, this, () => {
+            if (!isBackendRequest(res.config)) return;
             localStorage["token"] = res.data.data.token;
             this.$emit("close");
             this.$remount();
@@ -99,6 +101,7 @@ export default {
           },
         }).then((res) => {
           handleResponse(res, this, () => {
+            if (!isBackendRequest(res.config)) return;
             localStorage["token"] = res.data.data.token;
             this.$emit("close");
             this.$remount();

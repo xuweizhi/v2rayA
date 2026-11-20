@@ -2,11 +2,9 @@
 
 import Vue from "vue";
 import axios from "axios";
-import {
-  SnackbarProgrammatic,
-  ToastProgrammatic,
-  ModalProgrammatic,
-} from "buefy";
+import { ModalProgrammatic } from "buefy";
+import { toast, snackbar } from "@/plugins/buefy";
+import { isBackendRequest } from "@/assets/js/backend";
 import { parseURL } from "@/assets/js/utils";
 import browser from "@/assets/js/browser";
 import modalCustomPorts from "../components/modalCustomPorts";
@@ -19,7 +17,7 @@ axios.defaults.timeout = 60 * 1000; // timeout: 60秒
 
 axios.interceptors.request.use(
   (config) => {
-    if (Object.prototype.hasOwnProperty.call(localStorage, "token")) {
+    if (localStorage.getItem("token") && !config.skipBackendAuth && isBackendRequest(config)) {
       config.headers.Authorization = `${localStorage["token"]}`;
       config.headers["X-V2raya-Request-Id"] = nanoid();
     }
@@ -27,7 +25,7 @@ axios.interceptors.request.use(
   },
   (err) => {
     console.log("!", err.name, err.message);
-    ToastProgrammatic.open({
+    toast.open({
       message: err.message,
       type: "is-warning",
       position: "is-top",
@@ -44,7 +42,7 @@ function informNotRunning(url = localStorage["backendAddress"]) {
     return;
   }
   informed = url;
-  SnackbarProgrammatic.open({
+  snackbar.open({
     message: i18n.t("axios.messages.optimizeBackend"),
     type: "is-primary",
     queue: false,
@@ -60,7 +58,7 @@ function informNotRunning(url = localStorage["backendAddress"]) {
       });
     },
   });
-  SnackbarProgrammatic.open({
+  snackbar.open({
     message: i18n.t("axios.messages.noBackendFound", { url }),
     type: "is-warning",
     queue: false,
@@ -79,12 +77,11 @@ axios.interceptors.response.use(
   },
   function (err) {
     console.log("!!", err.name, err.message);
-    console.log(Object.assign({}, err));
     if (err.code === "ECONNABORTED" && err.isAxiosError) {
       return Promise.reject(err);
     }
     let u, host;
-    if (err.config) {
+    if (err.config?.url) {
       u = parseURL(err.config.url);
       host = u.host;
     }
@@ -96,7 +93,8 @@ axios.interceptors.response.use(
         return Promise.reject(err);
       }
 
-      if (localStorage["token"]) {
+      const token = localStorage.getItem("token");
+      if (token && isBackendRequest(err.config) && err.config.headers?.Authorization === token) {
         // Centralize auth recovery in App.vue's mounted() flow to avoid
         // programmatic modal stacking and overlay conflicts.
         localStorage.removeItem("token");
@@ -105,33 +103,26 @@ axios.interceptors.response.use(
       return Promise.reject(err);
     } else if (
       location.protocol.substr(0, 5) === "https" &&
-      u.protocol === "http"
+      u?.protocol === "http"
     ) {
       // https frontend communicating with http backend
-      let msg = i18n.t("axios.messages.cannotCommunicate.0");
       if (host === "localhost" || host === "local" || host === "127.0.0.1") {
         if (browser.versions.webKit) {
           // Chrome and other WebKit browsers allow access to http://localhost, 
           // failures are likely due to backend service not being started.
           informNotRunning(u.source.replace(u.relative, ""));
-          return;
-        }
-        if (browser.versions.gecko) {
-          msg = i18n.t("axios.messages.cannotCommunicate.1");
+          return Promise.reject(err);
         }
       }
-      SnackbarProgrammatic.open({
-        message: msg,
+      snackbar.open({
+        message: i18n.t("axios.messages.cannotCommunicate"),
         type: "is-warning",
         position: "is-top",
         queue: false,
         duration: 10000,
-        actionText: i18n.t("operations.switchSite"),
-        onAction: () => {
-          window.open("http://v.v2raya.org", "_self");
-        },
+        actionText: null,
       });
-      SnackbarProgrammatic.open({
+      snackbar.open({
         message: i18n.t("axios.messages.optimizeBackend"),
         type: "is-primary",
         queue: false,
@@ -151,7 +142,7 @@ axios.interceptors.response.use(
       (err.message && err.message === "Network Error") ||
       (err.config && err.config.url === "/api/version")
     ) {
-      informNotRunning(u.source.replace(u.relative, ""));
+      informNotRunning(u && u.source.replace(u.relative, ""));
     } else {
       // other errors
       if (
@@ -163,7 +154,7 @@ axios.interceptors.response.use(
         return Promise.reject(err);
       }
       console.log("!other");
-      ToastProgrammatic.open({
+      toast.open({
         message: err,
         type: "is-warning",
         position: "is-top",

@@ -24,7 +24,7 @@ v2rayA mainly provides the following methods of installation:
 7. Ubuntu Snap: https://snapcraft.io/v2raya
 8. Binary file and installation package from GitHub releases
 
-See [**v2rayA - Docs**](https://v2raya.org/en/docs/prologue/introduction/)
+See [**v2rayA - Docs**](https://github.com/v2rayA/v2rayA/wiki)
 
 
 ## Screenshot

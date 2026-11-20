@@ -4,7 +4,7 @@
 #define MyAppName "v2rayA"
 #define MyAppVersion "TheRealVersion"
 #define MyAppPublisher "v2rayA Organization"
-#define MyAppURL "https://v2raya.org/"
+#define MyAppURL "https://github.com/v2rayA/v2rayA"
 #define MyAppExeName "v2raya.exe"
 
 [Setup]
@@ -50,7 +50,7 @@ Source: "D:\v2raya.ico"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{commondesktop}\v2rayA Web Panel"; Filename: "http://localhost:2017"; IconFilename: "{app}\v2raya.ico";
 Name: "{group}\v2rayA Web Panel"; Filename: "http://localhost:2017"; IconFilename: "{app}\v2raya.ico";
-Name: "{group}\v2rayA Wiki"; Filename: "{#MyAppURL}";
+Name: "{group}\v2rayA Wiki"; Filename: "{#MyAppURL}/wiki";
 Name: "{group}\{cm:UninstallProgram} {#MyAppName}"; Filename: "{uninstallexe}";
 
 [Registry]

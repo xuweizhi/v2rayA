@@ -1,4 +1,4 @@
-// import { parseURL, isIntranet } from "@/assets/js/utils";
+import { setBackendAddress } from "@/assets/js/backend";
 console.log("backendPort");
 let ba = localStorage.getItem("backendAddress");
 let currentPrefix = "";
@@ -10,9 +10,9 @@ if (typeof window !== "undefined") {
   }
 }
 if (currentPrefix && currentPrefix !== "/") {
-  localStorage.setItem("backendAddress", currentPrefix);
+  setBackendAddress(currentPrefix);
 } else {
   if (ba == null) {
-    localStorage.setItem("backendAddress", "");
+    setBackendAddress("");
   }
 }

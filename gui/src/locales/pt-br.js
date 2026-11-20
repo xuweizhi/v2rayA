@@ -104,7 +104,6 @@ export default {
     helpManual: "Ajuda & Manual",
     yes: "Sim",
     no: "Não",
-    switchSite: "Mudar para site alternativo",
     addOutbound: "Adicionar uma saída",
   },
   register: {
@@ -319,16 +318,14 @@ export default {
           <p class="about-small">32345: tproxy, necessário para proxy transparente</p>
           <p>Todos os dados são armazenados localmente, não na nuvem.</p>
           <p>Problemas encontrados durante o uso podem ser relatados em <a href="https://github.com/v2rayA/v2rayA/issues">issues</a>.</p>
-          <p>Documentação: <a href="https://v2raya.org">https://v2raya.org</a></p>`,
+          <p>Documentação: <a href="https://github.com/v2rayA/v2rayA/wiki/Usage">https://github.com/v2rayA/v2rayA/wiki/Usage</a></p>`,
   axios: {
     messages: {
       optimizeBackend: "Ajustar o endereço do serviço v2rayA?",
       noBackendFound:
         "Não é possível encontrar o v2rayA em {url}. Verifique se o v2rayA está sendo executado nesse endereço.",
-      cannotCommunicate: [
-        "Não é possível comunicar. Se o seu serviço estiver em execução e as portas estiverem abertas corretamente, a razão pode ser que o navegador atual não permite que sites https acessem recursos http. Você pode tentar usar o Chrome ou alternar para um site http alternativo.",
-        "Não é possível comunicar. O Firefox não permite que sites https acessem recursos http. Você pode tentar alternar para sites http alternativos.",
-      ],
+      cannotCommunicate:
+        "O navegador restringe o acesso de páginas HTTPS a serviços HTTP. Abra o endereço do seu serviço v2rayA no navegador ou configure HTTPS no serviço.",
     },
     urls: {
       usage: "https://github.com/v2rayA/v2rayA/wiki/Usage",

@@ -161,6 +161,7 @@
 </template>
 
 <script>
+import { setBackendAddress } from "@/assets/js/backend";
 import CONST from "@/assets/js/const";
 import { handleResponse } from "@/assets/js/utils";
 import ModalSharing from "@/components/modalSharing";
@@ -278,15 +279,16 @@ export default {
                 },
               });
             }
-            localStorage["backendAddress"] = backendAddress;
+            setBackendAddress(backendAddress);
             this.$emit("close");
           });
         });
       } else {
         this.$axios({
           url: backendAddress + "/api/version",
+          skipBackendAuth: true,
         }).then(() => {
-          localStorage["backendAddress"] = backendAddress;
+          setBackendAddress(backendAddress);
           this.$emit("close");
           this.$remount();
         });

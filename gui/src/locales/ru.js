@@ -106,7 +106,6 @@ export default {
     helpManual: "Помощь и руководство",
     yes: "Да",
     no: "Нет",
-    switchSite: "Переключится в альтернативный сайт",
     addOutbound: "Добавить исходящий узел",
     domainsExcluded: "Исключённые домены"
   },
@@ -321,16 +320,14 @@ export default {
           <p class="about-small">32345: tproxy, нужно для прозрачного прокси </p>
           <p>Все данные хранятся локально, вместо хранения на облаке.</p>
           <p>В случае найденных проблем, о них можно сообщить в разделе <a href="https://github.com/v2rayA/v2rayA/issues">ошибок</a>.</p>
-          <p>Документация: <a href="https://v2raya.org">https://v2raya.org</a></p>`,
+          <p>Документация: <a href="https://github.com/v2rayA/v2rayA/wiki/Usage">https://github.com/v2rayA/v2rayA/wiki/Usage</a></p>`,
   axios: {
     messages: {
       optimizeBackend: "Изменить адрес v2rayA сервиса?",
       noBackendFound:
         "Не удалось найти v2rayA по адресу {url}. Убедитесь, что v2rayA запущен по этому адресу.",
-      cannotCommunicate: [
-        "Не удалось подключиться. Если сервис запущен и порты открыты верно, причина в том, что текущий браузер не разрешает https сайтам подключаться к http ресурсам, вы можете попробовать Chrome или подключиться к альтернативному http сайту.",
-        "Не удалось подключиться. Firefox не разрешает https сайтам подключаться к http ресурсам, вы можете попробовать подключиться к альтернативному http сайту.",
-      ],
+      cannotCommunicate:
+        "Браузер ограничивает доступ со страниц HTTPS к службам HTTP. Откройте в браузере адрес своего сервиса v2rayA или настройте для него HTTPS.",
     },
     urls: {
       usage: "https://github.com/v2rayA/v2rayA/wiki/Usage",

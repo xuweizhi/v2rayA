@@ -236,7 +236,6 @@ export default {
     helpManual: "查看帮助",
     yes: "是",
     no: "否",
-    switchSite: "切换至备用站点",
     addOutbound: "新增一个代理分组",
     add: "添加",
     close: "关闭",
@@ -499,18 +498,16 @@ export default {
           <p class="about-small">其他端口：</p>
           <p class="about-small">32345: tproxy，透明代理所需 </p>
           <p>在使用中如果发现任何问题，欢迎<a href="https://github.com/v2rayA/v2rayA/issues">提出issue</a>.</p>
-          <p>文档：<a href="https://v2raya.org">https://v2raya.org</a>.</p>`,
+          <p>文档：<a href="https://github.com/v2rayA/v2rayA/wiki/Usage">https://github.com/v2rayA/v2rayA/wiki/Usage</a>.</p>`,
   axios: {
     messages: {
       optimizeBackend: "您是否需要调整服务端地址？",
       noBackendFound: "未在 {url} 检测到v2rayA服务端，请确定v2rayA正常运行",
-      cannotCommunicate: [
-        "无法通信。如果您的服务端已正常运行，且端口正常开放，原因可能是当前浏览器不允许https站点访问http资源，您可以尝试切换为http备用站点。",
-        "无法通信。火狐浏览器不允许https站点访问http资源，您可以换用Chrome浏览器或切换为http备用站点。",
-      ],
+      cannotCommunicate:
+        "浏览器限制 HTTPS 页面访问 HTTP 服务。请在浏览器中打开你自己的 v2rayA 服务地址，或为服务配置 HTTPS。",
     },
     urls: {
-      usage: "https://v2raya.org/",
+      usage: "https://github.com/v2rayA/v2rayA/wiki/Usage",
     },
   },
   routingA: {

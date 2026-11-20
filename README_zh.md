@@ -24,7 +24,7 @@ v2rayA 主要提供了下述使用方法：
 7. Ubuntu Snap: https://snapcraft.io/v2raya
 8. 从 GitHub releases 下载二进制与安装包
 
-详见 [**v2rayA - Docs**](https://v2raya.org/docs/prologue/introduction/)
+详见 [**v2rayA - Docs**](https://github.com/v2rayA/v2rayA/wiki)
 
 
 ## 界面截图

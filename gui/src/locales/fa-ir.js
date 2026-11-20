@@ -104,7 +104,6 @@ export default {
     helpManual: "راهنما",
     yes: "بله",
     no: "خیر",
-    switchSite: "به سایت جایگزین بروید",
     addOutbound: "یک خروجی اضافه کنید",
   },
   register: {
@@ -313,16 +312,14 @@ export default {
           <p class="about-small">32345: tproxy, needed by transparent proxy </p>
           <p>تمام اطلاعات به صورت محلی ذخیره میشود نه فضای ابری</p>
           <p>می توانید مشکلات را به لینک روبرو گزارش دهید : <a href="https://github.com/v2rayA/v2rayA/issues">issues</a>.</p>
-          <p>داکیومنت ها : <a href="https://v2raya.org">https://v2raya.org</a></p>`,
+          <p>داکیومنت ها : <a href="https://github.com/v2rayA/v2rayA/wiki/Usage">https://github.com/v2rayA/v2rayA/wiki/Usage</a></p>`,
   axios: {
     messages: {
       optimizeBackend: "Adjust v2rayA service address？",
       noBackendFound:
         "نمی توان v2rayA را در آدرس {url} پیدا کرد. اطمینان حاصل کنید که v2rayA روی این آدرس درحال اجرا است.",
-      cannotCommunicate: [
-        "Cannot communicate. If your service is running and ports open correctly, the reason may be that current browser does not allow https sites to access http resources, you can try using Chrome or switching to alternate http site.",
-        "Cannot communicate. Firefox does not allow https sites to access http resources, you can try switching to alternate http sites.",
-      ],
+      cannotCommunicate:
+        "مرورگر دسترسی صفحهٔ HTTPS به سرویس HTTP را محدود می‌کند. نشانی سرویس v2rayA خود را در مرورگر باز کنید یا HTTPS را برای سرویس تنظیم کنید.",
     },
     urls: {
       usage: "https://github.com/v2rayA/v2rayA/wiki/Usage",
