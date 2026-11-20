@@ -2,17 +2,15 @@ package httpClient
 
 import (
 	"fmt"
-	"github.com/v2rayA/v2rayA/common"
-	"github.com/v2rayA/v2rayA/db/configure"
-	"github.com/v2rayA/v2rayA/kernel/v2ray"
-	proxyWithHttp2 "github.com/v2rayA/v2rayA/pkg/util/proxyWithHttp"
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"strconv"
-	"strings"
 	"time"
+
+	"github.com/v2rayA/v2rayA/db/configure"
+	"github.com/v2rayA/v2rayA/kernel/v2ray"
+	proxyWithHttp2 "github.com/v2rayA/v2rayA/pkg/util/proxyWithHttp"
 )
 
 func GetHttpClientWithProxy(proxyURL string) (client *http.Client, err error) {
@@ -32,33 +30,12 @@ func GetHttpClientWithProxy(proxyURL string) (client *http.Client, err error) {
 }
 
 func GetHttpClientWithv2rayAProxy() (client *http.Client, err error) {
-	host := "127.0.0.1"
-	//是否在docker环境
-	if common.IsDocker() {
-		//连接网关，即宿主机的端口
-		out, err := exec.Command("sh", "-c", "ip route list default|head -n 1|awk '{print $3}'").Output()
-		if err == nil {
-			host = strings.TrimSpace(string(out))
-		} else {
-			return nil, fmt.Errorf("failed to get gateway: %v", err)
-		}
-	}
-	return GetHttpClientWithProxy("socks5://" + net.JoinHostPort(host, strconv.Itoa(configure.GetPortsNotNil().Socks5)))
+	// The core shares the service's network namespace, including in Docker.
+	return GetHttpClientWithProxy("socks5://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(configure.GetPortsNotNil().Socks5)))
 }
 
 func GetHttpClientWithv2rayAPac() (client *http.Client, err error) {
-	host := "127.0.0.1"
-	//是否在docker环境
-	if common.IsDocker() {
-		//连接网关，即宿主机的端口
-		out, err := exec.Command("sh", "-c", "ip route|grep default|awk '{print $3}'").Output()
-		if err == nil {
-			host = strings.TrimSpace(string(out))
-		} else {
-			return nil, fmt.Errorf("failed to get gateway: %v", err)
-		}
-	}
-	return GetHttpClientWithProxy("http://" + net.JoinHostPort(host, strconv.Itoa(configure.GetPortsNotNil().HttpWithPac)))
+	return GetHttpClientWithProxy("http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(configure.GetPortsNotNil().HttpWithPac)))
 }
 
 func GetHttpClientAutomatically() (c *http.Client) {

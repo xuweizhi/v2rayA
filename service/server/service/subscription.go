@@ -201,7 +201,7 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 	}
 	defer func() {
 		for _, cl := range clients {
-			if cl == nil || cl == client {
+			if cl == nil || cl == &c {
 				continue
 			}
 			if tr, ok := cl.Transport.(*http.Transport); ok {
@@ -223,6 +223,9 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 		return
 	}
 	defer res.Body.Close()
+	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
+		return result, fmt.Errorf("subscription server returned HTTP %d", res.StatusCode)
+	}
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		return result, err
@@ -258,7 +261,21 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 	if err != nil {
 		return result, err
 	}
-	infos = filterServersByExtra(infos, extra)
+	if len(infos) == 0 {
+		return result, fmt.Errorf("no valid nodes in the subscription response")
+	}
+	// Use the same identity on initial import and refresh. Several distinct
+	// credentials or transports can share a single host and port.
+	seen := make(map[string]bool, len(infos))
+	unique := infos[:0]
+	for _, node := range infos {
+		link := node.ExportToURL()
+		if !seen[link] {
+			unique = append(unique, node)
+			seen[link] = true
+		}
+	}
+	infos = filterServersByExtra(unique, extra)
 	subscriptionUserInfo := res.Header.Get("Subscription-Userinfo")
 	sui := parseSubscriptionUserInfo(subscriptionUserInfo)
 	if len(status) > 0 {
@@ -491,16 +508,27 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	looseKey := func(obj serverObj.ServerObj) string {
 		return obj.GetProtocol() + "://" + net.JoinHostPort(obj.GetHostname(), strconv.Itoa(obj.GetPort()))
 	}
+	// A single endpoint may serve several independent credentials. Only use
+	// the endpoint alone when it identifies one node in both subscriptions.
+	oldEndpointCount := make(map[string]int)
+	for _, server := range subscriptions[index].Servers {
+		if server.ServerObj != nil {
+			oldEndpointCount[looseKey(server.ServerObj)]++
+		}
+	}
 	loose2Index := make(map[string]int)
 	for i, info := range subscriptionInfos {
 		k := looseKey(info)
-		if _, ok := loose2Index[k]; !ok {
+		if _, exists := loose2Index[k]; exists {
+			loose2Index[k] = -1
+		} else {
 			loose2Index[k] = i
 		}
 	}
 	var connectedServerChanged bool
 	for link, cssIndexes := range connectedVmessInfo2CssIndex {
-		if i, ok := loose2Index[looseKey(link2Raw[link].ServerObj)]; ok {
+		key := looseKey(link2Raw[link].ServerObj)
+		if i, ok := loose2Index[key]; ok && i >= 0 && oldEndpointCount[key] == 1 {
 			for _, cssIndex := range cssIndexes {
 				cssAfter[cssIndex].ID = i + 1
 			}

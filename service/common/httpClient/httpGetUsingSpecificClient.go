@@ -25,11 +25,5 @@ func HttpGetUsingSpecificClientWithUAAndHeaders(c *http.Client, url string, user
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	if resp, err = c.Do(req); err != nil {
-		resp, err = http.DefaultClient.Do(req)
-	}
-	if resp == nil {
-		return nil, fmt.Errorf("httpGetUsingSpecificClient: response is nil")
-	}
-	return
+	return c.Do(req)
 }

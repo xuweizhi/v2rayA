@@ -144,18 +144,6 @@ func Import(url string, which *configure.Which, password string) (err error) {
 			servers[i] = configure.ServerRaw{ServerObj: v}
 		}
 
-		// Deduplicate identical share links while preserving distinct servers that
-		// happen to use the same protocol and endpoint.
-		seen := make(map[string]struct{})
-		uniqueServers := make([]configure.ServerRaw, 0, len(servers))
-		for _, s := range servers {
-			key := s.ServerObj.ExportToURL()
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			uniqueServers = append(uniqueServers, s)
-		}
 		extra := configure.SubscriptionExtra{
 			Upload:          result.traffic.Upload,
 			Download:        result.traffic.Download,
@@ -168,7 +156,7 @@ func Import(url string, which *configure.Which, password string) (err error) {
 		err = configure.AppendSubscriptions([]*configure.SubscriptionRaw{{
 			Address:         source,
 			Status:          string(touch.NewUpdateStatus()),
-			Servers:         uniqueServers,
+			Servers:         servers,
 			Info:            result.status,
 			DecryptPassword: password,
 			Extra:           extra,
