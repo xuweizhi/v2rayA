@@ -28,7 +28,11 @@ func CheckResolvConf() {
 	if conf.GetEnvironmentConfig().Lite {
 		return
 	}
-	if _, err := os.Stat(resolvConf); os.IsNotExist(err) {
-		WriteResolvConf([]string{"223.6.6.6"})
+	// A dangling resolver-manager symlink still belongs to its owner.
+	// Exclusive creation also leaves a concurrently installed resolver alone.
+	f, err := os.OpenFile(resolvConf, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err == nil {
+		_, _ = f.WriteString("nameserver 223.6.6.6\n")
+		_ = f.Close()
 	}
 }

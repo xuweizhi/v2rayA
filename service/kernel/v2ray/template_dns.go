@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
@@ -96,7 +95,7 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 	}
 
 	// 读取当前系统 DNS（保存原始配置，用于 v2raya-core 的 bootstrap 解析）。
-	// 此时 /etc/resolv.conf 尚未被劫持，读取的是真实的系统 DNS。
+	// 重新加载配置时沿用接管前的系统 DNS。
 	bootstrapDns := getSystemDnsServers()
 
 	cfg := map[string]interface{}{
@@ -413,7 +412,7 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 // getSystemDnsServers 读取当前系统的 DNS 服务器列表（从 /etc/resolv.conf）。
 // 在劫持发生前调用，保存原始 DNS 供 v2raya-core bootstrap 使用。
 func getSystemDnsServers() []string {
-	data, err := os.ReadFile("/etc/resolv.conf")
+	data, err := readSystemResolvConf()
 	if err != nil {
 		return nil
 	}

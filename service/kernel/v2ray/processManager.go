@@ -146,7 +146,6 @@ func (m *CoreProcessManager) CheckAndStopTransparentProxy(setting *configure.Set
 			}
 			if err != nil {
 				log.Warn("Error when executing the transparent pre stop hook: %v", err)
-				return
 			}
 		}
 
@@ -288,7 +287,9 @@ func (m *CoreProcessManager) Start(t *Template) (err error) {
 	// Phase 1 (pre-lock): lightweight checks that do not depend on whether a
 	// previous process is running.  Port occupancy is checked by NewProcess
 	// after the old process has been stopped.
-	resolv.CheckResolvConf()
+	if !ShouldLocalDnsListen() {
+		resolv.CheckResolvConf()
+	}
 	if (t.Setting.Transparent == configure.TransparentGfwlist || t.Setting.RulePortMode == configure.GfwlistMode) && !asset.DoesV2rayAssetExist("LoyalsoldierSite.dat") {
 		return fmt.Errorf("cannot find GFWList files. update GFWList and try again")
 	}

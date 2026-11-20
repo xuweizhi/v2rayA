@@ -71,12 +71,10 @@ func run() (err error) {
 		<-sigs
 		errch <- nil
 	}()
-	if err = <-errch; err != nil {
-		log.Fatal("run: %v", err)
-	}
+	err = <-errch
 	fmt.Println("Quitting...")
 	v2ray.ProcessManager.CheckAndStopTransparentProxy(nil)
 	v2ray.ProcessManager.Stop(false)
 	_ = db.Close()
-	return nil
+	return err
 }

@@ -215,7 +215,9 @@ ip6tables -w 2 -t nat -I PREROUTING -m mark --mark 0x80/0x80 -j RETURN
 			if e != nil {
 				log.Warn("only listen at 127.2.0.17: %v", e)
 			}
-			resetResolvHijacker()
+			if err := resetResolvHijacker(); err != nil {
+				log.Warn("could not take over system resolver: %v", err)
+			}
 		} else {
 			log.Warn("writeTransparentProxyRules: %v", e)
 		}

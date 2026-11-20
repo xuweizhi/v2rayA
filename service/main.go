@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/v2rayA/v2rayA/conf/report"
+	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 )
 
@@ -19,6 +20,9 @@ func main() {
 	checkEnvironment()
 	if err := checkPlatformSpecific(); err != nil {
 		log.Fatal("Platform check failed: %v", err)
+	}
+	if err := v2ray.RecoverResolvConf(); err != nil {
+		log.Warn("restore system resolver after previous exit: %v", err)
 	}
 	initConfigure()
 	checkUpdate()
