@@ -2,10 +2,13 @@ package dns
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
+	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/miekg/dns"
@@ -74,46 +77,94 @@ func (l *DnsListener) Start() error {
 	return nil
 }
 
+// For port 0 the kernel allocates each transport independently. Try another
+// UDP port when its TCP counterpart is already in use.
+func listenDNSPair(addr string) (net.PacketConn, net.Listener, error) {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	for attempt := 0; ; attempt++ {
+		udp, err := net.ListenPacket("udp", addr)
+		if err != nil {
+			return nil, nil, fmt.Errorf("listen udp: %w", err)
+		}
+		tcpAddr := addr
+		if port == "0" {
+			tcpAddr = udp.LocalAddr().String()
+		}
+		tcp, err := net.Listen("tcp", tcpAddr)
+		if err == nil {
+			return udp, tcp, nil
+		}
+		_ = udp.Close()
+		if port != "0" || attempt >= 9 || !errors.Is(err, syscall.EADDRINUSE) {
+			return nil, nil, fmt.Errorf("listen tcp: %w", err)
+		}
+	}
+}
+
 // startPair starts UDP and TCP listeners for a single address.
 func (l *DnsListener) startPair(addr string) (*serverPair, error) {
 	timeout := time.Duration(l.config.Timeout) * time.Second
 
+	udpConn, tcpListener, err := listenDNSPair(addr)
+	if err != nil {
+		return nil, err
+	}
 	udpSrv := &dns.Server{
 		Addr:         addr,
 		Net:          "udp",
+		PacketConn:   udpConn,
 		Handler:      dns.HandlerFunc(l.handlePacket),
 		UDPSize:      1452,
 		ReadTimeout:  timeout,
 		WriteTimeout: timeout,
 	}
 
-	l.wg.Add(1)
-	go func() {
-		defer l.wg.Done()
-		log.Printf("[dns] UDP listener starting on %s", addr)
-		if err := udpSrv.ListenAndServe(); err != nil {
-			log.Printf("[dns] UDP listener stopped: %v", err)
-		}
-	}()
-
 	tcpSrv := &dns.Server{
 		Addr:         addr,
 		Net:          "tcp",
+		Listener:     tcpListener,
 		Handler:      dns.HandlerFunc(l.handlePacket),
 		ReadTimeout:  timeout,
 		WriteTimeout: timeout,
 	}
 
+	if err := l.activateServer(udpSrv); err != nil {
+		_ = udpConn.Close()
+		_ = tcpListener.Close()
+		return nil, err
+	}
+	if err := l.activateServer(tcpSrv); err != nil {
+		_ = tcpListener.Close()
+		_ = udpSrv.Shutdown()
+		return nil, err
+	}
+	return &serverPair{udp: udpSrv, tcp: tcpSrv}, nil
+}
+
+// Wait for startup before returning so immediate Stop or a later bind failure
+// can shut down this server. Shutdown rejects a server that hasn't started.
+func (l *DnsListener) activateServer(server *dns.Server) error {
+	ready := make(chan struct{})
+	done := make(chan error, 1)
+	server.NotifyStartedFunc = func() { close(ready) }
 	l.wg.Add(1)
 	go func() {
 		defer l.wg.Done()
-		log.Printf("[dns] TCP listener starting on %s", addr)
-		if err := tcpSrv.ListenAndServe(); err != nil {
-			log.Printf("[dns] TCP listener stopped: %v", err)
+		err := server.ActivateAndServe()
+		if err != nil {
+			log.Printf("[dns] %s listener on %s stopped: %v", server.Net, server.Addr, err)
 		}
+		done <- err
 	}()
-
-	return &serverPair{udp: udpSrv, tcp: tcpSrv}, nil
+	select {
+	case <-ready:
+		return nil
+	case err := <-done:
+		return err
+	}
 }
 
 // Stop gracefully shuts down all listeners.
@@ -159,6 +210,17 @@ func (l *DnsListener) handlePacket(w dns.ResponseWriter, msg *dns.Msg) {
 
 	q := msg.Question[0]
 	clientAddr := w.RemoteAddr()
+
+	// A query carrying this process's own token has been sent back to us by an
+	// upstream — a local resolver that forwards to v2rayA while a rule points
+	// back at that resolver. Answering it would start the loop again.
+	if carriesOwnToken(msg) {
+		loopDetected(q, clientAddr)
+		m := new(dns.Msg)
+		m.SetRcode(msg, dns.RcodeServerFailure)
+		_ = w.WriteMsg(m)
+		return
+	}
 
 	query := &DnsQuery{
 		Name:  q.Name,
@@ -222,7 +284,17 @@ func (l *DnsListener) handlePacket(w dns.ResponseWriter, msg *dns.Msg) {
 		m.Rcode = resp.Rcode
 		m.Answer = resp.Answer
 		m.Ns = resp.Authority
-		m.Extra = resp.Additional
+		m.Extra = copyRRs(resp.Additional)
+	}
+
+	// Upstreams can echo our private loop token. Only return EDNS to clients
+	// that requested it, and keep the marker between this module and its resolver.
+	if opt := m.IsEdns0(); opt != nil {
+		if msg.IsEdns0() == nil {
+			m.Extra = slices.DeleteFunc(m.Extra, func(rr dns.RR) bool { return rr.Header().Rrtype == dns.TypeOPT })
+		} else {
+			opt.Option = slices.DeleteFunc(opt.Option, func(o dns.EDNS0) bool { return o.Option() == loopOptionCode })
+		}
 	}
 
 	if err := w.WriteMsg(m); err != nil {

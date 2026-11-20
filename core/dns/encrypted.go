@@ -88,6 +88,7 @@ func (m *UpstreamManager) exchangeEncryptedWithTLS(upstream *UpstreamInstance, q
 	defer cancel()
 	message := new(dns.Msg)
 	message.SetQuestion(dns.Fqdn(query.Name), uint16(query.QType))
+	markOutgoing(message)
 	wire, err := message.Pack()
 	if err != nil {
 		return nil, err

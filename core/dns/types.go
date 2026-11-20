@@ -5,6 +5,8 @@
 package dns
 
 import (
+	"encoding/json"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -27,6 +29,25 @@ const (
 	TypePTR   QueryType = QueryType(dns.TypePTR)
 	TypeSOA   QueryType = QueryType(dns.TypeSOA)
 )
+
+func (q *QueryType) UnmarshalJSON(data []byte) error {
+	var name string
+	if err := json.Unmarshal(data, &name); err == nil {
+		qtype, err := StringToQType(name)
+		if err != nil {
+			return err
+		}
+		*q = qtype
+		return nil
+	}
+
+	var qtype uint16
+	if err := json.Unmarshal(data, &qtype); err != nil {
+		return fmt.Errorf("dns: invalid query type: %w", err)
+	}
+	*q = QueryType(qtype)
+	return nil
+}
 
 // DnsQuery represents a normalized DNS query request.
 type DnsQuery struct {

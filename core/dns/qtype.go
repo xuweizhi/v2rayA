@@ -2,6 +2,7 @@ package dns
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/miekg/dns"
@@ -53,46 +54,13 @@ func StringToQType(s string) (QueryType, error) {
 
 	// Try uppercase name lookup first.
 	upper := strings.ToUpper(s)
-	switch upper {
-	case "A":
-		return TypeA, nil
-	case "AAAA":
-		return TypeAAAA, nil
-	case "CNAME":
-		return TypeCNAME, nil
-	case "TXT":
-		return TypeTXT, nil
-	case "MX":
-		return TypeMX, nil
-	case "SRV":
-		return TypeSRV, nil
-	case "NS":
-		return TypeNS, nil
-	case "PTR":
-		return TypePTR, nil
-	case "SOA":
-		return TypeSOA, nil
-	}
-
-	// Try miekg/dns reverse lookup via StringToType.
 	if qt, ok := dns.StringToType[upper]; ok {
 		return QueryType(qt), nil
 	}
-
-	// Try "TYPE<num>" format.
-	if strings.HasPrefix(upper, "TYPE") {
-		var num uint16
-		if _, err := fmt.Sscanf(upper, "TYPE%d", &num); err == nil {
-			return QueryType(num), nil
-		}
-	}
-
-	// Try plain numeric format.
-	var num uint16
-	if _, err := fmt.Sscanf(upper, "%d", &num); err == nil {
+	num, err := strconv.ParseUint(strings.TrimPrefix(upper, "TYPE"), 10, 16)
+	if err == nil {
 		return QueryType(num), nil
 	}
-
 	return 0, fmt.Errorf("dns qtype: unknown query type: %q", s)
 }
 

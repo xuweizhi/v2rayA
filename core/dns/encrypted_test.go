@@ -47,6 +47,9 @@ func TestEncryptedDNSDoHPreservesHostnameAndSelectedRoute(t *testing.T) {
 			t.Error(err)
 			return
 		}
+		if !carriesOwnToken(q) {
+			t.Error("DoH request is missing the loop marker")
+		}
 		wire, _ := encryptedTestReply(q).Pack()
 		w.Header().Set("Content-Type", "application/dns-message")
 		_, _ = w.Write(wire)
@@ -97,6 +100,9 @@ func TestEncryptedDNSDoTFraming(t *testing.T) {
 		dc := &dns.Conn{Conn: conn}
 		q, err := dc.ReadMsg()
 		if err == nil {
+			if !carriesOwnToken(q) {
+				t.Error("DoT request is missing the loop marker")
+			}
 			err = dc.WriteMsg(encryptedTestReply(q))
 		}
 		done <- err
@@ -123,6 +129,9 @@ func TestExplicitDNSFallbackAndCacheIsolation(t *testing.T) {
 		calls := new(atomic.Int32)
 		srv := &dns.Server{PacketConn: pc, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, q *dns.Msg) {
 			calls.Add(1)
+			if !carriesOwnToken(q) {
+				t.Error("fallback candidate is missing the loop marker")
+			}
 			r := encryptedTestReply(q)
 			r.Rcode = rcode
 			_ = w.WriteMsg(r)

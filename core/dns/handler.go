@@ -246,7 +246,7 @@ func (h *DnsHandler) handleRoute(ctx context.Context, query *DnsQuery, module *D
 			// Check if prefetch is needed (async refresh).
 			if cache.ShouldPrefetch(cacheKey) {
 				cache.SetPrefetching(cacheKey, true)
-				go h.prefetchAsync(ctx, upstream, upstreamMgr, query, cacheKey)
+				module.wg.Go(func() { h.prefetchAsync(ctx, upstream, upstreamMgr, query, cacheKey) })
 			}
 
 			return cached, nil

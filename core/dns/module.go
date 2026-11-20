@@ -25,6 +25,7 @@ type DnsModule struct {
 	metrics     *DnsMetrics     // 指标收集器（新增）
 	diagnostics *Diagnostics    // 诊断模块（新增）
 	dispatcher  RouteDispatcher // xray-core 内部路由调度器（Start 前设置）
+	lifecycleMu sync.Mutex      // serializes Start and Stop while handlers may read module state
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -52,6 +53,26 @@ func NewDnsModule(config *DnsModuleConfig) *DnsModule {
 // It validates the configuration, creates the handler, router, upstream manager,
 // and listener, and begins serving DNS queries on the configured address.
 func (m *DnsModule) Start() error {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
+
+	if err := m.prepare(); err != nil {
+		return err
+	}
+	// Handlers read m.mu, even while a partially started listener is draining.
+	if err := m.listener.Start(); err != nil {
+		m.cancel()
+		m.wg.Wait()
+		return fmt.Errorf("dns module: failed to start listener: %w", err)
+	}
+	m.mu.Lock()
+	m.healthy = true
+	m.mu.Unlock()
+	log.Printf("[dns module] started successfully: %s", m.config.String())
+	return nil
+}
+
+func (m *DnsModule) prepare() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -62,8 +83,6 @@ func (m *DnsModule) Start() error {
 	if err := m.config.Validate(); err != nil {
 		return fmt.Errorf("dns module: invalid config: %w", err)
 	}
-
-	m.ctx, m.cancel = context.WithCancel(context.Background())
 
 	// Initialize diagnostics (requires module reference).
 	m.diagnostics = NewDiagnostics(m)
@@ -219,7 +238,6 @@ func (m *DnsModule) Start() error {
 	// Create the Router.
 	router, err := NewRouter(rules, m.config.Upstreams, defaultUpstream)
 	if err != nil {
-		m.cancel()
 		return fmt.Errorf("dns module: failed to create router: %w", err)
 	}
 	m.router = router
@@ -231,15 +249,7 @@ func (m *DnsModule) Start() error {
 	// Create the DNS listener.
 	m.listener = NewDnsListener(&m.config.Listener, m.handler)
 
-	// Start the listener.
-	log.Printf("[dns module] starting DNS listener on %s", m.config.Listener.ListenAddr)
-	if err := m.listener.Start(); err != nil {
-		m.cancel()
-		return fmt.Errorf("dns module: failed to start listener: %w", err)
-	}
-
-	m.healthy = true
-	log.Printf("[dns module] started successfully: %s", m.config.String())
+	m.ctx, m.cancel = context.WithCancel(context.Background())
 	return nil
 }
 
@@ -281,6 +291,7 @@ func (m *DnsModule) resolveBootstrap(domains []string) map[string]string {
 			addr := srv.String()
 			m := new(dns.Msg)
 			m.SetQuestion(dns.Fqdn(domain), dns.TypeA)
+			markOutgoing(m)
 			m.RecursionDesired = true
 
 			// Use SO_MARK=0x80 to bypass iptables DNS redirect loop.
@@ -412,12 +423,15 @@ func isOwnAddress(ap netip.AddrPort) bool {
 // Stop gracefully shuts down the DNS module and all its components.
 // It stops the listener and waits for all goroutines to complete.
 func (m *DnsModule) Stop() error {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if !m.healthy {
-		return nil // Already stopped.
+		m.mu.Unlock()
+		return nil
 	}
+	m.healthy = false
+	m.mu.Unlock()
 
 	log.Printf("[dns module] stopping...")
 
@@ -433,7 +447,6 @@ func (m *DnsModule) Stop() error {
 	}
 
 	m.wg.Wait()
-	m.healthy = false
 	log.Printf("[dns module] stopped")
 	return nil
 }

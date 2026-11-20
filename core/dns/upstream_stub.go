@@ -122,6 +122,18 @@ func (m *UpstreamManager) exchangeOne(upstream *UpstreamInstance, query *DnsQuer
 	return m.exchangeDirect(upstream, query)
 }
 
+// UDP, TCP and proxied DNS share the same EDNS options. Only add ECS for
+// a public client; IsGlobalUnicast alone also accepts private addresses.
+func upstreamQuestion(query *DnsQuery) *dns.Msg {
+	msg := new(dns.Msg).SetQuestion(dns.Fqdn(query.Name), uint16(query.QType))
+	msg.SetEdns0(4096, true)
+	markOutgoing(msg)
+	if ip := query.ClientIP; ip.IsGlobalUnicast() && !ip.IsPrivate() {
+		NewResponseBuilder().AddECSSubnet(msg, ip)
+	}
+	return msg
+}
+
 // exchangeDirect sends a DNS query directly via UDP/TCP with SO_MARK=0x80 set
 // on the socket. The 0x80 mark tells iptables to skip redirect (loop protection).
 func (m *UpstreamManager) exchangeDirect(upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
@@ -130,19 +142,7 @@ func (m *UpstreamManager) exchangeDirect(upstream *UpstreamInstance, query *DnsQ
 	}
 
 	// Build the DNS query message.
-	msg := new(dns.Msg)
-	msg.SetQuestion(dns.Fqdn(query.Name), uint16(query.QType))
-	msg.RecursionDesired = true
-
-	// IMPORTANT: SetEdns0 MUST be called BEFORE AddECSSubnet.
-	// SetEdns0 in miekg/dns v1.1.72 always appends a new OPT record without
-	// checking if one already exists. Calling AddECSSubnet first then SetEdns0
-	// would create TWO OPT records in the query, causing FORMERR.
-	msg.SetEdns0(4096, true)
-	if query.ClientIP != nil && query.ClientIP.IsGlobalUnicast() {
-		builder := NewResponseBuilder()
-		builder.AddECSSubnet(msg, query.ClientIP)
-	}
+	msg := upstreamQuestion(query)
 
 	protocol := upstream.Protocol
 	if protocol == "" {
@@ -274,19 +274,7 @@ func (m *UpstreamManager) exchangeViaProxy(upstream *UpstreamInstance, query *Dn
 	}
 
 	// Build DNS query message.
-	msg := new(dns.Msg)
-	msg.SetQuestion(dns.Fqdn(query.Name), uint16(query.QType))
-	msg.RecursionDesired = true
-
-	// IMPORTANT: SetEdns0 MUST be called BEFORE AddECSSubnet.
-	// SetEdns0 in miekg/dns v1.1.72 always appends a new OPT record without
-	// checking if one already exists. Calling AddECSSubnet first then SetEdns0
-	// would create TWO OPT records in the query, causing FORMERR.
-	msg.SetEdns0(4096, true)
-	if query.ClientIP != nil && query.ClientIP.IsGlobalUnicast() {
-		builder := NewResponseBuilder()
-		builder.AddECSSubnet(msg, query.ClientIP)
-	}
+	msg := upstreamQuestion(query)
 
 	// Exchange via SOCKS5 proxy (DNS over TCP).
 	start := time.Now()
@@ -477,6 +465,8 @@ func (m *UpstreamManager) ExchangeRaw(upstream *UpstreamInstance, msg *dns.Msg) 
 		protocol = "udp"
 	}
 
+	msg = msg.Copy()
+	markOutgoing(msg)
 	client := m.getClientForProtocol(upstream, protocol)
 
 	resp, rtt, err := client.Exchange(msg, upstream.Addr)
@@ -516,19 +506,7 @@ func (m *UpstreamManager) exchangeViaDispatcher(upstream *UpstreamInstance, quer
 		dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr, upstream.ProxyTag)
 
 	// Build DNS query message.
-	msg := new(dns.Msg)
-	msg.SetQuestion(dns.Fqdn(query.Name), uint16(query.QType))
-	msg.RecursionDesired = true
-
-	// IMPORTANT: SetEdns0 MUST be called BEFORE AddECSSubnet.
-	// SetEdns0 in miekg/dns v1.1.72 always appends a new OPT record without
-	// checking if one already exists. Calling AddECSSubnet first then SetEdns0
-	// would create TWO OPT records in the query, causing FORMERR.
-	msg.SetEdns0(4096, true)
-	if query.ClientIP != nil && query.ClientIP.IsGlobalUnicast() {
-		builder := NewResponseBuilder()
-		builder.AddECSSubnet(msg, query.ClientIP)
-	}
+	msg := upstreamQuestion(query)
 
 	timeout := 5 * time.Second
 	if upstream.attemptTimeout > 0 {
