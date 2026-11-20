@@ -52,9 +52,9 @@
           :grid-items="1"
           :buffer="1000"
         >
-          <div class="log-row">
+          <div class="log-row" :style="{ height: `${itemSize}px` }">
             <span class="log-line-number">{{ index + 1 }}</span>
-            <hightlight-log class="text" :text="item.text"></hightlight-log>
+            <hightlight-log class="text" :style="{ lineHeight: `${itemSize}px` }" :text="item.text"></hightlight-log>
           </div>
         </RecycleScroller>
       </div>
@@ -171,6 +171,8 @@ export default {
     },
   },
   created() {
+    const rootSize = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+    this.itemSize = Math.max(28, Math.round(rootSize * 1.75));
     this.autoScoll = !(localStorage.getItem("log.autoScoll") === "false");
 
     this.$axios({
@@ -388,7 +390,7 @@ export default {
 }
 
 .text {
-  font-size: 13px;
+  font-size: 0.84rem;
   line-height: 28px;
   white-space: nowrap;
 }

@@ -1,6 +1,8 @@
 import "@/plugins/buefy";
 import "@/plugins/axios";
 import "@/plugins/backendPort";
+import { applyAppearanceSettings } from "@/assets/js/appearance";
+applyAppearanceSettings();
 import "@/plugins/mount";
 import "@/plugins/dayjs";
 import "@/plugins/virtual-scroll";

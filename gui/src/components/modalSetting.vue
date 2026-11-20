@@ -390,6 +390,10 @@
                 </b-tag>
               </span>
             </button>
+            <button type="button" class="setting-tool-tile" @click="handleClickAppearance">
+              <i class="mdi mdi-format-font setting-tool-tile__icon" aria-hidden="true"></i>
+              <span>{{ $t("appearance.title") }}</span>
+            </button>
           </div>
         </b-tab-item>
       </b-tabs>
@@ -427,6 +431,7 @@ import modalBackup from "./modalBackup";
 import modalRoutingRules from "./modalRoutingRules";
 import modalDiagnose from "./modalDiagnose";
 import modalNotice from "./modalNotice";
+import ModalAppearance from "./modalAppearance";
 import axios from "../plugins/axios";
 import { waitingConnected } from "@/assets/js/networkInspect";
 
@@ -560,6 +565,14 @@ export default {
       this.$buefy.modal.open({
         parent: this,
         component: modalDiagnose,
+        hasModalCard: true,
+        canCancel: true,
+      });
+    },
+    handleClickAppearance() {
+      this.$buefy.modal.open({
+        parent: this,
+        component: ModalAppearance,
         hasModalCard: true,
         canCancel: true,
       });

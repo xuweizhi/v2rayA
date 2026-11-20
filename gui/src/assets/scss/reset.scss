@@ -47,7 +47,16 @@ html,
 body {
   background-color: var(--va-bg);
   color: var(--va-text);
+  font-family: var(--va-font-family, BlinkMacSystemFont, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif);
   -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+optgroup,
+select,
+textarea {
+  font-family: inherit;
 }
 
 body.has-navbar-fixed-top,
@@ -89,7 +98,7 @@ code {
   border-radius: 4px;
 }
 
-/* Keep mobile typography comfortably readable instead of shrinking below 14px */
+/* Keep mobile typography comfortably readable; allow user override via Appearance modal */
 html {
   font-size: 16px;
   @media screen and (max-width: 1200px) {
@@ -98,6 +107,10 @@ html {
   @media screen and (max-width: 767px) {
     font-size: 14px;
   }
+}
+
+html[data-custom-font-size="true"] {
+  font-size: var(--va-font-size, 16px);
 }
 
 .routinga-animation-content {

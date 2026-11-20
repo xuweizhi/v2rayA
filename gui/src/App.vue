@@ -170,6 +170,10 @@
             ></i>
           </b-dropdown-item>
           <hr class="dropdown-divider" />
+          <b-dropdown-item aria-role="menuitem" class="no-select" @click="handleClickAppearance">
+            <i class="mdi mdi-format-font app-menu-icon" aria-hidden="true"></i>
+            {{ $t("appearance.title") }}
+          </b-dropdown-item>
           <b-dropdown-item aria-role="menuitem" class="no-select" @click="handleClickAbout">
             <i class="mdi mdi-information-outline app-menu-icon" aria-hidden="true"></i>
             {{ $t("common.about") }}
@@ -230,6 +234,8 @@ import ModalTraffic from "@/components/modalTraffic";
 import ModalDiagnose from "@/components/modalDiagnose";
 import ModalNotice from "@/components/modalNotice";
 import ModalAbout from "@/components/modalAbout";
+import ModalAppearance from "@/components/modalAppearance";
+import { applyAppearanceSettings } from "@/assets/js/appearance";
 import DashboardSummary from "@/components/dashboardSummary";
 
 export default {
@@ -331,6 +337,7 @@ export default {
   mounted() {
     console.log("app created");
     this.initTheme();
+    applyAppearanceSettings();
     this._onWindowResize = () => {
       this.viewportWidth = window.innerWidth;
     };
@@ -810,6 +817,14 @@ export default {
             if (that.$refs.dashboardSummary) that.$refs.dashboardSummary.refreshSetting();
           },
         },
+      });
+    },
+    handleClickAppearance() {
+      this.$buefy.modal.open({
+        parent: this,
+        component: ModalAppearance,
+        hasModalCard: true,
+        canCancel: true,
       });
     },
     handleClickAbout() {

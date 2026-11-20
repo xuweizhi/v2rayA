@@ -2383,11 +2383,16 @@ td {
 }
 
 .node-section {
-  margin-top: 0.75rem;
+  width: 100%;
+  max-width: var(--va-content-max-width, 1680px) !important;
+  margin: 0.5rem auto 0;
 
   .hero-body {
-    padding-top: 1.25rem;
-    padding-bottom: 2.5rem;
+    padding: 1rem 1.25rem 2.5rem;
+  }
+
+  .core-version-error {
+    margin: 0.75rem 1.25rem 0;
   }
 
   .mdi {
@@ -2665,6 +2670,10 @@ td {
 }
 
 @media screen and (max-width: 720px) {
+  .node-section .hero-body {
+    padding: 0.75rem 0.65rem 2rem;
+  }
+
   .node-surface {
     padding: 0.75rem;
   }
@@ -2853,7 +2862,7 @@ tr.highlight-row-disconnected > td {
 }
 
 .address-column {
-  max-width: 280px;
+  max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
