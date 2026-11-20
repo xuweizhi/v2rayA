@@ -598,22 +598,24 @@ export default {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.3rem 0.7rem;
+  padding: 0.32rem 0.78rem;
   border-radius: 999px;
   border: 1px solid var(--va-border-strong);
-  background: var(--va-surface-subtle);
+  background: linear-gradient(180deg, var(--va-btn-top) 0%, var(--va-btn-bottom) 100%);
   color: var(--va-text);
   font: inherit;
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  box-shadow: var(--va-shadow-xs);
+  transition: transform 0.14s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.16s ease;
 
   &:hover {
     border-color: var(--va-primary);
     background: var(--va-primary-soft);
     color: var(--va-primary);
+    transform: translateY(-1px);
   }
 }
 

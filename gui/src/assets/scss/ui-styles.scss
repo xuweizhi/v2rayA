@@ -1,0 +1,461 @@
+/* ==========================================================================
+   v2rayA Coexisting UI Styles
+   - Style A ("precision"): default tokens in reset.scss & dark-theme.scss
+   - Style B ("soft"):      Warm Minimalist / macOS Settings aesthetic
+   - Style C ("cyber"):     Geek Neon Dark / Vercel & Raycast Pro aesthetic
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   STYLE B — Soft / Warm Minimalist (Light)
+   -------------------------------------------------------------------------- */
+html[data-ui-style="soft"] {
+  --va-bg: #f6f4ef;
+  --va-surface: #fdfcfa;
+  --va-surface-elevated: #ffffff;
+  --va-surface-subtle: #efece4;
+  --va-surface-hover: #e9e4da;
+  --va-navbar-bg: rgba(253, 252, 250, 0.86);
+  --va-border: #e5e0d5;
+  --va-border-strong: #d4cdbf;
+  --va-text: #22252a;
+  --va-text-muted: #5d6167;
+  --va-text-subtle: #8a8d91;
+
+  --va-primary: #4f728f;
+  --va-primary-hover: #3f607b;
+  --va-primary-grad-top: #5c7f9c;
+  --va-primary-grad-bottom: #476885;
+  --va-primary-soft: rgba(79, 114, 143, 0.11);
+  --va-link: #436580;
+  --va-focus-ring: rgba(79, 114, 143, 0.24);
+
+  --va-btn-top: #fdfcfa;
+  --va-btn-bottom: #f5f2eb;
+
+  --va-success: #2f8f6b;
+  --va-success-text: #206b4f;
+  --va-success-soft: rgba(47, 143, 107, 0.12);
+  --va-warning: #c8822b;
+  --va-warning-text: #965c17;
+  --va-warning-soft: rgba(200, 130, 43, 0.13);
+  --va-danger: #c95858;
+  --va-danger-text: #9e3b3b;
+  --va-danger-soft: rgba(201, 88, 88, 0.11);
+  --va-info: #4b86a8;
+  --va-info-soft: rgba(75, 134, 168, 0.12);
+
+  --va-shadow-xs: 0 1px 2px rgba(45, 38, 25, 0.04);
+  --va-shadow-sm: 0 2px 12px rgba(45, 38, 25, 0.045), 0 1px 3px rgba(45, 38, 25, 0.03);
+  --va-shadow-md: 0 14px 34px rgba(45, 38, 25, 0.09), 0 3px 8px rgba(45, 38, 25, 0.04);
+  --va-shadow-primary: 0 2px 8px rgba(79, 114, 143, 0.22);
+
+  --va-radius-sm: 11px;
+  --va-radius-md: 16px;
+  --va-radius-lg: 22px;
+
+  --va-latency-good: #2a8261;
+  --va-latency-good-bg: rgba(47, 143, 107, 0.11);
+  --va-latency-warn: #a4681c;
+  --va-latency-warn-bg: rgba(200, 130, 43, 0.13);
+  --va-latency-bad: #b94a4a;
+  --va-latency-bad-bg: rgba(201, 88, 88, 0.11);
+
+  --va-proto-v2-bg: rgba(79, 114, 143, 0.12);
+  --va-proto-v2-fg: #3b5c78;
+  --va-proto-trojan-bg: rgba(124, 106, 158, 0.13);
+  --va-proto-trojan-fg: #5e4c80;
+  --va-proto-quic-bg: rgba(65, 134, 138, 0.12);
+  --va-proto-quic-fg: #2f6e72;
+  --va-proto-ss-bg: rgba(186, 134, 65, 0.13);
+  --va-proto-ss-fg: #8c5e22;
+  --va-proto-wg-bg: rgba(178, 97, 113, 0.12);
+  --va-proto-wg-fg: #8f4252;
+  --va-proto-other-bg: rgba(112, 108, 100, 0.11);
+  --va-proto-other-fg: #57534c;
+
+  --va-row-active-bg: rgba(79, 114, 143, 0.065);
+  --va-row-active-hover: rgba(79, 114, 143, 0.105);
+
+  --va-spark-down: #4f728f;
+  --va-spark-up: #2f8f6b;
+
+  --va-ambient-idle: radial-gradient(
+    ellipse 70% 90% at 50% -25%,
+    rgba(196, 184, 162, 0.16) 0%,
+    transparent 75%
+  );
+  --va-ambient-running: radial-gradient(
+      ellipse 50% 90% at 24% -25%,
+      rgba(47, 143, 107, 0.09) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 55% 90% at 76% -25%,
+      rgba(79, 114, 143, 0.09) 0%,
+      transparent 70%
+    );
+  --va-ambient-waiting: radial-gradient(
+    ellipse 65% 90% at 50% -25%,
+    rgba(200, 130, 43, 0.1) 0%,
+    transparent 75%
+  );
+
+  /* Soft organic tactile feel */
+  .button {
+    &.is-primary:not(.is-outlined),
+    &.is-warning:not(.is-outlined),
+    &.is-info:not(.is-outlined) {
+      &:hover:not(:disabled) {
+        transform: translateY(0);
+        filter: brightness(1.03);
+      }
+    }
+
+    &:not(.is-primary):not(.is-link):not(.is-info):not(.is-success):not(.is-warning):not(.is-danger):not(.is-delete):not(.is-text):not(.is-outlined) {
+      background: var(--va-surface);
+      &:hover:not(:disabled) {
+        transform: translateY(0);
+      }
+    }
+  }
+
+  .main-tabs > .tabs > ul {
+    border-radius: 999px;
+    padding: 5px;
+    gap: 4px;
+
+    > li > a {
+      border-radius: 999px !important;
+      padding: 0.36rem 0.95rem;
+    }
+
+    > li.is-active > a {
+      box-shadow: 0 2px 8px rgba(45, 38, 25, 0.08);
+    }
+  }
+
+  .protocol-pill {
+    border-radius: 999px;
+    padding: 0.16rem 0.62rem;
+  }
+
+  .dashboard-card--status.state-is-running {
+    border-color: rgba(47, 143, 107, 0.3);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   STYLE B — Soft / Warm Minimalist (Dark)
+   -------------------------------------------------------------------------- */
+html[data-ui-style="soft"] body.theme-dark {
+  --va-bg: #171614;
+  --va-surface: #201e1b;
+  --va-surface-elevated: #292723;
+  --va-surface-subtle: #1a1916;
+  --va-surface-hover: #2f2c27;
+  --va-navbar-bg: rgba(26, 25, 22, 0.85);
+  --va-border: #322f2a;
+  --va-border-strong: #46423b;
+  --va-text: #ede9e1;
+  --va-text-muted: #aaa397;
+  --va-text-subtle: #7c766c;
+
+  --va-primary: #82a8c9;
+  --va-primary-hover: #96b8d6;
+  --va-primary-grad-top: #749aba;
+  --va-primary-grad-bottom: #587c9c;
+  --va-primary-soft: rgba(130, 168, 201, 0.15);
+  --va-link: #8fb4d4;
+  --va-focus-ring: rgba(130, 168, 201, 0.32);
+
+  --va-btn-top: #272521;
+  --va-btn-bottom: #211f1c;
+
+  --va-success: #58b892;
+  --va-success-text: #85d4b4;
+  --va-success-soft: rgba(88, 184, 146, 0.15);
+  --va-warning: #dfa353;
+  --va-warning-text: #f0c283;
+  --va-warning-soft: rgba(223, 163, 83, 0.15);
+  --va-danger: #df7d7d;
+  --va-danger-text: #f0aaaa;
+  --va-danger-soft: rgba(223, 125, 125, 0.15);
+  --va-info: #78b3d4;
+  --va-info-soft: rgba(120, 179, 212, 0.15);
+
+  --va-shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.28);
+  --va-shadow-sm: 0 3px 14px rgba(0, 0, 0, 0.28);
+  --va-shadow-md: 0 16px 38px rgba(0, 0, 0, 0.48);
+  --va-shadow-primary: 0 2px 10px rgba(88, 124, 156, 0.32);
+
+  --va-latency-good: #6ec9a4;
+  --va-latency-good-bg: rgba(88, 184, 146, 0.14);
+  --va-latency-warn: #e6b267;
+  --va-latency-warn-bg: rgba(223, 163, 83, 0.14);
+  --va-latency-bad: #e68c8c;
+  --va-latency-bad-bg: rgba(223, 125, 125, 0.14);
+
+  --va-proto-v2-bg: rgba(130, 168, 201, 0.16);
+  --va-proto-v2-fg: #a4c5e0;
+  --va-proto-trojan-bg: rgba(170, 152, 204, 0.16);
+  --va-proto-trojan-fg: #c9bae3;
+  --va-proto-quic-bg: rgba(108, 184, 188, 0.15);
+  --va-proto-quic-fg: #94d2d6;
+  --va-proto-ss-bg: rgba(223, 173, 102, 0.15);
+  --va-proto-ss-fg: #ecc68c;
+  --va-proto-wg-bg: rgba(217, 134, 150, 0.16);
+  --va-proto-wg-fg: #e8aab6;
+  --va-proto-other-bg: rgba(168, 160, 148, 0.14);
+  --va-proto-other-fg: #c8c1b6;
+
+  --va-row-active-bg: rgba(130, 168, 201, 0.1);
+  --va-row-active-hover: rgba(130, 168, 201, 0.15);
+
+  --va-spark-down: #82a8c9;
+  --va-spark-up: #58b892;
+
+  .main-tabs > .tabs > ul > li.is-active > a {
+    border-color: rgba(130, 168, 201, 0.35) !important;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.34);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   STYLE C — Cyber / Geek Neon (Light — Crisp Blueprint Technical)
+   -------------------------------------------------------------------------- */
+html[data-ui-style="cyber"] {
+  --va-bg: #f3f7fc;
+  --va-surface: #ffffff;
+  --va-surface-elevated: #ffffff;
+  --va-surface-subtle: #eaf1f9;
+  --va-surface-hover: #e1ecf8;
+  --va-navbar-bg: rgba(248, 251, 255, 0.8);
+  --va-border: #d5e2f0;
+  --va-border-strong: #b4cbe4;
+  --va-text: #0b1220;
+  --va-text-muted: #43546d;
+  --va-text-subtle: #6d7f99;
+
+  --va-primary: #0284c7;
+  --va-primary-hover: #0369a1;
+  --va-primary-grad-top: #06b6d4;
+  --va-primary-grad-bottom: #0284c7;
+  --va-primary-soft: rgba(6, 182, 212, 0.12);
+  --va-link: #0284c7;
+  --va-focus-ring: rgba(6, 182, 212, 0.3);
+
+  --va-btn-top: #ffffff;
+  --va-btn-bottom: #f0f6fc;
+
+  --va-success: #059669;
+  --va-success-text: #047857;
+  --va-success-soft: rgba(5, 150, 105, 0.12);
+
+  --va-shadow-xs: 0 1px 2px rgba(2, 32, 60, 0.05);
+  --va-shadow-sm: 0 2px 8px rgba(2, 32, 60, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --va-shadow-md: 0 12px 32px rgba(2, 32, 60, 0.12);
+  --va-shadow-primary: inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 2px 10px rgba(6, 182, 212, 0.32);
+
+  --va-radius-sm: 6px;
+  --va-radius-md: 10px;
+  --va-radius-lg: 14px;
+
+  --va-row-active-bg: rgba(6, 182, 212, 0.075);
+  --va-row-active-hover: rgba(6, 182, 212, 0.12);
+
+  --va-spark-down: #0284c7;
+  --va-spark-up: #059669;
+
+  --va-ambient-idle: radial-gradient(
+    ellipse 72% 100% at 50% -25%,
+    rgba(6, 182, 212, 0.12) 0%,
+    transparent 74%
+  );
+  --va-ambient-running: radial-gradient(
+      ellipse 52% 95% at 22% -20%,
+      rgba(16, 185, 129, 0.16) 0%,
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse 58% 95% at 78% -20%,
+      rgba(6, 182, 212, 0.17) 0%,
+      transparent 72%
+    );
+  --va-ambient-waiting: radial-gradient(
+    ellipse 65% 95% at 50% -20%,
+    rgba(245, 158, 11, 0.16) 0%,
+    transparent 75%
+  );
+
+  body {
+    background-image: radial-gradient(rgba(2, 132, 199, 0.11) 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-position: -1px -1px;
+  }
+
+  .main-tabs > .tabs > ul {
+    border-radius: 8px;
+
+    > li > a {
+      border-radius: 6px !important;
+      letter-spacing: 0.03em;
+    }
+  }
+
+  .main-tabs .b-table .table tbody tr.is-connected-node-row td:first-child {
+    box-shadow: inset 3px 0 0 var(--va-primary),
+      inset 10px 0 18px -10px rgba(6, 182, 212, 0.45);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   STYLE C — Cyber / Geek Neon (Dark — Obsidian Void + Neon Cyan / Emerald)
+   -------------------------------------------------------------------------- */
+html[data-ui-style="cyber"] body.theme-dark {
+  --va-bg: #070910;
+  --va-surface: #0d1220;
+  --va-surface-elevated: #131b2e;
+  --va-surface-subtle: #090d18;
+  --va-surface-hover: #17223a;
+  --va-navbar-bg: rgba(7, 10, 19, 0.8);
+  --va-border: rgba(56, 189, 248, 0.17);
+  --va-border-strong: rgba(56, 189, 248, 0.34);
+  --va-text: #eef6ff;
+  --va-text-muted: #8fa6c9;
+  --va-text-subtle: #5c7499;
+
+  --va-primary: #22d3ee;
+  --va-primary-hover: #5ce4fa;
+  --va-primary-grad-top: #06b6d4;
+  --va-primary-grad-bottom: #0284c7;
+  --va-primary-soft: rgba(34, 211, 238, 0.15);
+  --va-link: #38bdf8;
+  --va-focus-ring: rgba(34, 211, 238, 0.38);
+
+  --va-btn-top: #141d32;
+  --va-btn-bottom: #0e1526;
+
+  --va-success: #10f0a0;
+  --va-success-text: #6effca;
+  --va-success-soft: rgba(16, 240, 160, 0.14);
+  --va-warning: #fbbf24;
+  --va-warning-text: #fde68a;
+  --va-warning-soft: rgba(251, 191, 36, 0.16);
+  --va-danger: #fb7185;
+  --va-danger-text: #fda4af;
+  --va-danger-soft: rgba(251, 113, 133, 0.16);
+  --va-info: #38bdf8;
+  --va-info-soft: rgba(56, 189, 248, 0.16);
+
+  --va-shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --va-shadow-sm: 0 4px 20px rgba(0, 0, 0, 0.52),
+    inset 0 1px 0 rgba(56, 189, 248, 0.16);
+  --va-shadow-md: 0 18px 46px rgba(0, 0, 0, 0.72),
+    inset 0 1px 0 rgba(56, 189, 248, 0.24);
+  --va-shadow-primary: inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 0 18px rgba(6, 182, 212, 0.42),
+    0 2px 8px rgba(0, 0, 0, 0.55);
+
+  --va-latency-good: #10f0a0;
+  --va-latency-good-bg: rgba(16, 240, 160, 0.14);
+  --va-latency-warn: #fbbf24;
+  --va-latency-warn-bg: rgba(251, 191, 36, 0.15);
+  --va-latency-bad: #fb7185;
+  --va-latency-bad-bg: rgba(251, 113, 133, 0.16);
+
+  --va-proto-v2-bg: rgba(56, 189, 248, 0.16);
+  --va-proto-v2-fg: #7dd3fc;
+  --va-proto-trojan-bg: rgba(192, 132, 252, 0.16);
+  --va-proto-trojan-fg: #d8b4fe;
+  --va-proto-quic-bg: rgba(16, 240, 160, 0.14);
+  --va-proto-quic-fg: #5effc7;
+  --va-proto-ss-bg: rgba(251, 191, 36, 0.16);
+  --va-proto-ss-fg: #fde047;
+  --va-proto-wg-bg: rgba(251, 113, 133, 0.17);
+  --va-proto-wg-fg: #fda4af;
+  --va-proto-other-bg: rgba(148, 163, 184, 0.14);
+  --va-proto-other-fg: #cbd5e1;
+
+  --va-row-active-bg: rgba(34, 211, 238, 0.11);
+  --va-row-active-hover: rgba(34, 211, 238, 0.17);
+
+  --va-spark-down: #22d3ee;
+  --va-spark-up: #10f0a0;
+
+  --va-ambient-idle: radial-gradient(
+    ellipse 72% 100% at 50% -25%,
+    rgba(34, 211, 238, 0.16) 0%,
+    transparent 74%
+  );
+  --va-ambient-running: radial-gradient(
+      ellipse 52% 95% at 22% -20%,
+      rgba(16, 240, 160, 0.2) 0%,
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse 58% 95% at 78% -20%,
+      rgba(34, 211, 238, 0.22) 0%,
+      transparent 72%
+    );
+  --va-ambient-waiting: radial-gradient(
+    ellipse 65% 95% at 50% -20%,
+    rgba(251, 191, 36, 0.18) 0%,
+    transparent 75%
+  );
+
+  background-image: radial-gradient(rgba(56, 189, 248, 0.11) 1px, transparent 1px);
+  background-size: 22px 22px;
+  background-position: -1px -1px;
+
+  .app-navbar.navbar.is-light {
+    border-bottom-color: rgba(56, 189, 248, 0.22);
+    box-shadow: 0 1px 0 rgba(56, 189, 248, 0.14), 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .node-surface,
+  .dashboard-card {
+    border-color: rgba(56, 189, 248, 0.2);
+  }
+
+  .dashboard-card--status.state-is-running {
+    border-color: rgba(16, 240, 160, 0.42);
+    box-shadow: 0 4px 22px rgba(0, 0, 0, 0.55),
+      inset 0 1px 0 rgba(16, 240, 160, 0.28),
+      0 0 24px -10px rgba(16, 240, 160, 0.35);
+  }
+
+  .main-tabs > .tabs > ul {
+    background: rgba(9, 13, 24, 0.9);
+    border-color: rgba(56, 189, 248, 0.2);
+  }
+
+  .main-tabs > .tabs > ul > li.is-active > a {
+    background: linear-gradient(180deg, rgba(20, 32, 56, 0.98) 0%, rgba(13, 22, 40, 0.98) 100%) !important;
+    color: #22d3ee !important;
+    border-color: rgba(34, 211, 238, 0.52) !important;
+    box-shadow: inset 0 1px 0 rgba(34, 211, 238, 0.28),
+      0 0 14px -4px rgba(34, 211, 238, 0.4);
+  }
+
+  .main-tabs .b-table .table tbody tr.is-connected-node-row td:first-child {
+    box-shadow: inset 3px 0 0 #22d3ee,
+      inset 14px 0 22px -10px rgba(34, 211, 238, 0.42);
+  }
+
+  .button.is-primary.is-outlined {
+    border-color: rgba(34, 211, 238, 0.55) !important;
+    color: #22d3ee !important;
+    background: rgba(34, 211, 238, 0.08) !important;
+
+    &:hover:not(:disabled) {
+      box-shadow: var(--va-shadow-primary);
+    }
+  }
+
+  .modal-card {
+    border-color: rgba(56, 189, 248, 0.3);
+    box-shadow: 0 28px 72px rgba(0, 0, 0, 0.8),
+      inset 0 1px 0 rgba(56, 189, 248, 0.26);
+  }
+}

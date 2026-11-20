@@ -2,6 +2,28 @@ const STORAGE_FONT_PRESET = "va_font_preset";
 const STORAGE_FONT_CUSTOM = "va_font_custom";
 const STORAGE_FONT_SIZE = "va_font_size";
 const STORAGE_LAYOUT_WIDTH = "va_layout_width";
+const STORAGE_UI_STYLE = "va_ui_style";
+
+export const UI_STYLE_PRESETS = [
+  {
+    id: "precision",
+    badge: "A",
+    labelKey: "appearance.styles.precision.name",
+    descKey: "appearance.styles.precision.desc",
+  },
+  {
+    id: "soft",
+    badge: "B",
+    labelKey: "appearance.styles.soft.name",
+    descKey: "appearance.styles.soft.desc",
+  },
+  {
+    id: "cyber",
+    badge: "C",
+    labelKey: "appearance.styles.cyber.name",
+    descKey: "appearance.styles.cyber.desc",
+  },
+];
 
 export const LAYOUT_WIDTH_PRESETS = [
   { id: "compact", labelKey: "appearance.widths.compact", value: "1280px" },
@@ -65,7 +87,10 @@ export function getAppearanceSettings() {
   const validPreset = FONT_PRESETS.some((p) => p.id === preset) ? preset : "system";
   const rawWidth = localStorage.getItem(STORAGE_LAYOUT_WIDTH) || "wide";
   const layoutWidth = LAYOUT_WIDTH_PRESETS.some((w) => w.id === rawWidth) ? rawWidth : "wide";
+  const rawStyle = localStorage.getItem(STORAGE_UI_STYLE) || "precision";
+  const uiStyle = UI_STYLE_PRESETS.some((s) => s.id === rawStyle) ? rawStyle : "precision";
   return {
+    uiStyle,
     fontPreset: validPreset,
     customFont,
     fontSize,
@@ -89,6 +114,11 @@ export function applyAppearanceSettings(settings = getAppearanceSettings()) {
   const root = document.documentElement;
   if (!root) return;
 
+  const uiStyle = UI_STYLE_PRESETS.some((s) => s.id === settings.uiStyle)
+    ? settings.uiStyle
+    : "precision";
+  root.setAttribute("data-ui-style", uiStyle);
+
   const stack = resolveFontFamily(settings.fontPreset, settings.customFont);
   root.style.setProperty("--va-font-family", stack);
 
@@ -110,23 +140,46 @@ export function applyAppearanceSettings(settings = getAppearanceSettings()) {
 }
 
 export function saveAppearanceSettings(settings) {
-  localStorage.setItem(STORAGE_FONT_PRESET, settings.fontPreset || "system");
-  localStorage.setItem(STORAGE_FONT_CUSTOM, settings.customFont || "");
-  localStorage.setItem(STORAGE_LAYOUT_WIDTH, settings.layoutWidth || "wide");
-  if (settings.fontSize === null || settings.fontSize === undefined) {
+  const normalized = {
+    uiStyle: UI_STYLE_PRESETS.some((s) => s.id === settings.uiStyle)
+      ? settings.uiStyle
+      : "precision",
+    fontPreset: settings.fontPreset || "system",
+    customFont: settings.customFont || "",
+    fontSize: settings.fontSize ?? null,
+    layoutWidth: settings.layoutWidth || "wide",
+  };
+  localStorage.setItem(STORAGE_UI_STYLE, normalized.uiStyle);
+  localStorage.setItem(STORAGE_FONT_PRESET, normalized.fontPreset);
+  localStorage.setItem(STORAGE_FONT_CUSTOM, normalized.customFont);
+  localStorage.setItem(STORAGE_LAYOUT_WIDTH, normalized.layoutWidth);
+  if (normalized.fontSize === null || normalized.fontSize === undefined) {
     localStorage.removeItem(STORAGE_FONT_SIZE);
   } else {
-    localStorage.setItem(STORAGE_FONT_SIZE, String(settings.fontSize));
+    localStorage.setItem(STORAGE_FONT_SIZE, String(normalized.fontSize));
   }
-  applyAppearanceSettings(settings);
+  applyAppearanceSettings(normalized);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("va-appearance-change", { detail: normalized }));
+  }
 }
 
 export function resetAppearanceSettings() {
+  localStorage.removeItem(STORAGE_UI_STYLE);
   localStorage.removeItem(STORAGE_FONT_PRESET);
   localStorage.removeItem(STORAGE_FONT_CUSTOM);
   localStorage.removeItem(STORAGE_FONT_SIZE);
   localStorage.removeItem(STORAGE_LAYOUT_WIDTH);
-  const defaults = { fontPreset: "system", customFont: "", fontSize: null, layoutWidth: "wide" };
+  const defaults = {
+    uiStyle: "precision",
+    fontPreset: "system",
+    customFont: "",
+    fontSize: null,
+    layoutWidth: "wide",
+  };
   applyAppearanceSettings(defaults);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("va-appearance-change", { detail: defaults }));
+  }
   return defaults;
 }

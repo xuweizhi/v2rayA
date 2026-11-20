@@ -1,5 +1,6 @@
 <template>
-  <div id="app">
+  <div id="app" :class="`app-shell--${statusState}`">
+    <div class="app-ambient-glow" aria-hidden="true"></div>
     <b-navbar ref="navs" fixed-top shadow type="is-light" class="app-navbar">
       <template slot="brand">
         <b-navbar-item href="/">
@@ -171,7 +172,7 @@
           </b-dropdown-item>
           <hr class="dropdown-divider" />
           <b-dropdown-item aria-role="menuitem" class="no-select" @click="handleClickAppearance">
-            <i class="mdi mdi-format-font app-menu-icon" aria-hidden="true"></i>
+            <i class="mdi mdi-palette-outline app-menu-icon" aria-hidden="true"></i>
             {{ $t("appearance.title") }}
           </b-dropdown-item>
           <b-dropdown-item aria-role="menuitem" class="no-select" @click="handleClickAbout">
@@ -191,6 +192,7 @@
       :outbound="outboundName"
       :outbounds="outbounds"
       :observatory="observatory"
+      :load-balance-valid="loadBalanceValid"
       @novice-mode-change="handleNoviceModeChange"
     >
       <DashboardSummary
@@ -260,6 +262,7 @@ export default {
       },
       showCustomPorts: false,
       noviceMode: false,
+      loadBalanceValid: localStorage["loadBalanceValid"] === "true",
       langs: [
         { code: "zh_CN", label: "中文-中国", flag: "zh" },
         { code: "en_US", label: "English-US", flag: "en" },
@@ -416,6 +419,7 @@ export default {
         }
         localStorage["lite"] = res.data.data.lite;
         localStorage["loadBalanceValid"] = res.data.data.loadBalanceValid;
+        this.loadBalanceValid = !!res.data.data.loadBalanceValid;
         localStorage["variant"] = res.data.data.variant;
         localStorage["coreVersionValid"] = res.data.data.coreVersionValid;
         localStorage["coreVersionErr"] = res.data.data.coreVersionErr || "";
@@ -449,6 +453,9 @@ export default {
     }
     if (this._darkMediaQuery && this._onSystemThemeChange) {
       this._darkMediaQuery.removeEventListener('change', this._onSystemThemeChange);
+    }
+    if (this._onThemeChangeRequest) {
+      window.removeEventListener('va-theme-change', this._onThemeChangeRequest);
     }
   },
   methods: {
@@ -916,18 +923,29 @@ export default {
         this.applyThemeClass();
       };
       this._darkMediaQuery.addEventListener('change', this._onSystemThemeChange);
+      this._onThemeChangeRequest = (e) => {
+        const pref = e && e.detail;
+        if (pref === 'auto' || pref === 'light' || pref === 'dark') {
+          this.setThemePreference(pref);
+        }
+      };
+      window.addEventListener('va-theme-change', this._onThemeChangeRequest);
       this.applyThemeClass();
     },
     applyThemeClass() {
       document.body.classList.toggle('theme-dark', this.isDarkTheme);
       document.documentElement.classList.toggle('theme-dark', this.isDarkTheme);
     },
+    setThemePreference(pref) {
+      this.themePreference = pref;
+      localStorage.setItem('theme', pref);
+      this.applyThemeClass();
+      window.dispatchEvent(new CustomEvent('va-theme-sync', { detail: pref }));
+    },
     toggleTheme() {
       const order = ['auto', 'light', 'dark'];
       const idx = order.indexOf(this.themePreference);
-      this.themePreference = order[(idx + 1) % order.length];
-      localStorage.setItem('theme', this.themePreference);
-      this.applyThemeClass();
+      this.setThemePreference(order[(idx + 1) % order.length]);
     },
     handleClickLogs() {
       this.$buefy.modal.open({
@@ -944,11 +962,34 @@ export default {
 <style lang="scss">
 @import "assets/scss/reset.scss";
 @import "assets/scss/dark-theme.scss";
+@import "assets/scss/ui-styles.scss";
 </style>
 
 <style lang="scss" scoped>
 #app {
   margin: 0;
+  position: relative;
+  isolation: isolate;
+}
+
+.app-ambient-glow {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 300px;
+  pointer-events: none;
+  z-index: -1;
+  background: var(--va-ambient-idle);
+  transition: background 0.5s ease;
+}
+
+.app-shell--running .app-ambient-glow {
+  background: var(--va-ambient-running);
+}
+
+.app-shell--waiting .app-ambient-glow {
+  background: var(--va-ambient-waiting);
 }
 
 .menucontainer {
@@ -956,14 +997,19 @@ export default {
 }
 
 .logo {
-  min-height: 2.25rem;
-  margin-left: 0.5rem;
-  margin-right: 0.5rem;
+  min-height: 2.15rem;
+  margin-left: 0.4rem;
+  margin-right: 0.4rem;
+  transition: transform 0.2s ease;
+
+  &:hover {
+    transform: scale(1.04);
+  }
 }
 
 .app-nav-icon {
   margin-right: 0.3rem;
-  font-size: 1.2em;
+  font-size: 1.18em;
 }
 
 .app-menu-icon {
@@ -976,53 +1022,72 @@ export default {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.72rem;
+  gap: 0.42rem;
+  padding: 0.34rem 0.82rem;
   border-radius: 999px;
   border: 1px solid transparent;
   font: inherit;
   font-size: 0.82rem;
   font-weight: 600;
+  letter-spacing: 0.01em;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+  transition: transform 0.14s ease, box-shadow 0.18s ease, background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
 
   &:disabled {
     cursor: default;
-    opacity: 0.75;
+    opacity: 0.72;
   }
 
   &.is-running {
     background: var(--va-success-soft);
-    border-color: var(--va-success);
-    color: var(--va-success);
+    border-color: rgba(16, 185, 129, 0.45);
+    color: var(--va-success-text, var(--va-success));
+    box-shadow: 0 2px 10px rgba(16, 185, 129, 0.14);
+
+    .status-pill__dot {
+      background: var(--va-success);
+      animation: va-status-pulse 2.2s infinite;
+    }
 
     &:hover:not(:disabled) {
-      background: var(--va-success);
+      background: linear-gradient(180deg, #15c68a 0%, #059669 100%);
+      border-color: #059669;
       color: #ffffff;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.32);
+
+      .status-pill__dot {
+        background: #ffffff;
+      }
     }
   }
 
   &.is-stopped {
-    background: var(--va-surface-subtle);
+    background: linear-gradient(180deg, var(--va-btn-top) 0%, var(--va-btn-bottom) 100%);
     border-color: var(--va-border-strong);
     color: var(--va-text);
+    box-shadow: var(--va-shadow-xs);
 
     &:hover:not(:disabled) {
-      background: var(--va-primary);
-      border-color: var(--va-primary);
+      background: linear-gradient(180deg, var(--va-primary-grad-top) 0%, var(--va-primary-grad-bottom) 100%);
+      border-color: var(--va-primary-grad-bottom);
       color: #ffffff;
+      transform: translateY(-1px);
+      box-shadow: var(--va-shadow-primary);
     }
   }
 
   &.is-waiting {
     background: var(--va-warning-soft);
-    border-color: var(--va-warning);
-    color: var(--va-warning);
+    border-color: rgba(245, 158, 11, 0.48);
+    color: var(--va-warning-text, var(--va-warning));
 
     &:hover:not(:disabled) {
-      background: var(--va-warning);
+      background: linear-gradient(180deg, #f7a61c 0%, #d97706 100%);
+      border-color: #d97706;
       color: #ffffff;
+      transform: translateY(-1px);
     }
   }
 
@@ -1134,9 +1199,32 @@ html {
 }
 
 .app-navbar.navbar.is-light {
-  background-color: var(--va-surface);
+  background-color: var(--va-navbar-bg);
+  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
   border-bottom: 1px solid var(--va-border);
-  box-shadow: var(--va-shadow-sm);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
+}
+
+.app-navbar .navbar-end {
+  align-items: center;
+  gap: 0.2rem;
+  padding-right: 0.35rem;
+}
+
+.app-navbar .navbar-end .navbar-action,
+.app-navbar .navbar-end .navbar-dropdown-trigger {
+  border-radius: 8px;
+  padding: 0.42rem 0.68rem;
+  height: auto;
+  font-size: 0.87rem;
+  font-weight: 500;
+  transition: background-color 0.14s ease, color 0.14s ease;
+
+  &:hover {
+    background-color: var(--va-surface-hover) !important;
+    color: var(--va-primary) !important;
+  }
 }
 
 @media screen and (max-width: 1023px) {

@@ -704,6 +704,7 @@ export default {
     routing: "分流与网络",
     updates: "自动更新",
     tools: "高级与工具",
+    appearance: "外观",
     toolsDesc: "管理本地端口、自定义入站、DNS 规则、路由规则及备份。",
   },
   logTools: {
@@ -733,7 +734,24 @@ export default {
     protocolLabel: "节点协议",
   },
   appearance: {
-    title: "字体与显示",
+    title: "外观与显示",
+    uiStyle: "界面视觉风格",
+    colorMode: "明暗主题",
+    instantHint: "更改即时生效并自动保存在当前浏览器",
+    styles: {
+      precision: {
+        name: "精致仪表盘",
+        desc: "Linear / Raycast 质感，高光按钮与通透毛玻璃",
+      },
+      soft: {
+        name: "温润极简",
+        desc: "macOS 设置风格，大圆角、柔和莫兰迪与暖白护眼",
+      },
+      cyber: {
+        name: "极客霓虹",
+        desc: "暗夜点阵画布、青绿霓虹亮边与高对比精密感",
+      },
+    },
     fontSize: "字体大小",
     fontFamily: "界面字体",
     sizeAuto: "自动适配",

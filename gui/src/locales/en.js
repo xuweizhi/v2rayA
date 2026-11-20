@@ -711,6 +711,7 @@ export default {
     routing: "Routing & Network",
     updates: "Auto Updates",
     tools: "Tools & Ports",
+    appearance: "Appearance",
     toolsDesc: "Manage local ports, custom inbounds, DNS rules, routing rules, and backups.",
   },
   logTools: {
@@ -740,7 +741,24 @@ export default {
     protocolLabel: "Protocol",
   },
   appearance: {
-    title: "Font & Display",
+    title: "Appearance & Display",
+    uiStyle: "Visual Style",
+    colorMode: "Color Mode",
+    instantHint: "Applies immediately and saves automatically in this browser",
+    styles: {
+      precision: {
+        name: "Precision Dashboard",
+        desc: "Linear & Raycast polish with frosted glass and crisp highlights",
+      },
+      soft: {
+        name: "Warm Minimalist",
+        desc: "macOS-inspired rounded cards, warm tones, gentle on eyes",
+      },
+      cyber: {
+        name: "Cyber Neon",
+        desc: "Dot-grid technical canvas with luminous cyan & emerald edges",
+      },
+    },
     fontSize: "Font Size",
     fontFamily: "Font Family",
     sizeAuto: "Auto",

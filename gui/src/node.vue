@@ -289,7 +289,6 @@
       <b-tabs
         v-model="tab"
         position="is-centered"
-        type="is-toggle-rounded"
         class="main-tabs"
         @input="handleTabsChange"
       >
@@ -362,11 +361,23 @@
                   "
                   class="traffic-column"
                 >
-                  <p v-if="props.row.extra.total > 0" class="traffic-line">
-                    {{ formatBytes(props.row.extra.upload + props.row.extra.download) }}
-                    /
-                    {{ formatBytes(props.row.extra.total) }}
-                  </p>
+                  <div v-if="props.row.extra.total > 0" class="traffic-meter">
+                    <p class="traffic-line">
+                      <span>
+                        {{ formatBytes(props.row.extra.upload + props.row.extra.download) }}
+                        /
+                        {{ formatBytes(props.row.extra.total) }}
+                      </span>
+                      <span class="traffic-pct">{{ trafficPercent(props.row.extra) }}%</span>
+                    </p>
+                    <div class="traffic-bar">
+                      <div
+                        class="traffic-bar__fill"
+                        :class="trafficBarClass(props.row.extra)"
+                        :style="{ width: trafficPercent(props.row.extra) + '%' }"
+                      ></div>
+                    </div>
+                  </div>
                   <p
                     v-if="props.row.extra.expire > 0"
                     :class="expireClass(props.row.extra.expire)"
@@ -431,6 +442,7 @@
               :current-page.sync="currentPage.servers"
               :data="filteredServers"
               :checked-rows.sync="checkedRows"
+              :row-class="(row) => (isConnectedInCurrent(row, undefined) ? 'is-connected-node-row' : '')"
               checkable
               hoverable
               default-sort="id"
@@ -491,7 +503,9 @@
                 :label="$t('server.protocol')"
                 sortable
               >
-                <span class="protocol-pill">{{ props.row.net }}</span>
+                <span class="protocol-pill" :class="protocolBadgeClass(props.row.net)">
+                  {{ props.row.net }}
+                </span>
               </b-table-column>
               <b-table-column
                 v-slot="props"
@@ -501,80 +515,84 @@
                 sortable
                 :custom-sort="sortping"
               >
-                <p
-                  class="latency-column"
+                <span
+                  class="latency-column latency-pill"
                   :class="latencyClass(props.row.pingLatency)"
                   :title="props.row.pingLatency"
                 >
-                  {{ props.row.pingLatency || "—" }}
-                </p>
+                  <span
+                    v-if="props.row.pingLatency && props.row.pingLatency !== 'testing...'"
+                    class="latency-dot"
+                    aria-hidden="true"
+                  ></span>
+                  <i
+                    v-else-if="props.row.pingLatency === 'testing...'"
+                    class="mdi mdi-loading mdi-spin"
+                    aria-hidden="true"
+                  ></i>
+                  <span>{{ props.row.pingLatency || "—" }}</span>
+                </span>
               </b-table-column>
               <b-table-column
                 v-slot="props"
                 :label="$t('operations.name')"
                 sortable
                 :custom-sort="sortConnections"
-                width="210"
+                width="225"
               >
                 <div class="operate-box">
-                  <b-dropdown
-                    v-if="loadBalanceValid"
-                    position="is-bottom-left"
-                    append-to-body
+                  <div
+                    class="node-connect-split"
+                    :class="{ 'is-split': showGroupSplitDropdown }"
                   >
                     <b-button
-                      slot="trigger"
                       size="is-small"
-                      type="is-primary"
-                      :outlined="!isNodeInAnyOutbound(props.row, undefined)"
-                      :class="{
-                        'node-group-trigger--added': isNodeInAnyOutbound(
-                          props.row,
-                          undefined
-                        ),
-                      }"
-                      icon-right="menu-down"
+                      class="node-connect-split__main"
+                      :icon-left="isConnectedInCurrent(props.row, undefined) ? 'link-variant-off' : 'link-variant'"
+                      :outlined="!isConnectedInCurrent(props.row, undefined)"
+                      :type="isConnectedInCurrent(props.row, undefined) ? 'is-warning' : 'is-primary'"
+                      @click="handleClickAboutConnection(props.row)"
                     >
                       {{
-                        $t(
-                          isNodeInAnyOutbound(props.row, undefined)
-                            ? "operations.added"
-                            : "operations.addTo"
-                        )
+                        isConnectedInCurrent(props.row, undefined)
+                          ? $t("operations.disconnect")
+                          : $t("operations.connect")
                       }}
                     </b-button>
-                    <b-dropdown-item
-                      v-for="group in outbounds"
-                      :key="group"
-                      @click="toggleNodeInGroup(props.row, undefined, group)"
+                    <b-dropdown
+                      v-if="showGroupSplitDropdown"
+                      position="is-bottom-left"
+                      append-to-body
                     >
-                      <span
-                        class="node-group-option"
-                        :class="{ 'node-group-option--active': isNodeInOutbound(props.row, undefined, group) }"
+                      <b-button
+                        slot="trigger"
+                        size="is-small"
+                        class="node-connect-split__caret"
+                        :type="isConnectedInCurrent(props.row, undefined) ? 'is-warning' : 'is-primary'"
+                        :outlined="!isConnectedInCurrent(props.row, undefined)"
+                        icon-left="menu-down"
+                        :title="$t('operations.addTo')"
+                        :aria-label="$t('operations.addTo')"
+                      />
+                      <b-dropdown-item
+                        v-for="group in outbounds"
+                        :key="group"
+                        @click="toggleNodeInGroup(props.row, undefined, group)"
                       >
-                        <i
-                          v-if="isNodeInOutbound(props.row, undefined, group)"
-                          class="mdi mdi-check"
-                          aria-hidden="true"
-                        ></i>
-                        {{ group.toUpperCase() }}
-                      </span>
-                    </b-dropdown-item>
-                  </b-dropdown>
-                  <b-button
-                    v-else
-                    size="is-small"
-                    :icon-left="props.row.connected ? 'link-variant-off' : 'link-variant'"
-                    :outlined="!props.row.connected"
-                    :type="props.row.connected ? 'is-warning' : 'is-primary'"
-                    @click="handleClickAboutConnection(props.row)"
-                  >
-                    {{
-                      props.row.connected
-                        ? $t("operations.disconnect")
-                        : $t("operations.connect")
-                    }}
-                  </b-button>
+                        <span
+                          class="node-group-option"
+                          :class="{ 'node-group-option--active': isNodeInOutbound(props.row, undefined, group) }"
+                        >
+                          <i
+                            v-if="isNodeInOutbound(props.row, undefined, group)"
+                            class="mdi mdi-check"
+                            aria-hidden="true"
+                          ></i>
+                          {{ group.toUpperCase() }}
+                        </span>
+                      </b-dropdown-item>
+                    </b-dropdown>
+                  </div>
                   <b-button
                     size="is-small"
                     icon-left="pencil-outline"
@@ -621,7 +639,7 @@
               per-page="100"
               :data="getFilteredSubServers(sub, subi)"
               :checked-rows.sync="checkedRows"
-              :row-class="(row) => (row.disabled ? 'is-disabled-node-row' : '')"
+              :row-class="(row) => [row.disabled ? 'is-disabled-node-row' : '', isConnectedInCurrent(row, subi) ? 'is-connected-node-row' : ''].filter(Boolean).join(' ')"
               checkable
               hoverable
               default-sort="id"
@@ -688,7 +706,9 @@
                 :label="$t('server.protocol')"
                 sortable
               >
-                <span class="protocol-pill">{{ props.row.net }}</span>
+                <span class="protocol-pill" :class="protocolBadgeClass(props.row.net)">
+                  {{ props.row.net }}
+                </span>
               </b-table-column>
               <b-table-column
                 v-slot="props"
@@ -698,80 +718,84 @@
                 sortable
                 :custom-sort="sortping"
               >
-                <p
-                  class="latency-column"
+                <span
+                  class="latency-column latency-pill"
                   :class="latencyClass(props.row.pingLatency)"
                   :title="props.row.pingLatency"
                 >
-                  {{ props.row.pingLatency || "—" }}
-                </p>
+                  <span
+                    v-if="props.row.pingLatency && props.row.pingLatency !== 'testing...'"
+                    class="latency-dot"
+                    aria-hidden="true"
+                  ></span>
+                  <i
+                    v-else-if="props.row.pingLatency === 'testing...'"
+                    class="mdi mdi-loading mdi-spin"
+                    aria-hidden="true"
+                  ></i>
+                  <span>{{ props.row.pingLatency || "—" }}</span>
+                </span>
               </b-table-column>
               <b-table-column
                 v-slot="props"
                 :label="$t('operations.name')"
                 sortable
                 :custom-sort="sortConnections"
-                width="195"
+                width="220"
               >
                 <div class="operate-box">
-                  <b-dropdown
-                    v-if="loadBalanceValid"
-                    position="is-bottom-left"
-                    append-to-body
+                  <div
+                    class="node-connect-split"
+                    :class="{ 'is-split': showGroupSplitDropdown }"
                   >
                     <b-button
-                      slot="trigger"
                       size="is-small"
-                      type="is-primary"
-                      :outlined="!isNodeInAnyOutbound(props.row, subi)"
-                      :class="{
-                        'node-group-trigger--added': isNodeInAnyOutbound(
-                          props.row,
-                          subi
-                        ),
-                      }"
-                      icon-right="menu-down"
+                      class="node-connect-split__main"
+                      :icon-left="isConnectedInCurrent(props.row, subi) ? 'link-variant-off' : 'link-variant'"
+                      :outlined="!isConnectedInCurrent(props.row, subi)"
+                      :type="isConnectedInCurrent(props.row, subi) ? 'is-warning' : 'is-primary'"
+                      @click="handleClickAboutConnection(props.row, subi)"
                     >
                       {{
-                        $t(
-                          isNodeInAnyOutbound(props.row, subi)
-                            ? "operations.added"
-                            : "operations.addTo"
-                        )
+                        isConnectedInCurrent(props.row, subi)
+                          ? $t("operations.disconnect")
+                          : $t("operations.connect")
                       }}
                     </b-button>
-                    <b-dropdown-item
-                      v-for="group in outbounds"
-                      :key="group"
-                      @click="toggleNodeInGroup(props.row, subi, group)"
+                    <b-dropdown
+                      v-if="showGroupSplitDropdown"
+                      position="is-bottom-left"
+                      append-to-body
                     >
-                      <span
-                        class="node-group-option"
-                        :class="{ 'node-group-option--active': isNodeInOutbound(props.row, subi, group) }"
+                      <b-button
+                        slot="trigger"
+                        size="is-small"
+                        class="node-connect-split__caret"
+                        :type="isConnectedInCurrent(props.row, subi) ? 'is-warning' : 'is-primary'"
+                        :outlined="!isConnectedInCurrent(props.row, subi)"
+                        icon-left="menu-down"
+                        :title="$t('operations.addTo')"
+                        :aria-label="$t('operations.addTo')"
+                      />
+                      <b-dropdown-item
+                        v-for="group in outbounds"
+                        :key="group"
+                        @click="toggleNodeInGroup(props.row, subi, group)"
                       >
-                        <i
-                          v-if="isNodeInOutbound(props.row, subi, group)"
-                          class="mdi mdi-check"
-                          aria-hidden="true"
-                        ></i>
-                        {{ group.toUpperCase() }}
-                      </span>
-                    </b-dropdown-item>
-                  </b-dropdown>
-                  <b-button
-                    v-else
-                    size="is-small"
-                    :icon-left="props.row.connected ? 'link-variant-off' : 'link-variant'"
-                    :outlined="!props.row.connected"
-                    :type="props.row.connected ? 'is-warning' : 'is-primary'"
-                    @click="handleClickAboutConnection(props.row, subi)"
-                  >
-                    {{
-                      props.row.connected
-                        ? $t("operations.disconnect")
-                        : $t("operations.connect")
-                    }}
-                  </b-button>
+                        <span
+                          class="node-group-option"
+                          :class="{ 'node-group-option--active': isNodeInOutbound(props.row, subi, group) }"
+                        >
+                          <i
+                            v-if="isNodeInOutbound(props.row, subi, group)"
+                            class="mdi mdi-check"
+                            aria-hidden="true"
+                          ></i>
+                          {{ group.toUpperCase() }}
+                        </span>
+                      </b-dropdown-item>
+                    </b-dropdown>
+                  </div>
 
                   <b-button
                     size="is-small"
@@ -1023,6 +1047,10 @@ export default {
         return null;
       },
     },
+    loadBalanceValid: {
+      type: Boolean,
+      default: false,
+    },
   },
   data() {
     return {
@@ -1072,8 +1100,8 @@ export default {
     };
   },
   computed: {
-    loadBalanceValid() {
-      return localStorage["loadBalanceValid"] === "true";
+    showGroupSplitDropdown() {
+      return this.loadBalanceValid && Array.isArray(this.outbounds) && this.outbounds.length > 1;
     },
     filteredSubscriptions() {
       const q = (this.subSearch || "").trim().toLowerCase();
@@ -1292,6 +1320,37 @@ export default {
         return "latency-bad";
       }
       return "latency-bad";
+    },
+    protocolBadgeClass(net) {
+      const p = String(net || "").toLowerCase();
+      if (!p) return "proto-other";
+      if (p.includes("vless") || p.includes("vmess")) return "proto-v2";
+      if (p.includes("trojan")) return "proto-trojan";
+      if (
+        p.includes("hysteria") ||
+        p.includes("hy2") ||
+        p.includes("tuic") ||
+        p.includes("juicity") ||
+        p.includes("anytls")
+      ) {
+        return "proto-quic";
+      }
+      if (p.includes("shadowsocks") || p.startsWith("ss") || p.includes("ssr")) {
+        return "proto-ss";
+      }
+      if (p.includes("wireguard") || p === "wg") return "proto-wg";
+      return "proto-other";
+    },
+    trafficPercent(extra) {
+      if (!extra || !extra.total || extra.total <= 0) return 0;
+      const used = (extra.upload || 0) + (extra.download || 0);
+      return Math.max(0, Math.min(100, Math.round((used / extra.total) * 100)));
+    },
+    trafficBarClass(extra) {
+      const pct = this.trafficPercent(extra);
+      if (pct >= 90) return "is-danger";
+      if (pct >= 75) return "is-warning";
+      return "is-good";
     },
     connectedServerKey(which = {}) {
       const parts = [
@@ -1718,12 +1777,11 @@ export default {
         onConfirm: () => this.deleteSelectedServers(),
       });
     },
+    isConnectedInCurrent(row, sub) {
+      return !!row.connected || this.isNodeInOutbound(row, sub, this.outbound || "proxy");
+    },
     handleClickAboutConnection(row, sub) {
-      if (!row.connected && this.loadBalanceValid) {
-        this.openPickProxyGroup(row, sub);
-        return;
-      }
-      if (!row.connected) {
+      if (!this.isConnectedInCurrent(row, sub)) {
         this.connectToProxyGroup(row, sub, this.outbound);
         return;
       }
@@ -2418,16 +2476,42 @@ td {
     vertical-align: middle;
   }
 
-  .node-group-trigger--added.button.is-primary {
-    background-color: var(--va-success);
-    border-color: var(--va-success);
-    color: #fff;
-    font-weight: 600;
+  .node-connect-split {
+    display: inline-flex;
+    align-items: center;
 
-    &:hover,
-    &:focus {
-      filter: brightness(0.94);
-      color: #fff;
+    &.is-split {
+      .node-connect-split__main,
+      .node-connect-split__caret {
+        &:hover:not(:disabled) {
+          transform: none;
+        }
+      }
+
+      .node-connect-split__main {
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+
+        &:hover,
+        &:focus {
+          position: relative;
+          z-index: 2;
+        }
+      }
+
+      .node-connect-split__caret {
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+        margin-left: -1px;
+        padding-left: 0.3rem;
+        padding-right: 0.3rem;
+
+        &:hover,
+        &:focus {
+          position: relative;
+          z-index: 2;
+        }
+      }
     }
   }
 }
@@ -2437,7 +2521,7 @@ td {
   border: 1px solid var(--va-border);
   border-radius: var(--va-radius-md);
   box-shadow: var(--va-shadow-sm);
-  padding: 1rem 1.15rem;
+  padding: 1.05rem 1.25rem 1.2rem;
 }
 
 .node-action-bar {
@@ -2446,8 +2530,8 @@ td {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-bottom: 1rem;
-  padding-bottom: 0.85rem;
+  margin-bottom: 1.05rem;
+  padding-bottom: 0.9rem;
   border-bottom: 1px solid var(--va-border);
 }
 
@@ -2483,30 +2567,35 @@ td {
 
 .tab-connected-dot {
   display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
+  width: 0.48rem;
+  height: 0.48rem;
   border-radius: 50%;
   background: var(--va-success);
-  margin-right: 0.4rem;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35);
+  margin-right: 0.42rem;
+  box-shadow: 0 0 0 2px var(--va-success-soft);
 }
 
 .tab-count {
-  margin-left: 0.4rem;
-  font-size: 0.72rem;
-  opacity: 0.75;
-  font-weight: 600;
+  margin-left: 0.42rem;
+  padding: 0.04rem 0.4rem;
+  border-radius: 999px;
+  background: var(--va-border);
+  color: var(--va-text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
 }
 
 .node-name-cell {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.35rem;
+  gap: 0.38rem;
 }
 
 .node-name-text {
-  font-weight: 500;
+  font-weight: 600;
   color: var(--va-text);
   word-break: break-word;
 }
@@ -2514,13 +2603,14 @@ td {
 .node-group-badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.08rem 0.45rem;
+  padding: 0.08rem 0.46rem;
   border-radius: 999px;
-  font-size: 0.68rem;
+  font-size: 0.67rem;
   font-weight: 700;
   letter-spacing: 0.03em;
   background: var(--va-primary-soft);
   color: var(--va-primary);
+  border: 1px solid rgba(59, 108, 245, 0.2);
 }
 
 .node-disabled-badge {
@@ -2535,15 +2625,43 @@ td {
 }
 
 .protocol-pill {
-  display: inline-block;
-  padding: 0.14rem 0.48rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.16rem 0.54rem;
   border-radius: 6px;
-  font-size: 0.76rem;
-  font-weight: 500;
-  background: var(--va-surface-subtle);
-  border: 1px solid var(--va-border);
-  color: var(--va-text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  background: var(--va-proto-other-bg);
+  color: var(--va-proto-other-fg);
+  border: 1px solid transparent;
   white-space: nowrap;
+
+  &.proto-v2 {
+    background: var(--va-proto-v2-bg);
+    color: var(--va-proto-v2-fg);
+  }
+
+  &.proto-trojan {
+    background: var(--va-proto-trojan-bg);
+    color: var(--va-proto-trojan-fg);
+  }
+
+  &.proto-quic {
+    background: var(--va-proto-quic-bg);
+    color: var(--va-proto-quic-fg);
+  }
+
+  &.proto-ss {
+    background: var(--va-proto-ss-bg);
+    color: var(--va-proto-ss-fg);
+  }
+
+  &.proto-wg {
+    background: var(--va-proto-wg-bg);
+    color: var(--va-proto-wg-fg);
+  }
 }
 
 .onboarding-card {
@@ -2655,10 +2773,55 @@ td {
 }
 
 .traffic-column {
-  font-size: 0.82em;
-  .traffic-line {
-    margin: 0;
+  font-size: 0.8rem;
+
+  .traffic-meter {
+    margin-bottom: 0.25rem;
   }
+
+  .traffic-line {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin: 0 0 0.22rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    color: var(--va-text);
+  }
+
+  .traffic-pct {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--va-text-subtle);
+  }
+
+  .traffic-bar {
+    height: 5px;
+    border-radius: 999px;
+    background: var(--va-surface-subtle);
+    border: 1px solid var(--va-border);
+    overflow: hidden;
+  }
+
+  .traffic-bar__fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.25s ease;
+
+    &.is-good {
+      background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+    }
+
+    &.is-warning {
+      background: linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%);
+    }
+
+    &.is-danger {
+      background: linear-gradient(90deg, #ef4444 0%, #f87171 100%);
+    }
+  }
+
   .expire-warning {
     margin: 0;
     color: var(--va-warning);
@@ -2837,6 +3000,117 @@ table th {
   margin-bottom: 0;
 }
 
+/* Segmented Control Tabs & Table Polish — Style A */
+.main-tabs {
+  > .tabs {
+    margin-bottom: 1.1rem;
+
+    > ul {
+      flex-grow: 0;
+      flex-shrink: 1;
+      display: inline-flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 4px;
+      padding: 4px;
+      border-radius: 12px;
+      background: var(--va-surface-subtle);
+      border: 1px solid var(--va-border);
+      box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+
+      > li {
+        > a {
+          border: 1px solid transparent !important;
+          border-radius: 8px !important;
+          padding: 0.36rem 0.85rem;
+          font-size: 0.81rem;
+          font-weight: 600;
+          letter-spacing: 0.015em;
+          color: var(--va-text-muted);
+          background: transparent;
+          transition: background-color 0.16s ease,
+            color 0.16s ease,
+            box-shadow 0.16s ease,
+            border-color 0.16s ease;
+
+          &:hover {
+            color: var(--va-text);
+            background: var(--va-surface-hover);
+          }
+        }
+
+        &.is-active > a {
+          background: var(--va-surface-elevated) !important;
+          color: var(--va-primary) !important;
+          border-color: var(--va-border) !important;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08),
+            0 2px 6px rgba(59, 108, 245, 0.08);
+
+          .tab-count {
+            background: var(--va-primary-soft);
+            color: var(--va-primary);
+          }
+        }
+      }
+    }
+  }
+
+  .tab-content {
+    padding: 0;
+  }
+
+  .field > .label {
+    font-size: 0.73rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--va-text-subtle);
+    margin-bottom: 0.55rem;
+  }
+
+  .b-table {
+    .table-wrapper {
+      border: 1px solid var(--va-border);
+      border-radius: var(--va-radius-sm);
+      overflow-x: auto;
+    }
+
+    .table {
+      margin-bottom: 0;
+
+      thead th {
+        font-size: 0.73rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--va-text-subtle);
+        background: var(--va-surface-subtle);
+        border-bottom: 1px solid var(--va-border);
+        padding: 0.62rem 0.75rem;
+        white-space: nowrap;
+      }
+
+      tbody td {
+        padding: 0.58rem 0.75rem;
+        border-color: var(--va-border);
+        transition: background-color 0.12s ease;
+      }
+
+      tbody tr.is-connected-node-row td {
+        background-color: var(--va-row-active-bg) !important;
+      }
+
+      tbody tr.is-connected-node-row td:first-child {
+        box-shadow: inset 3px 0 0 var(--va-primary);
+      }
+
+      &.is-hoverable tbody tr.is-connected-node-row:hover td {
+        background-color: var(--va-row-active-hover) !important;
+      }
+    }
+  }
+}
+
 tr.highlight-row-connected {
   transition: background-color 0.05s linear;
   background-color: var(--node-highlight-connected);
@@ -2867,11 +3141,11 @@ tr.highlight-row-disconnected > td {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--va-text-muted);
-  font-size: 0.86em;
+  font-size: 0.85em;
 }
 
 .latency-column {
-  max-width: 110px;
+  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2879,26 +3153,50 @@ tr.highlight-row-disconnected > td {
   font-variant-numeric: tabular-nums;
 }
 
+.latency-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  padding: 0.14rem 0.52rem;
+  border-radius: 999px;
+  font-size: 0.77rem;
+  line-height: 1.25;
+}
+
+.latency-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+}
+
 .latency-good {
   color: var(--va-latency-good);
+  background: var(--va-latency-good-bg);
 }
 
 .latency-warn {
   color: var(--va-latency-warn);
+  background: var(--va-latency-warn-bg);
 }
 
 .latency-bad {
   color: var(--va-latency-bad);
+  background: var(--va-latency-bad-bg);
 }
 
 .latency-testing {
-  color: var(--va-text-subtle);
+  color: var(--va-text-muted);
+  background: var(--va-surface-subtle);
   font-style: italic;
-  font-weight: 400;
+  font-weight: 500;
 }
 
 .latency-empty {
   color: var(--va-text-subtle);
+  background: transparent;
+  padding-left: 0.2rem;
   font-weight: 400;
 }
 
