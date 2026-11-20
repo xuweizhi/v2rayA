@@ -44,6 +44,7 @@ type Params struct {
 }
 
 var params Params
+var defaultV4Dir string
 
 func initFunc() {
 	if err := loadPlatformEnv(); err != nil {
@@ -80,6 +81,12 @@ func initFunc() {
 	}
 	if params.Config == "" {
 		params.Config = defaultConfigDir(params.Lite)
+		// Lite v4 used ~/.config even when XDG_CONFIG_HOME pointed elsewhere.
+		if params.Lite {
+			if home, err := os.UserHomeDir(); err == nil {
+				defaultV4Dir = filepath.Join(home, ".config", "v2raya")
+			}
+		}
 	}
 	// Fix mis-detected Linux-style config path on Windows
 	params.Config = sanitizeConfigDirForPlatform(params.Config, params.Lite)
@@ -134,6 +141,16 @@ func GetEnvironmentConfig() *Params {
 	return &params
 }
 
+// V4ConfigDir resolves the legacy database directory using the current CLI.
+func V4ConfigDir() string {
+	config := GetEnvironmentConfig()
+	if defaultV4Dir != "" {
+		return defaultV4Dir
+	}
+	return config.Config
+}
+
 func SetConfig(config Params) {
+	defaultV4Dir = ""
 	params = config
 }

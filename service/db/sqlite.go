@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -174,6 +175,40 @@ func Open() error {
 
 	GetDB()
 	return nil
+}
+
+const databaseEmpty = `NOT (
+	EXISTS (SELECT 1 FROM system_config) OR EXISTS (SELECT 1 FROM accounts) OR
+	EXISTS (SELECT 1 FROM servers) OR EXISTS (SELECT 1 FROM subscriptions) OR
+	EXISTS (SELECT 1 FROM outbound_names))`
+
+// IsEmpty includes schema-only databases left behind by an interrupted first run.
+func IsEmpty() (bool, error) {
+	var empty bool
+	err := GetDB().QueryRow("SELECT " + databaseEmpty).Scan(&empty)
+	return empty, err
+}
+
+// InitDefaultsIfEmpty writes the first-run defaults in one statement. Only the
+// startup that initialized the database should import the v4 links.
+func InitDefaultsIfEmpty(setting, ports any) (bool, error) {
+	settingJSON, err := json.Marshal(setting)
+	if err != nil {
+		return false, err
+	}
+	portsJSON, err := json.Marshal(ports)
+	if err != nil {
+		return false, err
+	}
+	result, err := GetDB().Exec(`WITH defaults(key, value) AS (VALUES
+		('system:setting', ?), ('system:ports', ?), ('system:routingA', 'null'))
+		INSERT INTO system_config(key, value) SELECT key, value FROM defaults WHERE `+
+		databaseEmpty, string(settingJSON), string(portsJSON))
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n != 0, err
 }
 
 // Close closes the SQLite database connection
