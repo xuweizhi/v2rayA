@@ -99,6 +99,65 @@
           {{ $t("nodeFilter.selectedCount", { count: checkedRows.length }) }}
         </span>
         <div class="batch-toolbar__actions">
+          <div
+            v-if="isCheckedRowsConnectable() && (hasUnconnectedCheckedRows || showGroupSplitDropdown)"
+            class="node-connect-split"
+            :class="{ 'is-split': showGroupSplitDropdown }"
+          >
+            <b-button
+              size="is-small"
+              type="is-primary"
+              class="node-connect-split__main"
+              icon-left="link-variant"
+              :title="$t('nodeFilter.batchConnectTitle', { group: (outbound || 'proxy').toUpperCase() })"
+              @click="handleBatchConnect(outbound || 'proxy')"
+            >
+              {{ $t("operations.connect") }}
+            </b-button>
+            <b-dropdown
+              v-if="showGroupSplitDropdown"
+              position="is-bottom-left"
+              append-to-body
+            >
+              <b-button
+                slot="trigger"
+                size="is-small"
+                type="is-primary"
+                class="node-connect-split__caret"
+                icon-left="menu-down"
+                :title="$t('nodeFilter.batchAddToGroup')"
+                :aria-label="$t('nodeFilter.batchAddToGroup')"
+              />
+              <b-dropdown-item
+                v-for="group in outbounds"
+                :key="group"
+                @click="handleBatchConnect(group)"
+              >
+                <span
+                  class="node-group-option"
+                  :class="{ 'node-group-option--active': areAllCheckedInOutbound(group) }"
+                >
+                  <i
+                    v-if="areAllCheckedInOutbound(group)"
+                    class="mdi mdi-check"
+                    aria-hidden="true"
+                  ></i>
+                  {{ group.toUpperCase() }}
+                </span>
+              </b-dropdown-item>
+            </b-dropdown>
+          </div>
+          <b-button
+            v-if="isCheckedRowsConnectable() && hasConnectedCheckedRows"
+            size="is-small"
+            type="is-warning"
+            outlined
+            icon-left="link-variant-off"
+            :title="$t('nodeFilter.batchDisconnectTitle', { group: (outbound || 'proxy').toUpperCase() })"
+            @click="handleBatchDisconnect(outbound || 'proxy')"
+          >
+            {{ $t("operations.disconnect") }}
+          </b-button>
           <b-button
             v-if="isCheckedRowsPingable()"
             size="is-small"
@@ -1142,6 +1201,37 @@ export default {
         this.hideDisabled
       );
     },
+    connectableCheckedTouches() {
+      return this.checkedRows
+        .filter(
+          (x) =>
+            x &&
+            (x._type === CONST.ServerType ||
+              x._type === CONST.SubscriptionServerType)
+        )
+        .map((row) => this.getTouchFromCheckedRow(row));
+    },
+    hasConnectedCheckedRows() {
+      const group = this.outbound || "proxy";
+      return this.connectableCheckedTouches.some((t) =>
+        this.isNodeInOutbound(
+          { id: t.id, _type: t._type },
+          t.sub,
+          group
+        )
+      );
+    },
+    hasUnconnectedCheckedRows() {
+      const group = this.outbound || "proxy";
+      return this.connectableCheckedTouches.some(
+        (t) =>
+          !this.isNodeInOutbound(
+            { id: t.id, _type: t._type },
+            t.sub,
+            group
+          )
+      );
+    },
   },
   watch: {
     "runningState.running"() {
@@ -2084,6 +2174,209 @@ export default {
         this.quickFilter = "all";
       }
     },
+    isCheckedRowsConnectable() {
+      return this.connectableCheckedTouches.length > 0;
+    },
+    areAllCheckedInOutbound(group) {
+      const touches = this.connectableCheckedTouches;
+      if (!touches.length) return false;
+      return touches.every((t) =>
+        this.isNodeInOutbound({ id: t.id, _type: t._type }, t.sub, group)
+      );
+    },
+    async handleBatchConnect(targetGroup) {
+      const group = targetGroup || this.outbound || "proxy";
+      const selected = this.connectableCheckedTouches;
+      if (!selected.length) return;
+
+      const touchKey = (w) =>
+        `${w._type}/${w.id}/${w._type === CONST.SubscriptionServerType ? w.sub : 0}`;
+
+      const currentMembers = this.connectedTouches()
+        .filter((w) => (w.outbound || "proxy") === group)
+        .map((w) => ({
+          id: w.id,
+          _type: w._type,
+          sub: w._type === CONST.SubscriptionServerType ? w.sub : 0,
+          outbound: group,
+        }));
+
+      const seen = new Set(currentMembers.map(touchKey));
+      const nextMembers = currentMembers.slice();
+      let addedCount = 0;
+      for (const t of selected) {
+        const item = {
+          id: t.id,
+          _type: t._type,
+          sub: t._type === CONST.SubscriptionServerType ? (t.sub ?? 0) : 0,
+          outbound: group,
+        };
+        const key = touchKey(item);
+        if (!seen.has(key)) {
+          seen.add(key);
+          nextMembers.push(item);
+          addedCount++;
+        }
+      }
+
+      if (addedCount === 0 && this.runningState.status === "running") {
+        this.checkedRows = [];
+        return;
+      }
+
+      const loading = this.$buefy.loading.open();
+      try {
+        let res = await this.$axios({
+          url: apiRoot + "/outboundConnections",
+          method: "put",
+          data: {
+            outbound: group,
+            touches: nextMembers,
+          },
+        });
+        if (!res.data || res.data.code !== "SUCCESS") {
+          this.$buefy.toast.open({
+            message: res.data?.message || this.$t("common.fail"),
+            type: "is-warning",
+            position: "is-top",
+            duration: 5000,
+            queue: false,
+          });
+          return;
+        }
+        // Start v2ray-core if it is not yet running so batch connect takes effect immediately
+        if (!res.data.data.running && nextMembers.length > 0) {
+          const startRes = await this.$axios({
+            url: apiRoot + "/v2ray",
+            method: "post",
+          });
+          if (startRes.data && startRes.data.code === "SUCCESS") {
+            res = startRes;
+          } else {
+            this.$buefy.toast.open({
+              message: startRes.data?.message || this.$t("common.fail"),
+              type: "is-warning",
+              position: "is-top",
+              duration: 5000,
+              queue: false,
+            });
+          }
+        }
+        Object.assign(this.runningState, {
+          status: this.getRunningStatusKey(res.data.data.running, res.data.data.networkPaused),
+          running: this.getRunningLabel(res.data.data.running, res.data.data.networkPaused),
+          networkPaused: !!res.data.data.networkPaused,
+          connectedServer: res.data.data.touch.connectedServer,
+        });
+        this.checkedRows = [];
+        this.$nextTick(() => {
+          this.updateConnectView();
+        });
+        this.syncLatestNodeOverview();
+        this.$buefy.toast.open({
+          message: this.$t("nodeFilter.batchConnectSuccess", {
+            count: selected.length,
+            group: group.toUpperCase(),
+          }),
+          type: "is-success",
+          position: "is-top",
+          duration: 2500,
+          queue: false,
+        });
+      } catch (err) {
+        this.$buefy.toast.open({
+          message: err?.response?.data?.message || err?.message || this.$t("common.fail"),
+          type: "is-warning",
+          position: "is-top",
+          duration: 5000,
+          queue: false,
+        });
+      } finally {
+        loading.close();
+      }
+    },
+    async handleBatchDisconnect(targetGroup) {
+      const group = targetGroup || this.outbound || "proxy";
+      const selected = this.connectableCheckedTouches;
+      if (!selected.length) return;
+
+      const touchKey = (w) =>
+        `${w._type}/${w.id}/${w._type === CONST.SubscriptionServerType ? w.sub : 0}`;
+      const removeKeys = new Set(
+        selected.map((t) =>
+          touchKey({
+            id: t.id,
+            _type: t._type,
+            sub: t._type === CONST.SubscriptionServerType ? (t.sub ?? 0) : 0,
+          })
+        )
+      );
+
+      const currentMembers = this.connectedTouches()
+        .filter((w) => (w.outbound || "proxy") === group)
+        .map((w) => ({
+          id: w.id,
+          _type: w._type,
+          sub: w._type === CONST.SubscriptionServerType ? w.sub : 0,
+          outbound: group,
+        }));
+      const nextMembers = currentMembers.filter((w) => !removeKeys.has(touchKey(w)));
+      const removedCount = currentMembers.length - nextMembers.length;
+      if (removedCount <= 0) return;
+
+      const loading = this.$buefy.loading.open();
+      try {
+        const res = await this.$axios({
+          url: apiRoot + "/outboundConnections",
+          method: "put",
+          data: {
+            outbound: group,
+            touches: nextMembers,
+          },
+        });
+        if (!res.data || res.data.code !== "SUCCESS") {
+          this.$buefy.toast.open({
+            message: res.data?.message || this.$t("common.fail"),
+            type: "is-warning",
+            position: "is-top",
+            duration: 5000,
+            queue: false,
+          });
+          return;
+        }
+        Object.assign(this.runningState, {
+          status: this.getRunningStatusKey(res.data.data.running, res.data.data.networkPaused),
+          running: this.getRunningLabel(res.data.data.running, res.data.data.networkPaused),
+          networkPaused: !!res.data.data.networkPaused,
+          connectedServer: res.data.data.touch.connectedServer,
+        });
+        this.checkedRows = [];
+        this.$nextTick(() => {
+          this.updateConnectView();
+        });
+        this.syncLatestNodeOverview();
+        this.$buefy.toast.open({
+          message: this.$t("nodeFilter.batchDisconnectSuccess", {
+            count: removedCount,
+            group: group.toUpperCase(),
+          }),
+          type: "is-success",
+          position: "is-top",
+          duration: 2500,
+          queue: false,
+        });
+      } catch (err) {
+        this.$buefy.toast.open({
+          message: err?.response?.data?.message || err?.message || this.$t("common.fail"),
+          type: "is-warning",
+          position: "is-top",
+          duration: 5000,
+          queue: false,
+        });
+      } finally {
+        loading.close();
+      }
+    },
     isCheckedRowsDeletable() {
       // CONST.SubscriptionServerType is not deletable
       return (
@@ -2106,9 +2399,12 @@ export default {
       return this.checkedRows.length > 0;
     },
     getTouchFromCheckedRow(row) {
-      const sub = this.tableData.subscriptions.findIndex((subscription) =>
+      let sub = this.tableData.subscriptions.findIndex((subscription) =>
         subscription.servers.some((server) => server === row)
       );
+      if (sub === -1 && row._type === CONST.SubscriptionServerType && this.tab >= 2) {
+        sub = this.tab - 2;
+      }
       return {
         id: row.id,
         _type: row._type,

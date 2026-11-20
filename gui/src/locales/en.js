@@ -697,6 +697,11 @@ export default {
     disabledTag: "Disabled",
     connectedNodesTitle: "Connected Nodes",
     locateHint: "Click a card to locate in list",
+    batchConnectTitle: "Connect selected nodes to {group}",
+    batchDisconnectTitle: "Disconnect selected nodes from {group}",
+    batchAddToGroup: "Add selected nodes to proxy group",
+    batchConnectSuccess: "Connected {count} node(s) to {group}",
+    batchDisconnectSuccess: "Disconnected {count} node(s) from {group}",
   },
   onboarding: {
     step1Title: "1. Import or Create",

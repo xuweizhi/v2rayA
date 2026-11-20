@@ -690,6 +690,11 @@ export default {
     disabledTag: "已禁用",
     connectedNodesTitle: "当前已连接节点",
     locateHint: "点击卡片定位到列表",
+    batchConnectTitle: "将已选节点连接到当前分组 ({group})",
+    batchDisconnectTitle: "从当前分组 ({group}) 断开已选节点",
+    batchAddToGroup: "将已选节点添加到指定分组",
+    batchConnectSuccess: "已将 {count} 个节点连接到 {group}",
+    batchDisconnectSuccess: "已从 {group} 断开 {count} 个节点",
   },
   onboarding: {
     step1Title: "1. 导入订阅或节点",
