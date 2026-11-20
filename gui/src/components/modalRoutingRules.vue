@@ -1,19 +1,46 @@
 <template>
-  <div class="modal-card" style="max-width: 720px; margin: auto">
+  <div class="modal-card" style="max-width: 740px; width: calc(100vw - 2rem); margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("routingRules.title") }}</p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section class="modal-card-body">
       <b-message type="is-info" size="is-small">
         {{ $t("routingRules.note") }}
       </b-message>
+      <div v-if="!rules.length" class="va-empty-state">
+        {{ $t("ruleOrder.empty") }}
+      </div>
       <div v-for="(rule, index) of rules" :key="index" class="card rr-card">
         <div class="card-content">
           <div class="rr-head">
             <strong>#{{ index + 1 }}</strong>
-            <b-button type="is-text" size="is-small" @click="rules.splice(index, 1)">
-              {{ $t("operations.delete") }}
-            </b-button>
+            <div class="rr-head-actions">
+              <b-button
+                size="is-small"
+                icon-left="arrow-up"
+                :disabled="index === 0"
+                :title="$t('ruleOrder.moveUp')"
+                :aria-label="$t('ruleOrder.moveUp')"
+                @click="moveRule(index, -1)"
+              />
+              <b-button
+                size="is-small"
+                icon-left="arrow-down"
+                :disabled="index === rules.length - 1"
+                :title="$t('ruleOrder.moveDown')"
+                :aria-label="$t('ruleOrder.moveDown')"
+                @click="moveRule(index, 1)"
+              />
+              <b-button type="is-danger" outlined size="is-small" icon-left="delete-outline" @click="rules.splice(index, 1)">
+                {{ $t("operations.delete") }}
+              </b-button>
+            </div>
           </div>
           <b-field :label="$t('routingRules.domains')" label-position="on-border">
             <b-input
@@ -105,8 +132,16 @@ export default {
         network: "",
       });
     },
+    moveRule(index, delta) {
+      const target = index + delta;
+      if (target < 0 || target >= this.rules.length) return;
+      const item = this.rules[index];
+      this.rules.splice(index, 1);
+      this.rules.splice(target, 0, item);
+    },
     handleSave() {
       const routingRules = [];
+      let skippedEmpty = 0;
       for (const rule of this.rules) {
         const domains = (rule.domainText || "")
           .split(/\n|,/)
@@ -117,7 +152,10 @@ export default {
         if ((rule.ip || []).length) item.ip = rule.ip;
         if (rule.port) item.port = rule.port;
         if (rule.network) item.network = rule.network;
-        if (!item.domain && !item.ip && !item.port) continue;
+        if (!item.domain && !item.ip && !item.port) {
+          skippedEmpty++;
+          continue;
+        }
         routingRules.push(item);
       }
       this.$axios({ url: apiRoot + "/setting", method: "get" }).then((res) => {
@@ -130,10 +168,13 @@ export default {
         }).then((res2) => {
           handleResponse(res2, this, () => {
             this.$buefy.toast.open({
-              message: this.$t("common.success"),
-              type: "is-primary",
+              message:
+                skippedEmpty > 0
+                  ? `${this.$t("common.success")} — ${this.$t("ruleOrder.skippedEmpty", { count: skippedEmpty })}`
+                  : this.$t("common.success"),
+              type: skippedEmpty > 0 ? "is-warning" : "is-success",
               position: "is-top",
-              duration: 3000,
+              duration: 3500,
               queue: false,
             });
             this.$parent.close();
@@ -153,6 +194,12 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0.4rem;
+  margin-bottom: 0.55rem;
+}
+
+.rr-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 </style>

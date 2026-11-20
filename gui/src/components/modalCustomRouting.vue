@@ -5,6 +5,12 @@
   >
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("customRouting.title") }}</p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section class="modal-card-body rules">
       <b-message type="is-info" class="after-line-dot5">

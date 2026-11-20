@@ -1,17 +1,19 @@
 <template>
   <div class="ogp-wrapper">
-    <b-tag
-      class="pointerTag"
-      type="is-info"
-      :icon-right="menuOpen ? 'menu-up' : 'menu-down'"
-      role="button"
-      tabindex="0"
-      @click.native.stop="toggleMenu"
-      @keydown.native.enter.prevent.stop="toggleMenu"
-      @keydown.native.space.prevent.stop="toggleMenu"
+    <button
+      type="button"
+      class="ogp-trigger"
+      :aria-expanded="String(menuOpen)"
+      @click.stop="toggleMenu"
     >
-      {{ $t("common.proxyGroups") }}: {{ currentOutbound.toUpperCase() }}
-    </b-tag>
+      <i class="mdi mdi-layers-outline" aria-hidden="true"></i>
+      <span>{{ $t("common.proxyGroups") }}: {{ currentOutbound.toUpperCase() }}</span>
+      <i
+        class="mdi"
+        :class="menuOpen ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+        aria-hidden="true"
+      ></i>
+    </button>
 
     <!-- Persistent expandable menu: close only on outside click or manual toggle -->
     <div v-if="menuOpen" class="ogp-panel" @click.stop>
@@ -45,24 +47,23 @@
             <b-tag
               v-if="getGroupCount(outbound) > 0"
               size="is-small"
-              type="is-warning"
+              type="is-primary"
               rounded
               style="margin-left: auto; margin-right: 4px"
             >{{ getGroupCount(outbound) }}</b-tag>
             <span
-              class="mdi"
+              class="mdi ogp-chevron"
               :class="expandedGroup === outbound ? 'mdi-chevron-down' : 'mdi-chevron-right'"
-              style="color: #aaa"
             ></span>
           </div>
 
           <!-- Expanded: nodes in this group -->
           <div v-if="expandedGroup === outbound" class="ogp-nodes-inline" @click.stop>
             <div class="ogp-nodes-actions">
-              <b-button size="is-small" icon-left="cog" @click.stop="$emit('settings', outbound)">{{ $t('common.setting') }}</b-button>
+              <b-button size="is-small" icon-left="cog-outline" @click.stop="$emit('settings', outbound)">{{ $t('common.setting') }}</b-button>
               <b-button
                 size="is-small"
-                type="is-warning"
+                type="is-primary"
                 outlined
                 icon-left="plus"
                 @click.stop="openNodePicker(outbound)"
@@ -72,9 +73,9 @@
                 size="is-small"
                 type="is-danger"
                 outlined
-                icon-left="delete"
+                icon-left="delete-outline"
                 style="margin-left: auto"
-                @click.stop="deleteGroup(outbound)"
+                @click.stop="confirmDeleteGroup(outbound)"
               >{{ $t("operations.delete") }}</b-button>
             </div>
             <div class="ogp-nodes-scroll">
@@ -117,24 +118,36 @@
     </div>
 
     <!-- Node picker modal (outside dropdown to avoid z-index issues) -->
-    <b-modal :active.sync="showPicker" has-modal-card trap-focus>
-      <div class="modal-card" style="max-width: 520px; margin: auto">
+    <b-modal :active.sync="showPicker" has-modal-card trap-focus aria-role="dialog" aria-modal>
+      <div class="modal-card ogp-picker-modal">
         <header class="modal-card-head">
-          <p class="modal-card-title">
+          <p class="modal-card-title ogp-picker-title">
             {{ $t("operations.addTo") }}
-            <b-tag type="is-info" size="is-medium" style="margin-left: 8px">
+            <b-tag type="is-primary" size="is-small" rounded>
               {{ pickerGroup ? pickerGroup.toUpperCase() : "" }}
             </b-tag>
           </p>
+          <button
+            type="button"
+            class="delete"
+            :aria-label="$t('operations.close')"
+            @click="showPicker = false"
+          ></button>
         </header>
-        <section class="modal-card-body" style="min-height: 200px; max-height: 60vh; overflow-y: auto">
+        <section class="modal-card-body ogp-picker-body">
           <b-input
             v-model="nodeSearch"
             :placeholder="$t('proxyGroup.searchPlaceholder')"
             icon="magnify"
+            icon-right="close-circle"
+            icon-right-clickable
             style="margin-bottom: 0.75rem"
+            @icon-right-click="nodeSearch = ''"
           ></b-input>
-          <div v-if="loadingNodes" style="text-align: center; padding: 2rem">
+          <b-message v-if="isCoreRunning" type="is-info" size="is-small" class="ogp-reconnect-notice">
+            {{ $t("proxyGroupExtra.reconnectHint") }}
+          </b-message>
+          <div v-if="loadingNodes" class="ogp-picker-loading">
             <b-loading :is-full-page="false" :active="true"></b-loading>
           </div>
           <template v-else>
@@ -145,7 +158,7 @@
               :class="{ 'ogp-picker-row--highlight': isPickerNodeHighlighted(node) }"
               role="checkbox"
               tabindex="0"
-              :aria-checked="String(isPickerNodeHighlighted(node))"
+              :aria-checked="String(isDraftSelected(node))"
               @click="toggleNode(node)"
               @keydown.enter.prevent="toggleNode(node)"
               @keydown.space.prevent="toggleNode(node)"
@@ -153,13 +166,13 @@
               <span
                 class="mdi"
                 :class="pickerNodeIconClass(node)"
-                style="font-size: 1.1em; margin-right: 6px; flex-shrink: 0"
+                style="font-size: 1.15em; margin-right: 8px; flex-shrink: 0"
               ></span>
               <span class="ogp-picker-name">{{ node.name }}</span>
               <b-tag
                 v-if="isRunningInGroup(node, pickerGroup)"
                 size="is-small"
-                type="is-warning"
+                type="is-success"
                 rounded
                 style="margin-left: 6px; flex-shrink: 0"
               >{{ $t("common.isRunning") }}</b-tag>
@@ -167,16 +180,21 @@
                 {{ node.subName }}
               </b-tag>
             </div>
-            <div v-if="!filteredNodes.length && !loadingNodes" style="text-align: center; padding: 1rem; color: #888">
+            <div v-if="!filteredNodes.length && !loadingNodes" class="va-empty-state">
               {{ $t("proxyGroup.emptyNodes") }}
             </div>
           </template>
         </section>
-        <footer class="modal-card-foot flex-end">
-          <b-button @click="showPicker = false">{{ $t("operations.close") }}</b-button>
-          <b-button type="is-primary" :loading="saving" @click="savePickerChanges">
-            {{ $t("operations.save") }}
-          </b-button>
+        <footer class="modal-card-foot ogp-picker-foot">
+          <span class="ogp-picker-count">
+            {{ $t("proxyGroupExtra.selectedSummary", { count: selectedDraftCount }) }}
+          </span>
+          <div class="ogp-picker-actions">
+            <b-button @click="showPicker = false">{{ $t("operations.close") }}</b-button>
+            <b-button type="is-primary" :loading="saving" @click="savePickerChanges">
+              {{ isCoreRunning ? $t("proxyGroupExtra.saveAndReconnect") : $t("operations.save") }}
+            </b-button>
+          </div>
         </footer>
       </div>
     </b-modal>
@@ -209,6 +227,9 @@ export default {
     };
   },
   computed: {
+    selectedDraftCount() {
+      return Object.values(this.draftSelectionMap).filter(Boolean).length;
+    },
     // Map: outbound -> array of {key, name, id, _type, sub, subName}
     groupNodeMap() {
       const map = {};
@@ -323,13 +344,13 @@ export default {
       return !!(set && set.has(this.whichKey(node)));
     },
     isPickerNodeHighlighted(node) {
-      return this.isDraftSelected(node) || this.isRunningInGroup(node, this.pickerGroup);
+      return this.isDraftSelected(node);
     },
     pickerNodeIconClass(node) {
-      if (this.isPickerNodeHighlighted(node)) {
-        return "mdi-check-circle has-text-warning";
+      if (this.isDraftSelected(node)) {
+        return "mdi-check-circle ogp-check--active";
       }
-      return "mdi-circle-outline has-text-grey-light";
+      return "mdi-circle-outline ogp-check--idle";
     },
     findServer(cs) {
       if (!this.touchData) return null;
@@ -503,6 +524,18 @@ export default {
         });
       }
     },
+    confirmDeleteGroup(outbound) {
+      this.$buefy.dialog.confirm({
+        title: this.$t("delete.title"),
+        message: this.$t("outbound.deleteMessage", { outboundName: outbound }),
+        confirmText: this.$t("operations.delete"),
+        cancelText: this.$t("operations.cancel"),
+        type: "is-danger",
+        hasIcon: true,
+        icon: "alert-circle-outline",
+        onConfirm: () => this.deleteGroup(outbound),
+      });
+    },
     async deleteGroup(outbound) {
       try {
         const res = await this.$axios({
@@ -515,6 +548,13 @@ export default {
             this.expandedGroup = null;
           }
           this.$emit("group-deleted", res.data.data.outbounds);
+          this.$buefy.toast.open({
+            message: this.$t("common.success"),
+            type: "is-success",
+            position: "is-top",
+            duration: 2000,
+            queue: false,
+          });
         } else {
           // Show error message from server (e.g., bound custom inbounds)
           this.$buefy.toast.open({
@@ -553,18 +593,42 @@ export default {
   position: relative;
 }
 
+.ogp-trigger {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--va-border-strong);
+  background: var(--va-surface-subtle);
+  color: var(--va-text);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    border-color: var(--va-primary);
+    background: var(--va-primary-soft);
+    color: var(--va-primary);
+  }
+}
+
 .ogp-panel {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
   z-index: 35;
-  border: 1px solid #dbdbdb;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 8px 20px rgba(10, 10, 10, 0.12);
-  min-width: 220px;
-  max-width: 280px;
-  padding: 4px 0;
+  border: 1px solid var(--va-border);
+  border-radius: var(--va-radius-md);
+  background: var(--va-surface);
+  box-shadow: var(--va-shadow-md);
+  min-width: 248px;
+  max-width: 300px;
+  padding: 6px 0;
 }
 
 .ogp-group-block {
@@ -572,22 +636,19 @@ export default {
   flex-direction: column;
 }
 
-.pointerTag {
-  cursor: pointer;
-}
-
 .ogp-group-row {
   display: flex;
   align-items: center;
-  padding: 6px 12px;
+  padding: 7px 12px;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  transition: background 0.1s;
+  color: var(--va-text);
+  transition: background-color 0.12s ease;
 
   &:hover,
   &--open {
-    background: #f5f5f5;
+    background: var(--va-surface-hover);
   }
 
   &--current {
@@ -595,20 +656,18 @@ export default {
   }
 
   &--add {
-    color: #666;
-    font-size: 0.9em;
+    color: var(--va-text-muted);
+    font-size: 0.88em;
+    gap: 0.35rem;
 
     &:hover {
-      color: #4a9eff;
+      color: var(--va-primary);
     }
   }
 }
 
-.ogp-group-row:focus-visible,
-.ogp-picker-row:focus-visible,
-.ogp-node-del:focus-visible {
-  outline: 2px solid #3273dc;
-  outline-offset: -2px;
+.ogp-chevron {
+  color: var(--va-text-subtle);
 }
 
 .ogp-group-label {
@@ -617,17 +676,18 @@ export default {
 }
 
 .ogp-nodes-inline {
-  background: #fafafa;
-  border-top: 1px solid #f0f0f0;
-  border-bottom: 1px solid #f0f0f0;
+  background: var(--va-surface-subtle);
+  border-top: 1px solid var(--va-border);
+  border-bottom: 1px solid var(--va-border);
   margin-bottom: 2px;
 }
 
 .ogp-nodes-actions {
   display: flex;
   align-items: center;
-  padding: 5px 10px;
-  border-bottom: 1px solid #eee;
+  gap: 0.4rem;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--va-border);
 }
 
 .ogp-nodes-scroll {
@@ -639,13 +699,13 @@ export default {
 .ogp-node-row {
   display: flex;
   align-items: center;
-  padding: 4px 10px;
-  font-size: 0.85em;
-  gap: 4px;
-  background: #fff5cf;
-  border: 1px solid #ffe08a;
+  padding: 5px 10px;
+  font-size: 0.84em;
+  gap: 6px;
+  background: var(--va-primary-soft);
+  border: 1px solid var(--va-border);
   border-radius: 6px;
-  margin: 3px 8px;
+  margin: 4px 8px;
 }
 
 .ogp-node-name {
@@ -653,45 +713,83 @@ export default {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #856404;
+  color: var(--va-text);
+  font-weight: 500;
 }
 
 .ogp-node-del {
   cursor: pointer;
-  color: #bbb;
+  color: var(--va-text-subtle);
   flex-shrink: 0;
 
   &:hover {
-    color: #e55;
+    color: var(--va-danger);
   }
 }
 
 .ogp-nodes-empty {
   padding: 12px 10px;
-  color: #aaa;
+  color: var(--va-text-subtle);
   font-size: 0.85em;
   text-align: center;
+}
+
+.ogp-picker-modal {
+  max-width: 560px;
+  width: calc(100vw - 2rem);
+  margin: auto;
+}
+
+.ogp-picker-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ogp-picker-body {
+  min-height: 220px;
+  max-height: 62vh;
+  overflow-y: auto;
+}
+
+.ogp-reconnect-notice {
+  margin-bottom: 0.75rem !important;
+}
+
+.ogp-picker-loading {
+  position: relative;
+  min-height: 120px;
 }
 
 .ogp-picker-row {
   display: flex;
   align-items: center;
-  padding: 6px 8px;
-  border-radius: 4px;
+  padding: 7px 10px;
+  border-radius: 6px;
   cursor: pointer;
-  transition: background 0.1s;
+  margin-bottom: 2px;
+  color: var(--va-text);
+  transition: background-color 0.12s ease;
 
   &:hover {
-    background: #f5f5f5;
+    background: var(--va-surface-hover);
   }
 
   &--highlight {
-    background: #fff8e1;
+    background: var(--va-primary-soft);
 
     &:hover {
-      background: #fff0c0;
+      background: var(--va-primary-soft);
     }
   }
+}
+
+.ogp-check--active {
+  color: var(--va-primary);
+}
+
+.ogp-check--idle {
+  color: var(--va-text-subtle);
 }
 
 .ogp-picker-name {
@@ -701,71 +799,21 @@ export default {
   white-space: nowrap;
 }
 
-body.theme-dark {
-  .ogp-panel {
-    background: var(--md-surface-container);
-    border-color: var(--md-surface-variant);
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
-  }
+.ogp-picker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
 
-  .ogp-group-row {
-    color: var(--md-on-surface);
+.ogp-picker-count {
+  font-size: 0.84rem;
+  color: var(--va-text-muted);
+}
 
-    &:hover,
-    &--open {
-      background: #2b2930;
-    }
-
-    &--add {
-      color: var(--md-on-surface-variant);
-
-      &:hover {
-        color: var(--md-primary);
-      }
-    }
-  }
-
-  .ogp-nodes-inline {
-    background: #26242b;
-    border-top-color: var(--md-surface-variant);
-    border-bottom-color: var(--md-surface-variant);
-  }
-
-  .ogp-nodes-actions {
-    border-bottom-color: var(--md-surface-variant);
-  }
-
-  .ogp-node-row {
-    background: #4a3d21;
-    border-color: #7f6420;
-  }
-
-  .ogp-node-row:hover {
-    background: #564724;
-  }
-
-  .ogp-node-name {
-    color: #ffdf9d;
-  }
-
-  .ogp-nodes-empty {
-    color: var(--md-on-surface-variant);
-  }
-
-  .ogp-picker-row {
-    color: var(--md-on-surface);
-
-    &:hover {
-      background: #2b2930;
-    }
-
-    &--highlight {
-      background: #3b311a;
-
-      &:hover {
-        background: #4a3d21;
-      }
-    }
-  }
+.ogp-picker-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 </style>

@@ -1,12 +1,18 @@
 <template>
-  <div class="modal-card" style="max-width: 820px; margin: auto">
+  <div class="modal-card" style="max-width: 860px; width: calc(100vw - 2rem); margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">
         {{ $t("connections.title") }}
-        <span style="font-size: 0.75em; color: #888">
+        <span style="font-size: 0.78em; color: var(--va-text-muted)">
           ({{ filteredConnections.length }})
         </span>
       </p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section class="modal-card-body">
       <div class="conn-toolbar">
@@ -66,6 +72,9 @@
         </b-table-column>
       </b-table>
     </section>
+    <footer class="modal-card-foot flex-end">
+      <b-button @click="$parent.close()">{{ $t("operations.close") }}</b-button>
+    </footer>
     <b-modal
       v-model="showRuleDialog"
       has-modal-card
@@ -73,9 +82,15 @@
       aria-role="dialog"
       aria-modal
     >
-      <div class="modal-card" style="max-width: 460px; margin: auto">
+      <div class="modal-card" style="max-width: 460px; width: calc(100vw - 2rem); margin: auto">
         <header class="modal-card-head">
           <p class="modal-card-title">{{ $t("connections.createRule") }}</p>
+          <button
+            type="button"
+            class="delete"
+            :aria-label="$t('operations.close')"
+            @click="showRuleDialog = false"
+          ></button>
         </header>
         <section class="modal-card-body">
           <b-field :label="$t('connections.domainPattern')">
@@ -191,7 +206,7 @@ export default {
         }
         this.$buefy.toast.open({
           message: this.$t("common.success"),
-          type: "is-primary",
+          type: "is-success",
           position: "is-top",
           duration: 1500,
           queue: false,
@@ -264,7 +279,7 @@ export default {
           handleResponse(res2, this, () => {
             this.$buefy.toast.open({
               message: this.$t("common.success"),
-              type: "is-primary",
+              type: "is-success",
               position: "is-top",
               duration: 3000,
               queue: false,
@@ -288,7 +303,7 @@ export default {
 }
 
 .conn-note {
-  color: #777;
+  color: var(--va-text-muted);
   font-size: 0.8rem;
 }
 
@@ -296,14 +311,14 @@ export default {
   display: inline-block;
   max-width: 100%;
   overflow: hidden;
-  color: #3273dc;
+  color: var(--va-link);
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .dest-cell:focus-visible {
-  outline: 2px solid #3273dc;
+  outline: 2px solid var(--va-primary);
   outline-offset: 2px;
 }
 

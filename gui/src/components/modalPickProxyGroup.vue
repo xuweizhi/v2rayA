@@ -2,6 +2,12 @@
   <div class="modal-card" style="max-width: 420px; margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("proxyGroup.pickTitle") }}</p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section class="modal-card-body">
       <b-field :label="$t('proxyGroup.group')" label-position="on-border">

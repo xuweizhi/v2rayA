@@ -3,12 +3,47 @@
     <header class="modal-card-head">
       <p class="modal-card-title">
         {{ $tc("log.logModalTitle") }}
+        <span class="log-count-pill">
+          {{ $t("logTools.lines", { count: filteredItems.length }) }}
+        </span>
       </p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section ref="section" :class="{ 'modal-card-body': true }">
-      <div class="log-title">{{ $t("log.logsLabel") }}</div>
+      <div class="log-toolbar">
+        <b-input
+          v-model="searchQuery"
+          size="is-small"
+          icon="magnify"
+          :icon-right="searchQuery ? 'close-circle' : ''"
+          :icon-right-clickable="!!searchQuery"
+          :placeholder="$t('logTools.searchPlaceholder')"
+          class="log-search-input"
+          @icon-right-click="searchQuery = ''"
+        />
+        <div class="log-toolbar-actions">
+          <b-button size="is-small" icon-left="content-copy" :disabled="!filteredItems.length" @click="copyLogs">
+            {{ $t("logTools.copy") }}
+          </b-button>
+          <b-button size="is-small" icon-left="download-outline" :disabled="!filteredItems.length" @click="downloadLogs">
+            {{ $t("logTools.download") }}
+          </b-button>
+          <b-button size="is-small" icon-left="broom" :disabled="!items.length" @click="clearView">
+            {{ $t("logTools.clearView") }}
+          </b-button>
+        </div>
+      </div>
       <div class="log-content" tabindex="0" @keydown="handleLogKeydown">
+        <div v-if="!filteredItems.length" class="va-empty-state log-empty">
+          {{ $t("logTools.empty") }}
+        </div>
         <RecycleScroller
+          v-else
           ref="logScroller"
           v-slot="{ item, index }"
           class="log-scroller"
@@ -78,6 +113,9 @@
         </div>
       </div>
     </section>
+    <footer class="modal-card-foot flex-end">
+      <b-button @click="$parent.close()">{{ $t("operations.close") }}</b-button>
+    </footer>
   </div>
 </template>
 
@@ -95,6 +133,7 @@ export default {
       intervalCandidate: [2, 5, 10, 15],
       itemSize: 28,
       autoScoll: true,
+      searchQuery: "",
       levelFilter: "all",
       levelOptions: [
         { value: "all", label: "log.categories.all" },
@@ -122,7 +161,12 @@ export default {
       if (this.sourceFilter !== "all") {
         filtered = filtered.filter((item) => item.source === this.sourceFilter);
       }
-      
+
+      const q = (this.searchQuery || "").trim().toLowerCase();
+      if (q) {
+        filtered = filtered.filter((item) => (item.text || "").toLowerCase().includes(q));
+      }
+
       return filtered;
     },
   },
@@ -257,6 +301,55 @@ export default {
     changeScoll(val) {
       localStorage.setItem("log.autoScoll", val);
     },
+    clearView() {
+      this.items = [];
+    },
+    async copyLogs() {
+      const content = this.filteredItems.map((i) => i.text).join("\n");
+      if (!content) return;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(content);
+        } else {
+          const ta = document.createElement("textarea");
+          ta.value = content;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+        this.$buefy.toast.open({
+          message: this.$t("common.success"),
+          type: "is-success",
+          position: "is-top",
+          duration: 2000,
+          queue: false,
+        });
+      } catch (err) {
+        this.$buefy.toast.open({
+          message: err?.message || this.$t("common.fail"),
+          type: "is-warning",
+          position: "is-top",
+          duration: 3000,
+          queue: false,
+        });
+      }
+    },
+    downloadLogs() {
+      const content = this.filteredItems.map((i) => i.text).join("\n");
+      if (!content) return;
+      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `v2raya-logs-${Date.now()}.log`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
   },
 };
 </script>
@@ -267,32 +360,68 @@ export default {
   max-width: 95vw;
 }
 
-.text {
-  font-size: 16px;
-  line-height: 30px;
-  white-space: nowrap;
+.log-count-pill {
+  margin-left: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--va-text-muted);
 }
 
-.log-title {
-  font-weight: 600;
+.log-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
   margin-bottom: 0.75rem;
 }
 
+.log-search-input {
+  flex: 1 1 240px;
+  max-width: 380px;
+}
+
+.log-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.text {
+  font-size: 13px;
+  line-height: 28px;
+  white-space: nowrap;
+}
+
 .log-content {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
+  border: 1px solid var(--va-border);
+  border-radius: var(--va-radius-sm);
+  background: var(--va-surface-subtle);
+  padding: 0.25rem 0.5rem;
+}
+
+.log-empty {
+  height: 50vh;
+  max-height: 460px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .log-row {
   display: flex;
   align-items: center;
+  height: 28px;
   gap: 12px;
 }
 
 .log-line-number {
-  min-width: 3.5rem;
+  min-width: 3.25rem;
   text-align: right;
-  color: #9aa4b2;
-  font-size: 14px;
+  color: var(--va-text-subtle);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
   user-select: none;
 }
 
@@ -479,7 +608,7 @@ body.theme-dark {
     }
 
     .log-row .log-line-number {
-      color: var(--md-surface-variant);
+      color: var(--va-text-subtle);
     }
 
     /* highlight.js github亮色主题覆盖 */

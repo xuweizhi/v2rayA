@@ -1,9 +1,15 @@
 <template>
-  <div class="modal-card" style="max-width: 450px; margin: auto">
+  <div class="modal-card" style="max-width: 480px; width: calc(100vw - 2rem); margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">
         {{ $t("gfwList.title") }}
       </p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$emit('close')"
+      ></button>
     </header>
     <section class="modal-card-body">
       <b-message type="is-info" class="after-line-dot5">
@@ -90,19 +96,22 @@ export default {
         data: {
           downloadLink: this.downloadLink,
         },
-      }).then((res) => {
-        loading.close();
-        handleResponse(res, this, () => {
-          this.$emit("close");
-          this.$buefy.toast.open({
-            message: this.$t("common.success"),
-            type: "is-warning",
-            position: "is-top",
-            duration: 5000,
-            queue: false,
+      })
+        .then((res) => {
+          handleResponse(res, this, () => {
+            this.$emit("close");
+            this.$buefy.toast.open({
+              message: this.$t("common.success"),
+              type: "is-success",
+              position: "is-top",
+              duration: 3000,
+              queue: false,
+            });
           });
+        })
+        .finally(() => {
+          loading.close();
         });
-      });
     },
   },
 };

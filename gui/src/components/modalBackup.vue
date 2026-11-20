@@ -1,7 +1,13 @@
 <template>
-  <div class="modal-card" style="max-width: 620px; margin: auto">
+  <div class="modal-card" style="max-width: 660px; width: calc(100vw - 2rem); margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("backup.title") }}</p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section class="modal-card-body">
       <div class="backup-toolbar">
@@ -103,6 +109,9 @@
         </b-table-column>
       </b-table>
     </section>
+    <footer class="modal-card-foot flex-end">
+      <b-button @click="$parent.close()">{{ $t("operations.close") }}</b-button>
+    </footer>
   </div>
 </template>
 
@@ -150,7 +159,7 @@ export default {
           handleResponse(res, this, () => {
             this.$buefy.toast.open({
               message: this.$t("common.success"),
-              type: "is-primary",
+              type: "is-success",
               position: "is-top",
               duration: 3000,
               queue: false,
@@ -200,7 +209,7 @@ export default {
         .then(() => {
           this.$buefy.toast.open({
             message: this.$t("common.success"),
-            type: "is-primary",
+            type: "is-success",
             position: "is-top",
             duration: 3000,
             queue: false,
@@ -216,7 +225,7 @@ export default {
           handleResponse(res, this, () => {
             this.$buefy.toast.open({
               message: this.$t("common.success"),
-              type: "is-primary",
+              type: "is-success",
               position: "is-top",
               duration: 3000,
               queue: false,
@@ -259,7 +268,7 @@ export default {
             handleResponse(res, this, () => {
               this.$buefy.toast.open({
                 message: this.$t("backup.restoring"),
-                type: "is-primary",
+                type: "is-success",
                 position: "is-top",
                 duration: 3000,
                 queue: false,
@@ -290,3 +299,18 @@ export default {
   },
 };
 </script>
+
+<style scoped>
+.backup-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.75rem;
+}
+
+.backup-note {
+  font-size: 0.82rem;
+  color: var(--va-text-muted);
+}
+</style>

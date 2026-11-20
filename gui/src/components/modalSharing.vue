@@ -1,39 +1,34 @@
 <template>
-  <div class="modal-card" style="max-width: 500px; margin: auto">
+  <div class="modal-card sharing-modal">
     <header class="modal-card-head">
-      <p class="modal-card-title has-text-centered">{{ title }}</p>
+      <p class="modal-card-title">{{ title }}</p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section class="modal-card-body lazy" style="text-align: center">
-      <div><canvas ref="canvas" class="qrcode"></canvas></div>
-      <div
-        class="tags has-addons is-centered sharing-tags"
-        @mouseenter="showCopyCover = true"
-        @mouseleave="showCopyCover = false"
-      >
-        <span
-          class="tag is-rounded is-dark sharingAddressTag"
-          style="position: relative"
+      <div class="qrcode-frame">
+        <canvas ref="canvas" class="qrcode"></canvas>
+      </div>
+      <div class="sharing-desc">{{ shortDesc }}</div>
+      <div class="sharing-link-row">
+        <code class="sharing-link-text" :title="sharingAddress">{{ sharingAddress }}</code>
+        <button
+          type="button"
+          class="button is-primary is-small sharingAddressTag"
           :data-clipboard-text="sharingAddress"
         >
-          <span v-show="showCopyCover" class="tag-cover tag is-rounded"></span>
-          <span class="has-ellipsis" style="max-width: 10em">
-            {{ shortDesc }}
-          </span>
-        </span>
-        <span v-show="showCopyCover" class="tag-cover-text">{{ $t("operations.copyLink") }}</span>
-        <span
-          class="tag is-rounded is-primary sharingAddressTag"
-          style="position: relative"
-          :data-clipboard-text="sharingAddress"
-        >
-          <span class="has-ellipsis" style="max-width: 25em">
-            {{ sharingAddress }}
-          </span>
-          <span v-show="showCopyCover" class="tag-cover tag is-rounded"></span>
-        </span>
+          <i class="mdi mdi-content-copy" style="margin-right: 4px" aria-hidden="true"></i>
+          {{ $t("operations.copyLink") }}
+        </button>
       </div>
     </section>
-
+    <footer class="modal-card-foot flex-end">
+      <b-button @click="$parent.close()">{{ $t("operations.close") }}</b-button>
+    </footer>
   </div>
 </template>
 
@@ -79,7 +74,7 @@ export default {
     this.clipboard.on("success", (e) => {
       this.$buefy.toast.open({
         message: this.$t("common.success"),
-        type: "is-primary",
+        type: "is-success",
         position: "is-top",
         queue: false,
       });
@@ -112,47 +107,56 @@ export default {
 </script>
 
 <style scoped>
-.modal-card-head,
-.modal-card-foot {
-  border-radius: 0.25rem;
+.sharing-modal {
+  max-width: 500px;
+  width: calc(100vw - 2rem);
+  margin: auto;
 }
-.modal-card-head {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
-}
-.modal-card-foot {
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
+
+.qrcode-frame {
+  display: inline-flex;
+  padding: 12px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid var(--va-border);
+  box-shadow: var(--va-shadow-sm);
+  margin-bottom: 0.75rem;
 }
 
 .qrcode {
-  min-height: 300px;
-  min-width: 300px;
+  display: block;
+  min-height: 240px;
+  min-width: 240px;
   max-width: 100%;
 }
 
-.sharing-tags {
-  position: relative;
+.sharing-desc {
+  font-weight: 600;
+  color: var(--va-text);
+  margin-bottom: 0.75rem;
+  word-break: break-word;
 }
 
-.tag-cover {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.6) !important;
-  pointer-events: none;
-}
-
-.tag-cover-text {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
+.sharing-link-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  color: #fff;
-  pointer-events: none;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: var(--va-radius-sm);
+  background: var(--va-surface-subtle);
+  border: 1px solid var(--va-border);
+  text-align: left;
+}
+
+.sharing-link-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  background: transparent !important;
+  padding: 0;
 }
 
 @media screen and (max-width: 480px) {
@@ -161,6 +165,11 @@ export default {
     min-width: 0;
     width: 100% !important;
     height: auto !important;
+  }
+
+  .sharing-link-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>

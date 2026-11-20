@@ -1,377 +1,400 @@
 <template>
-  <div class="modal-card modal-setting" style="max-width: 800px; margin: auto">
+  <div class="modal-card modal-setting">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("common.setting") }}</p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section class="modal-card-body rules">
-      <b-field label="GFWList" horizontal custom-class="modal-setting-label" style="position: relative"><span>{{
-        $t("common.latest") }}:</span>
-        <a href="https://github.com/v2rayA/dist-v2ray-rules-dat/releases" target="_blank" class="is-link">{{
-          remoteGFWListVersion }}</a><span>{{ $t("common.local") }}:</span>
-        <b-tooltip v-if="dayjs(localGFWListVersion).isAfter(dayjs(remoteGFWListVersion))"
-          :label="$t('setting.messages.gfwlist')" position="is-bottom" type="is-danger" dashed multilined animated>
-          {{ localGFWListVersion ? localGFWListVersion : $t("common.none") }}
-        </b-tooltip>
-        <span v-else>{{ localGFWListVersion ? localGFWListVersion : $t("common.none") }}</span>
-        <b-button size="is-small" style="position: relative; top: -2px; text-decoration: none; font-weight: bold"
-          @click="handleClickUpdateGFWList">{{ $t("operations.update") }}
-        </b-button>
-      </b-field>
-      <hr class="dropdown-divider" style="margin: 1.25rem 0 1.25rem" />
-      <fieldset class="novice-mode-field">
-        <legend class="novice-mode-field__title">{{ $t("setting.noviceMode") }}</legend>
-        <b-checkbox v-model="novice" :native-value="true">
-          {{ $t("setting.noviceModeDesc") }}
-        </b-checkbox>
-      </fieldset>
-      <b-field label-position="on-border" class="with-icon-alert">
-        <template slot="label">
-          {{ $t("setting.transparentProxy") }}
-          <b-tooltip type="is-dark" :label="$t('setting.messages.transparentProxy')" multilined position="is-right">
-            <b-icon size="is-small" icon="help-circle-outline"
-              style="position: relative; top: 2px; right: 3px; font-weight: normal" />
-          </b-tooltip>
-        </template>
-        <b-select v-model="transparent" expanded>
-          <option value="close">{{ $t("setting.options.off") }}</option>
-          <option value="proxy">
-            {{ $t("setting.options.on") }}: {{ $t("setting.options.global") }}
-          </option>
-          <option value="whitelist">
-            {{ $t("setting.options.on") }}:
-            {{ $t("setting.options.whitelistCn") }}
-          </option>
-          <option value="gfwlist">
-            {{ $t("setting.options.on") }}: {{ $t("setting.options.gfwlist") }}
-          </option>
-          <option value="pac">
-            {{ $t("setting.options.on") }}:
-            {{ $t("setting.options.sameAsPacMode") }}
-          </option>
-        </b-select>
-        <b-checkbox-button v-show="!lite && !novice" v-model="ipforward" :native-value="true"
-          style="position: relative; left: -1px">{{
-            $t("setting.ipForwardOn") }}
-        </b-checkbox-button>
-        <b-checkbox-button v-model="portSharing" :native-value="true" style="position: relative; left: -1px">{{
-          $t("setting.portSharingOn") }}
-        </b-checkbox-button>
-      </b-field>
+      <b-tabs v-model="activeTab" class="setting-tabs" :animated="false">
+        <b-tab-item :label="$t('settingTabs.general')" icon="shield-check-outline">
+          <fieldset class="novice-mode-field">
+            <legend class="novice-mode-field__title">{{ $t("setting.noviceMode") }}</legend>
+            <b-checkbox v-model="novice" :native-value="true">
+              {{ $t("setting.noviceModeDesc") }}
+            </b-checkbox>
+          </fieldset>
 
-      <b-field v-show="transparent !== 'close' && !novice" label-position="on-border">
-        <template slot="label">
-          {{ $t("setting.transparentType") }}
-          <b-tooltip type="is-dark" multilined :label="$t('setting.messages.transparentType')" position="is-right">
-            <b-icon size="is-small" icon="help-circle-outline"
-              style="position: relative; top: 2px; right: 3px; font-weight: normal" />
-          </b-tooltip>
-        </template>
-        <b-select v-model="transparentType" expanded>
-          <option v-show="!lite && os === 'linux'" value="redirect">redirect</option>
-          <option v-show="!lite && os === 'linux'" value="tproxy">tproxy</option>
-          <option v-show="!lite" value="tun" :disabled="!tinytunSupported">
-            tun (TinyTun){{ !tinytunSupported ? ' — ' + $t("setting.options.notIntegrated") : '' }}
-          </option>
-          <option v-show="!(isRoot && (os === 'linux' || os === 'darwin'))" value="system_proxy">system proxy</option>
-        </b-select>
-
-        <template v-if="transparentType == 'tproxy'">
-          <b-button style="
-              margin-left: 0;
-              border-bottom-left-radius: 0;
-              border-top-left-radius: 0;
-              color: rgba(0, 0, 0, 0.75);
-            " outlined @click="handleClickTproxyWhiteIpGroups">{{ $t("operations.tproxyWhiteIpGroups") }}
-          </b-button>
-        </template>
-
-        <template v-if="transparentType === 'tun' && tinytunSupported">
-          <b-tooltip type="is-dark" multilined :label="$t('setting.messages.tunAutoRoute')" position="is-top">
-            <b-checkbox-button v-model="tunAutoRoute" :native-value="true" style="position: relative; left: -1px">
-              {{ $t("setting.tunAutoRoute") }}
+          <b-field label-position="on-border" class="with-icon-alert">
+            <template slot="label">
+              {{ $t("setting.transparentProxy") }}
+              <b-tooltip type="is-dark" :label="$t('setting.messages.transparentProxy')" multilined position="is-right">
+                <b-icon size="is-small" icon="help-circle-outline" class="setting-help-icon" />
+              </b-tooltip>
+            </template>
+            <b-select v-model="transparent" expanded>
+              <option value="close">{{ $t("setting.options.off") }}</option>
+              <option value="proxy">
+                {{ $t("setting.options.on") }}: {{ $t("setting.options.global") }}
+              </option>
+              <option value="whitelist">
+                {{ $t("setting.options.on") }}: {{ $t("setting.options.whitelistCn") }}
+              </option>
+              <option value="gfwlist">
+                {{ $t("setting.options.on") }}: {{ $t("setting.options.gfwlist") }}
+              </option>
+              <option value="pac">
+                {{ $t("setting.options.on") }}: {{ $t("setting.options.sameAsPacMode") }}
+              </option>
+            </b-select>
+            <b-checkbox-button v-show="!lite && !novice" v-model="ipforward" :native-value="true" style="position: relative; left: -1px">
+              {{ $t("setting.ipForwardOn") }}
             </b-checkbox-button>
-          </b-tooltip>
-          <b-button v-if="!tunAutoRoute" style="
-              margin-left: 0;
-              border-bottom-left-radius: 0;
-              border-top-left-radius: 0;
-              color: rgba(0, 0, 0, 0.75);
-            " outlined @click="handleClickTunRouteScript">{{ $t("operations.configureTunRouteScript") }}
-          </b-button>
-        </template>
-      </b-field>
+            <b-checkbox-button v-model="portSharing" :native-value="true" style="position: relative; left: -1px">
+              {{ $t("setting.portSharingOn") }}
+            </b-checkbox-button>
+          </b-field>
 
-      <b-field v-show="transparent !== 'close' && !novice && (transparentType === 'tproxy' || transparentType === 'redirect')"
-        label-position="on-border">
-        <template slot="label">
-          {{ $t("setting.tproxyExcludedInterfaces") }}
-          <b-tooltip type="is-dark" multilined :label="$t('setting.messages.tproxyExcludedInterfaces')" position="is-right">
-            <b-icon size="is-small" icon="help-circle-outline"
-              style="position: relative; top: 2px; right: 3px; font-weight: normal" />
-          </b-tooltip>
-        </template>
-        <b-input v-model="tproxyExcludedInterfaces" expanded placeholder="docker*, veth*, wg*, ppp*, br-*" />
-      </b-field>
+          <b-field v-show="transparent !== 'close' && !novice" label-position="on-border">
+            <template slot="label">
+              {{ $t("setting.transparentType") }}
+              <b-tooltip type="is-dark" multilined :label="$t('setting.messages.transparentType')" position="is-right">
+                <b-icon size="is-small" icon="help-circle-outline" class="setting-help-icon" />
+              </b-tooltip>
+            </template>
+            <b-select v-model="transparentType" expanded>
+              <option v-show="!lite && os === 'linux'" value="redirect">redirect</option>
+              <option v-show="!lite && os === 'linux'" value="tproxy">tproxy</option>
+              <option v-show="!lite" value="tun" :disabled="!tinytunSupported">
+                tun (TinyTun){{ !tinytunSupported ? " — " + $t("setting.options.notIntegrated") : "" }}
+              </option>
+              <option v-show="!(isRoot && (os === 'linux' || os === 'darwin'))" value="system_proxy">system proxy</option>
+            </b-select>
 
-      <b-field v-show="transparent !== 'close' && !novice && transparentType === 'tun' && tinytunSupported"
-        label-position="on-border">
-        <template slot="label">
-          {{ $t("setting.tunBypassInterfaces") }}
-        </template>
-        <div style="width: 100%; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap">
-          <b-dropdown
-            v-model="tunBypassInterfacesList"
-            multiple
-            scrollable
-            max-height="260"
-            :disabled="availableInterfaces.filter(i => !i.isLoopback).length === 0"
-            style="flex-shrink: 0"
-          >
-            <template #trigger>
-              <b-button icon-right="menu-down" style="min-width: 160px; justify-content: space-between">
-                <span v-if="tunBypassInterfacesList.length === 0" style="color: #aaa">
-                  {{ $t("setting.tunBypassSelectPlaceholder") }}
-                </span>
-                <span v-else>
-                  {{ $t("setting.tunBypassSelected", { n: tunBypassInterfacesList.length }) }}
-                </span>
+            <template v-if="transparentType == 'tproxy'">
+              <b-button class="va-attached-btn" @click="handleClickTproxyWhiteIpGroups">
+                {{ $t("operations.tproxyWhiteIpGroups") }}
               </b-button>
             </template>
-            <b-dropdown-item
-              v-for="iface in availableInterfaces.filter(i => !i.isLoopback)"
-              :key="iface.name"
-              :value="iface.name"
-            >
-              <div>
-                <span style="font-weight: 500">{{ iface.name }}</span>
-                <div v-if="iface.addrs && iface.addrs.length" style="font-size: 0.8em; color: #888; margin-top: 1px">
-                  {{ iface.addrs.join(', ') }}
-                </div>
-              </div>
-            </b-dropdown-item>
-          </b-dropdown>
-          <b-input
-            v-model="tunBypassCustom"
-            expanded
-            :placeholder="$t('setting.tunBypassCustomPlaceholder')"
-            style="flex: 1; min-width: 180px"
-          />
-        </div>
-      </b-field>
 
-      <b-field v-show="transparent !== 'close' && !novice && transparentType === 'tun' && tinytunSupported && os === 'linux'"
-        :label="$t('setting.tunProcessBackend')" label-position="on-border">
-        <template slot="label">
-          {{ $t("setting.tunProcessBackend") }}
-          <b-tooltip type="is-dark" multilined :label="$t('setting.messages.tunProcessBackend')" position="is-right">
-            <b-icon size="is-small" icon="help-circle-outline"
-              style="position: relative; top: 2px; right: 3px; font-weight: normal" />
-          </b-tooltip>
-        </template>
-        <b-select v-model="tunProcessBackend" expanded>
-          <option value="">{{ $t("setting.options.tunBackendTun") }}</option>
-          <option value="ebpf">{{ $t("setting.options.tunBackendEbpf") }}</option>
-        </b-select>
-      </b-field>
+            <template v-if="transparentType === 'tun' && tinytunSupported">
+              <b-tooltip type="is-dark" multilined :label="$t('setting.messages.tunAutoRoute')" position="is-top">
+                <b-checkbox-button v-model="tunAutoRoute" :native-value="true" style="position: relative; left: -1px">
+                  {{ $t("setting.tunAutoRoute") }}
+                </b-checkbox-button>
+              </b-tooltip>
+              <b-button v-if="!tunAutoRoute" class="va-attached-btn" @click="handleClickTunRouteScript">
+                {{ $t("operations.configureTunRouteScript") }}
+              </b-button>
+            </template>
+          </b-field>
 
-      <b-field v-show="transparent !== 'close' && !novice && transparentType === 'tun' && tinytunSupported"
-        label-position="on-border">
-        <template slot="label">
-          {{ $t("setting.tunExcludeProcesses") }}
-          <b-tooltip type="is-dark" multilined :label="$t('setting.messages.tunExcludeProcesses')" position="is-right">
-            <b-icon size="is-small" icon="help-circle-outline"
-              style="position: relative; top: 2px; right: 3px; font-weight: normal" />
-          </b-tooltip>
-        </template>
-        <b-input :value="tunExcludeProcesses" readonly expanded
-          :placeholder="$t('tinytun.processExclude.placeholder')" />
-        <b-button style="
-            margin-left: 0;
-            border-bottom-left-radius: 0;
-            border-top-left-radius: 0;
-            color: rgba(0, 0, 0, 0.75);
-          " outlined @click="handleClickTunExcludeProcesses">{{ $t("operations.configure") }}
-        </b-button>
-      </b-field>
+          <b-field v-show="transparent !== 'close' && !novice && (transparentType === 'tproxy' || transparentType === 'redirect')" label-position="on-border">
+            <template slot="label">
+              {{ $t("setting.tproxyExcludedInterfaces") }}
+              <b-tooltip type="is-dark" multilined :label="$t('setting.messages.tproxyExcludedInterfaces')" position="is-right">
+                <b-icon size="is-small" icon="help-circle-outline" class="setting-help-icon" />
+              </b-tooltip>
+            </template>
+            <b-input v-model="tproxyExcludedInterfaces" expanded placeholder="docker*, veth*, wg*, ppp*, br-*" />
+          </b-field>
 
-      <b-field label-position="on-border">
-        <template slot="label">
-          {{ $t("setting.pacMode") }}
-          <b-tooltip type="is-dark" :label="$t('setting.messages.pacMode')" multilined position="is-right">
-            <b-icon size="is-small" icon="help-circle-outline"
-              style="position: relative; top: 2px; right: 3px; font-weight: normal" />
-          </b-tooltip>
-        </template>
-        <b-select v-model="pacMode" expanded style="flex-shrink: 0">
-          <option value="whitelist">
-            {{ $t("setting.options.whitelistCn") }}
-          </option>
-          <option value="gfwlist">{{ $t("setting.options.gfwlist") }}</option>
-          <!--          <option value="custom">{{-->
-          <!--            $t("setting.options.customRouting")-->
-          <!--          }}</option>-->
-          <option value="routingA">RoutingA</option>
-        </b-select>
-        <template v-if="pacMode === 'custom'">
-          <b-button type="is-primary" style="
-              margin-left: 0;
-              border-bottom-left-radius: 0;
-              border-top-left-radius: 0;
-              color: rgba(0, 0, 0, 0.75);
-            " outlined @click="handleClickConfigurePac">{{ $t("operations.configure") }}
-          </b-button>
-        </template>
-        <template v-if="pacMode === 'routingA'">
-          <b-button style="
-              margin-left: 0;
-              border-bottom-left-radius: 0;
-              border-top-left-radius: 0;
-              color: rgba(0, 0, 0, 0.75);
-            " outlined @click="handleClickConfigureRoutingA">{{ $t("operations.configure") }}
-          </b-button>
-        </template>
-        <p></p>
-      </b-field>
+          <b-field v-show="transparent !== 'close' && !novice && transparentType === 'tun' && tinytunSupported" label-position="on-border">
+            <template slot="label">
+              {{ $t("setting.tunBypassInterfaces") }}
+            </template>
+            <div style="width: 100%; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap">
+              <b-dropdown
+                v-model="tunBypassInterfacesList"
+                multiple
+                scrollable
+                max-height="260"
+                :disabled="availableInterfaces.filter((i) => !i.isLoopback).length === 0"
+                style="flex-shrink: 0"
+              >
+                <template #trigger>
+                  <b-button icon-right="menu-down" style="min-width: 160px; justify-content: space-between">
+                    <span v-if="tunBypassInterfacesList.length === 0" class="muted-placeholder">
+                      {{ $t("setting.tunBypassSelectPlaceholder") }}
+                    </span>
+                    <span v-else>
+                      {{ $t("setting.tunBypassSelected", { n: tunBypassInterfacesList.length }) }}
+                    </span>
+                  </b-button>
+                </template>
+                <b-dropdown-item
+                  v-for="iface in availableInterfaces.filter((i) => !i.isLoopback)"
+                  :key="iface.name"
+                  :value="iface.name"
+                >
+                  <div>
+                    <span style="font-weight: 500">{{ iface.name }}</span>
+                    <div v-if="iface.addrs && iface.addrs.length" class="iface-addrs">
+                      {{ iface.addrs.join(", ") }}
+                    </div>
+                  </div>
+                </b-dropdown-item>
+              </b-dropdown>
+              <b-input
+                v-model="tunBypassCustom"
+                expanded
+                :placeholder="$t('setting.tunBypassCustomPlaceholder')"
+                style="flex: 1; min-width: 180px"
+              />
+            </div>
+          </b-field>
 
-      <b-field label-position="on-border">
-        <template slot="label">
-          TCPFastOpen
-          <b-tooltip type="is-dark" :label="$t('setting.messages.tcpFastOpen')" multilined position="is-right">
-            <b-icon size="is-small" icon="help-circle-outline"
-              style="position: relative; top: 2px; right: 3px; font-weight: normal" />
-          </b-tooltip>
-        </template>
-        <b-select v-model="tcpFastOpen" expanded>
-          <option value="default">{{ $t("setting.options.default") }}</option>
-          <option value="yes">{{ $t("setting.options.on") }}</option>
-          <option value="no">{{ $t("setting.options.off") }}</option>
-        </b-select>
-      </b-field>
+          <b-field
+            v-show="transparent !== 'close' && !novice && transparentType === 'tun' && tinytunSupported && os === 'linux'"
+            :label="$t('setting.tunProcessBackend')"
+            label-position="on-border"
+          >
+            <template slot="label">
+              {{ $t("setting.tunProcessBackend") }}
+              <b-tooltip type="is-dark" multilined :label="$t('setting.messages.tunProcessBackend')" position="is-right">
+                <b-icon size="is-small" icon="help-circle-outline" class="setting-help-icon" />
+              </b-tooltip>
+            </template>
+            <b-select v-model="tunProcessBackend" expanded>
+              <option value="">{{ $t("setting.options.tunBackendTun") }}</option>
+              <option value="ebpf">{{ $t("setting.options.tunBackendEbpf") }}</option>
+            </b-select>
+          </b-field>
 
-      <b-field label-position="on-border">
-        <template slot="label">
-          {{ $t("setting.logLevel") }}
-        </template>
-        <b-select v-model="logLevel" expanded>
-          <option value="trace">{{ $t("setting.options.trace") }}</option>
-          <option value="debug">{{ $t("setting.options.debug") }}</option>
-          <option value="info">{{ $t("setting.options.info") }}</option>
-          <option value="warn">{{ $t("setting.options.warn") }}</option>
-          <option value="error">{{ $t("setting.options.error") }}</option>
-        </b-select>
-      </b-field>
+          <b-field v-show="transparent !== 'close' && !novice && transparentType === 'tun' && tinytunSupported" label-position="on-border">
+            <template slot="label">
+              {{ $t("setting.tunExcludeProcesses") }}
+              <b-tooltip type="is-dark" multilined :label="$t('setting.messages.tunExcludeProcesses')" position="is-right">
+                <b-icon size="is-small" icon="help-circle-outline" class="setting-help-icon" />
+              </b-tooltip>
+            </template>
+            <b-input :value="tunExcludeProcesses" readonly expanded :placeholder="$t('tinytun.processExclude.placeholder')" />
+            <b-button class="va-attached-btn" @click="handleClickTunExcludeProcesses">
+              {{ $t("operations.configure") }}
+            </b-button>
+          </b-field>
+        </b-tab-item>
 
-      <b-field label-position="on-border">
-        <template slot="label">
-          {{ $t("setting.inboundSniffing") }}
-          <b-tooltip type="is-dark" :label="$t('setting.messages.inboundSniffing')" multilined position="is-right">
-            <b-icon size="is-small" icon="help-circle-outline"
-              style="position: relative; top: 2px; right: 3px; font-weight: normal" />
-          </b-tooltip>
-        </template>
-        <b-select v-model="inboundSniffing" expanded>
-          <option value="disable">{{ $t("setting.options.off") }}</option>
-          <option value="http,tls">Http + TLS</option>
-          <option value="http,tls,quic">Http + TLS + Quic</option>
-        </b-select>
-        <template v-if="inboundSniffing != 'disable'">
-          <b-button style="
-              margin-left: 0;
-              border-radius: 0px;
-              color: rgba(0, 0, 0, 0.75);
-            " outlined @click="handleClickDomainsExcluded">{{ $t("operations.domainsExcluded") }}
-          </b-button>
-          <b-checkbox-button v-model="routeOnly" :native-value="true" style="position: relative; left: -1px;">
-            RouteOnly
-          </b-checkbox-button>
-        </template>
-      </b-field>
+        <b-tab-item :label="$t('settingTabs.routing')" icon="routes">
+          <b-field label-position="on-border">
+            <template slot="label">
+              {{ $t("setting.pacMode") }}
+              <b-tooltip type="is-dark" :label="$t('setting.messages.pacMode')" multilined position="is-right">
+                <b-icon size="is-small" icon="help-circle-outline" class="setting-help-icon" />
+              </b-tooltip>
+            </template>
+            <b-select v-model="pacMode" expanded style="flex-shrink: 0">
+              <option value="whitelist">{{ $t("setting.options.whitelistCn") }}</option>
+              <option value="gfwlist">{{ $t("setting.options.gfwlist") }}</option>
+              <option value="routingA">RoutingA</option>
+            </b-select>
+            <template v-if="pacMode === 'custom'">
+              <b-button class="va-attached-btn" @click="handleClickConfigurePac">
+                {{ $t("operations.configure") }}
+              </b-button>
+            </template>
+            <template v-if="pacMode === 'routingA'">
+              <b-button class="va-attached-btn" @click="handleClickConfigureRoutingA">
+                {{ $t("operations.configure") }}
+              </b-button>
+            </template>
+          </b-field>
 
-      <b-field label-position="on-border" class="with-icon-alert">
-        <template slot="label">
-          {{ $t("setting.mux") }}
-          <b-tooltip type="is-dark" :label="$t('setting.messages.mux')" multilined position="is-right">
-            <b-icon size="is-small" icon="help-circle-outline"
-              style="position: relative; top: 2px; right: 3px; font-weight: normal" />
-          </b-tooltip>
-        </template>
-        <b-select v-model="muxOn" expanded style="flex: 1">
-          <option value="no">{{ $t("setting.options.off") }}</option>
-          <option value="yes">{{ $t("setting.options.on") }}</option>
-        </b-select>
-        <cus-b-input v-if="muxOn === 'yes'" ref="muxinput" v-model="mux" :placeholder="$t('setting.concurrency')"
-          custom-class="no-shadow" type="number" min="1" max="1024" validation-icon="alert-circle-outline"
-          style="flex: 1" />
-      </b-field>
+          <b-field label-position="on-border">
+            <template slot="label">
+              {{ $t("setting.inboundSniffing") }}
+              <b-tooltip type="is-dark" :label="$t('setting.messages.inboundSniffing')" multilined position="is-right">
+                <b-icon size="is-small" icon="help-circle-outline" class="setting-help-icon" />
+              </b-tooltip>
+            </template>
+            <b-select v-model="inboundSniffing" expanded>
+              <option value="disable">{{ $t("setting.options.off") }}</option>
+              <option value="http,tls">Http + TLS</option>
+              <option value="http,tls,quic">Http + TLS + Quic</option>
+            </b-select>
+            <template v-if="inboundSniffing != 'disable'">
+              <b-button class="va-attached-btn va-attached-btn--middle" @click="handleClickDomainsExcluded">
+                {{ $t("operations.domainsExcluded") }}
+              </b-button>
+              <b-checkbox-button v-model="routeOnly" :native-value="true" style="position: relative; left: -1px">
+                RouteOnly
+              </b-checkbox-button>
+            </template>
+          </b-field>
 
+          <b-field label-position="on-border">
+            <template slot="label">
+              TCPFastOpen
+              <b-tooltip type="is-dark" :label="$t('setting.messages.tcpFastOpen')" multilined position="is-right">
+                <b-icon size="is-small" icon="help-circle-outline" class="setting-help-icon" />
+              </b-tooltip>
+            </template>
+            <b-select v-model="tcpFastOpen" expanded>
+              <option value="default">{{ $t("setting.options.default") }}</option>
+              <option value="yes">{{ $t("setting.options.on") }}</option>
+              <option value="no">{{ $t("setting.options.off") }}</option>
+            </b-select>
+          </b-field>
 
-      <b-field v-show="pacMode === 'gfwlist' || transparent === 'gfwlist'" :label="$t('setting.autoUpdateGfwlist')"
-        label-position="on-border">
-        <b-select v-model="pacAutoUpdateMode" expanded>
-          <option value="none">{{ $t("setting.options.off") }}</option>
-          <option value="auto_update">
-            {{ $t("setting.options.updateGfwlistWhenStart") }}
-          </option>
-          <option value="auto_update_at_intervals">
-            {{ $t("setting.options.updateGfwlistAtIntervals") }}
-          </option>
-        </b-select>
-        <cus-b-input v-if="pacAutoUpdateMode === 'auto_update_at_intervals'" ref="autoUpdatePacInput"
-          v-model="pacAutoUpdateIntervalHour" custom-class="no-shadow" type="number" min="1"
-          validation-icon="alert-circle-outline" style="flex: 1" />
-      </b-field>
-      <b-field :label="$t('setting.autoUpdateSub')" label-position="on-border">
-        <b-select v-model="subscriptionAutoUpdateMode" expanded>
-          <option value="none">{{ $t("setting.options.off") }}</option>
-          <option value="auto_update">
-            {{ $t("setting.options.updateSubWhenStart") }}
-          </option>
-          <option value="auto_update_at_intervals">
-            {{ $t("setting.options.updateSubAtIntervals") }}
-          </option>
-        </b-select>
-        <cus-b-input v-if="subscriptionAutoUpdateMode === 'auto_update_at_intervals'" ref="autoUpdateSubInput"
-          v-model="subscriptionAutoUpdateIntervalHour" custom-class="no-shadow" type="number" min="1"
-          validation-icon="alert-circle-outline" style="flex: 1" />
-      </b-field>
-      <b-field :label="$t('setting.preferModeWhenUpdate')" label-position="on-border">
-        <b-select v-model="proxyModeWhenSubscribe" expanded>
-          <option value="direct">
-            {{
-              transparent === "close" || lite
-                ? $t("setting.options.direct")
-                : $t("setting.options.dependTransparentMode")
-            }}
-          </option>
-          <option value="proxy">{{ $t("setting.options.global") }}</option>
-          <option value="pac">{{ $t("setting.options.pac") }}</option>
-        </b-select>
-      </b-field>
+          <b-field label-position="on-border" class="with-icon-alert">
+            <template slot="label">
+              {{ $t("setting.mux") }}
+              <b-tooltip type="is-dark" :label="$t('setting.messages.mux')" multilined position="is-right">
+                <b-icon size="is-small" icon="help-circle-outline" class="setting-help-icon" />
+              </b-tooltip>
+            </template>
+            <b-select v-model="muxOn" expanded style="flex: 1">
+              <option value="no">{{ $t("setting.options.off") }}</option>
+              <option value="yes">{{ $t("setting.options.on") }}</option>
+            </b-select>
+            <cus-b-input
+              v-if="muxOn === 'yes'"
+              ref="muxinput"
+              v-model="mux"
+              :placeholder="$t('setting.concurrency')"
+              custom-class="no-shadow"
+              type="number"
+              min="1"
+              max="1024"
+              validation-icon="alert-circle-outline"
+              style="flex: 1"
+            />
+          </b-field>
+
+          <b-field label-position="on-border">
+            <template slot="label">
+              {{ $t("setting.logLevel") }}
+            </template>
+            <b-select v-model="logLevel" expanded>
+              <option value="trace">{{ $t("setting.options.trace") }}</option>
+              <option value="debug">{{ $t("setting.options.debug") }}</option>
+              <option value="info">{{ $t("setting.options.info") }}</option>
+              <option value="warn">{{ $t("setting.options.warn") }}</option>
+              <option value="error">{{ $t("setting.options.error") }}</option>
+            </b-select>
+          </b-field>
+        </b-tab-item>
+
+        <b-tab-item :label="$t('settingTabs.updates')" icon="update">
+          <div class="gfwlist-banner">
+            <div class="gfwlist-banner__info">
+              <strong>GFWList</strong>
+              <span class="gfwlist-meta">
+                {{ $t("common.latest") }}:
+                <a
+                  href="https://github.com/v2rayA/dist-v2ray-rules-dat/releases"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="is-link"
+                >
+                  {{ remoteGFWListVersion }}
+                </a>
+                · {{ $t("common.local") }}:
+                <b-tooltip
+                  v-if="dayjs(localGFWListVersion).isAfter(dayjs(remoteGFWListVersion))"
+                  :label="$t('setting.messages.gfwlist')"
+                  position="is-bottom"
+                  type="is-danger"
+                  dashed
+                  multilined
+                  animated
+                >
+                  {{ localGFWListVersion ? localGFWListVersion : $t("common.none") }}
+                </b-tooltip>
+                <span v-else>{{ localGFWListVersion ? localGFWListVersion : $t("common.none") }}</span>
+              </span>
+            </div>
+            <b-button size="is-small" type="is-primary" outlined icon-left="sync" @click="handleClickUpdateGFWList">
+              {{ $t("operations.update") }}
+            </b-button>
+          </div>
+
+          <b-field
+            v-show="pacMode === 'gfwlist' || transparent === 'gfwlist'"
+            :label="$t('setting.autoUpdateGfwlist')"
+            label-position="on-border"
+          >
+            <b-select v-model="pacAutoUpdateMode" expanded>
+              <option value="none">{{ $t("setting.options.off") }}</option>
+              <option value="auto_update">{{ $t("setting.options.updateGfwlistWhenStart") }}</option>
+              <option value="auto_update_at_intervals">{{ $t("setting.options.updateGfwlistAtIntervals") }}</option>
+            </b-select>
+            <cus-b-input
+              v-if="pacAutoUpdateMode === 'auto_update_at_intervals'"
+              ref="autoUpdatePacInput"
+              v-model="pacAutoUpdateIntervalHour"
+              custom-class="no-shadow"
+              type="number"
+              min="1"
+              validation-icon="alert-circle-outline"
+              style="flex: 1"
+            />
+          </b-field>
+
+          <b-field :label="$t('setting.autoUpdateSub')" label-position="on-border">
+            <b-select v-model="subscriptionAutoUpdateMode" expanded>
+              <option value="none">{{ $t("setting.options.off") }}</option>
+              <option value="auto_update">{{ $t("setting.options.updateSubWhenStart") }}</option>
+              <option value="auto_update_at_intervals">{{ $t("setting.options.updateSubAtIntervals") }}</option>
+            </b-select>
+            <cus-b-input
+              v-if="subscriptionAutoUpdateMode === 'auto_update_at_intervals'"
+              ref="autoUpdateSubInput"
+              v-model="subscriptionAutoUpdateIntervalHour"
+              custom-class="no-shadow"
+              type="number"
+              min="1"
+              validation-icon="alert-circle-outline"
+              style="flex: 1"
+            />
+          </b-field>
+
+          <b-field :label="$t('setting.preferModeWhenUpdate')" label-position="on-border">
+            <b-select v-model="proxyModeWhenSubscribe" expanded>
+              <option value="direct">
+                {{
+                  transparent === "close" || lite
+                    ? $t("setting.options.direct")
+                    : $t("setting.options.dependTransparentMode")
+                }}
+              </option>
+              <option value="proxy">{{ $t("setting.options.global") }}</option>
+              <option value="pac">{{ $t("setting.options.pac") }}</option>
+            </b-select>
+          </b-field>
+        </b-tab-item>
+
+        <b-tab-item :label="$t('settingTabs.tools')" icon="tune-variant">
+          <p class="setting-tools-desc">{{ $t("settingTabs.toolsDesc") }}</p>
+          <div class="setting-tools-grid">
+            <button type="button" class="setting-tool-tile" @click="$emit('clickPorts')">
+              <i class="mdi mdi-lan-connect setting-tool-tile__icon" aria-hidden="true"></i>
+              <span>{{ $t("customAddressPort.title") }}</span>
+            </button>
+            <button type="button" class="setting-tool-tile" @click="handleClickDnsSetting">
+              <i class="mdi mdi-dns-outline setting-tool-tile__icon" aria-hidden="true"></i>
+              <span>{{ $t("dns.title") }}</span>
+            </button>
+            <button type="button" class="setting-tool-tile" @click="handleClickRoutingRules">
+              <i class="mdi mdi-directions-fork setting-tool-tile__icon" aria-hidden="true"></i>
+              <span>{{ $t("routingRules.title") }}</span>
+            </button>
+            <button type="button" class="setting-tool-tile" @click="handleClickBackup">
+              <i class="mdi mdi-backup-restore setting-tool-tile__icon" aria-hidden="true"></i>
+              <span>{{ $t("backup.title") }}</span>
+            </button>
+            <button type="button" class="setting-tool-tile" @click="handleClickDiagnose">
+              <i class="mdi mdi-stethoscope setting-tool-tile__icon" aria-hidden="true"></i>
+              <span>{{ $t("diagnose.title") }}</span>
+            </button>
+            <button type="button" class="setting-tool-tile" @click="handleClickNotice">
+              <i class="mdi mdi-bell-outline setting-tool-tile__icon" aria-hidden="true"></i>
+              <span>
+                {{ $t("notice.title") }}
+                <b-tag v-if="unreadNotices > 0" type="is-danger" size="is-small" rounded style="margin-left: 4px">
+                  {{ unreadNotices }}
+                </b-tag>
+              </span>
+            </button>
+          </div>
+        </b-tab-item>
+      </b-tabs>
     </section>
     <footer class="modal-card-foot modal-setting-footer">
-      <div class="modal-setting-footer__secondary">
-        <button class="button" type="button" @click="$emit('clickPorts')">
-          {{ $t("customAddressPort.title") }}
-        </button>
-        <button class="button" type="button" @click="handleClickDnsSetting">
-          {{ $t("dns.title") }}
-        </button>
-        <button class="button" type="button" @click="handleClickRoutingRules">
-          {{ $t("routingRules.title") }}
-        </button>
-        <button class="button" type="button" @click="handleClickBackup">
-          {{ $t("backup.title") }}
-        </button>
-        <button class="button" type="button" @click="handleClickDiagnose">
-          {{ $t("diagnose.title") }}
-        </button>
-        <button class="button" type="button" @click="handleClickNotice">
-          {{ $t("notice.title") }}
-          <b-tag v-if="unreadNotices > 0" type="is-danger" size="is-small" style="margin-left: 4px">
-            {{ unreadNotices }}
-          </b-tag>
-        </button>
-      </div>
       <div class="modal-setting-footer__primary">
         <button class="button" type="button" @click="$parent.close()">
           {{ $t("operations.cancel") }}
@@ -411,6 +434,7 @@ export default {
   name: "ModalSetting",
   components: { BCheckboxButton, BSelect, BButton, CusBInput },
   data: () => ({
+    activeTab: 0,
     novice: false,
     proxyModeWhenSubscribe: "direct",
     unreadNotices: 0,
@@ -658,8 +682,8 @@ export default {
         .then((res) => {
           handleResponse(res, this, () => {
             this.$buefy.toast.open({
-              message: res.data.code,
-              type: "is-primary",
+              message: this.$t("common.success"),
+              type: "is-success",
               position: "is-top",
               queue: false,
             });
@@ -673,6 +697,7 @@ export default {
             res.data.message.indexOf("invalid config") >= 0
           ) {
             // FIXME: tricky
+            this.$parent.$parent.runningState.status = "stopped";
             this.$parent.$parent.runningState.running = this.$t("common.notRunning");
           }
         })
@@ -692,19 +717,24 @@ export default {
       waitingConnected(request, 3 * 1000, cancelSource.cancel);
     },
     handleClickSubmit() {
-      if (this.muxOn === "yes" && !this.$refs.muxinput.checkHtml5Validity()) {
+      if (this.muxOn === "yes" && this.$refs.muxinput && !this.$refs.muxinput.checkHtml5Validity()) {
+        this.activeTab = 1;
         return;
       }
       if (
         this.subscriptionAutoUpdateMode === "auto_update_at_intervals" &&
+        this.$refs.autoUpdateSubInput &&
         !this.$refs.autoUpdateSubInput.checkHtml5Validity()
       ) {
+        this.activeTab = 2;
         return;
       }
       if (
         this.pacAutoUpdateMode === "auto_update_at_intervals" &&
+        this.$refs.autoUpdatePacInput &&
         !this.$refs.autoUpdatePacInput.checkHtml5Validity()
       ) {
+        this.activeTab = 2;
         return;
       }
       console.log(apiRoot);
@@ -808,39 +838,103 @@ export default {
 
 <style lang="scss">
 .modal-setting > .rules {
-  height: 390px;
+  min-height: 320px;
+  max-height: 68vh;
   overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .flex-end {
   justify-content: flex-end !important;
 }
 
-.modal-setting-label {
-  width: 7em;
-  padding: 0 !important;
-  text-align: left !important;
+.setting-help-icon {
+  position: relative;
+  top: 2px;
+  right: 3px;
+  font-weight: normal;
 }
 
-.modal-setting-clockpicker {
-  .background {
-    display: unset;
-    background-color: rgba(10, 10, 10, 0.6) !important;
-  }
+.setting-tabs .tab-content {
+  padding: 1rem 0 0.25rem !important;
+  overflow: visible;
+}
 
-  .dropdown-menu {
-    position: fixed;
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate3d(-50%, -50%, 0);
-    right: unset !important;
-    z-index: 50 !important;
+.gfwlist-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.8rem 1rem;
+  margin-bottom: 1.1rem;
+  border-radius: var(--va-radius-sm);
+  background: var(--va-surface-subtle);
+  border: 1px solid var(--va-border);
+}
+
+.gfwlist-banner__info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.gfwlist-meta {
+  font-size: 0.84rem;
+  color: var(--va-text-muted);
+}
+
+.muted-placeholder {
+  color: var(--va-text-subtle);
+}
+
+.iface-addrs {
+  font-size: 0.8em;
+  color: var(--va-text-muted);
+  margin-top: 1px;
+}
+
+.setting-tools-desc {
+  font-size: 0.86rem;
+  color: var(--va-text-muted);
+  margin-bottom: 0.9rem;
+}
+
+.setting-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.setting-tool-tile {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.95rem 1rem;
+  border-radius: var(--va-radius-md);
+  border: 1px solid var(--va-border);
+  background: var(--va-surface-subtle);
+  color: var(--va-text);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    border-color: var(--va-primary);
+    background: var(--va-primary-soft);
+    color: var(--va-primary);
   }
 }
 
-//让"更新"按钮右对齐
-.modal-setting > .rules .field.is-horizontal .field-body .field:last-child {
-  text-align: right;
+.setting-tool-tile__icon {
+  font-size: 1.45rem;
+  color: var(--va-primary);
+  line-height: 1;
 }
 
 .modal-setting .no-shadow {
@@ -860,32 +954,22 @@ export default {
 }
 
 .modal-setting .control:first-of-type:not(:last-of-type) .select select {
-  border-radius: 4px 0 0 4px !important;
-}
-
-.left-border select {
-  border-radius: 4px 0 0 4px !important;
-}
-
-.right-extra-button {
-  border-radius: 0 4px 4px 0;
-}
-
-.no-border-radius {
-  border-radius: 0;
+  border-radius: 6px 0 0 6px !important;
 }
 
 .modal-setting {
-  width: 800px;
+  width: 780px;
   max-width: 95vw !important;
   max-height: calc(100vh - 2rem);
+  margin: auto;
 
   .novice-mode-field {
     min-width: 0;
     margin: 0 0 1.25rem;
     padding: 0.65rem 0.9rem 0.8rem;
-    border: 1px solid #dbdbdb;
-    border-radius: 4px;
+    border: 1px solid var(--va-border);
+    border-radius: var(--va-radius-sm);
+    background: var(--va-surface-subtle);
   }
 
   .novice-mode-field__title {
@@ -893,6 +977,7 @@ export default {
     font-size: 0.75rem;
     font-weight: 600;
     line-height: 1.2;
+    color: var(--va-text-muted);
   }
 
   .b-checkbox.checkbox {
@@ -902,21 +987,13 @@ export default {
 
 .modal-setting-footer {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
+  justify-content: flex-end !important;
+  gap: 0.5rem;
 
   .button {
     margin: 0 !important;
   }
-}
-
-.modal-setting-footer__secondary {
-  display: flex;
-  flex: 1 1 30rem;
-  flex-wrap: wrap;
-  gap: 0.5rem;
 }
 
 .modal-setting-footer__primary {
@@ -926,11 +1003,7 @@ export default {
   margin-left: auto;
 }
 
-body.theme-dark .modal-setting .novice-mode-field {
-  border-color: var(--md-surface-variant);
-}
-
-@media screen and (max-width: 600px) {
+@media screen and (max-width: 640px) {
   .modal-setting {
     width: calc(100vw - 1rem);
     max-width: calc(100vw - 1rem) !important;
@@ -938,17 +1011,18 @@ body.theme-dark .modal-setting .novice-mode-field {
   }
 
   .modal-setting > .rules {
-    min-height: 12rem;
+    min-height: 14rem;
+    max-height: 70vh;
+  }
+
+  .setting-tools-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .modal-setting .modal-card-head,
   .modal-setting .modal-card-body,
   .modal-setting .modal-card-foot {
-    padding: 0.75rem;
-  }
-
-  .modal-setting-footer__secondary {
-    flex-basis: 100%;
+    padding: 0.85rem;
   }
 
   .modal-setting-footer__primary {

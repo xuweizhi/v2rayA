@@ -1,7 +1,13 @@
 <template>
-  <div class="modal-card" style="max-width: 560px; margin: auto">
+  <div class="modal-card" style="max-width: 580px; width: calc(100vw - 2rem); margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("notice.title") }}</p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section class="modal-card-body">
       <b-message v-if="!notices.length" type="is-info">
@@ -23,6 +29,9 @@
         </div>
       </div>
     </section>
+    <footer class="modal-card-foot flex-end">
+      <b-button @click="$parent.close()">{{ $t("operations.close") }}</b-button>
+    </footer>
   </div>
 </template>
 
@@ -61,3 +70,32 @@ export default {
   },
 };
 </script>
+
+<style scoped>
+.notice-card {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--va-border);
+  box-shadow: none;
+}
+
+.notice-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.45rem;
+}
+
+.notice-time {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--va-text-muted);
+}
+
+.notice-content {
+  font-size: 0.9rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  margin-bottom: 0.4rem;
+}
+</style>

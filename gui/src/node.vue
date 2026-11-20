@@ -1,77 +1,81 @@
 <template>
   <section id="node-section" class="node-section container hero">
     <b-sidebar
-      v-show="connectedServerInfo.length"
-      :open="true"
-      class="node-status-sidebar-reduced"
-      :can-cancel="false"
-      @mouseenter.native="showSidebar = true"
-      @click.native="showSidebar = true"
-    >
-      <img src="@/assets/img/switch-menu.svg" width="36px" />
-    </b-sidebar>
-    <b-sidebar
-      :open="showSidebar"
+      :open.sync="showSidebar"
       type="is-light"
-      :fullheight="false"
-      :fullwidth="false"
-      :overlay="false"
-      :right="false"
+      :fullheight="true"
+      :overlay="true"
+      :right="true"
       class="node-status-sidebar"
-      :can-cancel="['outside']"
-      @close="showSidebar = false"
-      @mouseleave.native="showSidebar = false"
+      :can-cancel="['escape', 'outside']"
     >
-      <b-message
-        v-for="v of connectedServerInfo"
-        :key="connectedServerKey(v.which)"
-        :closable="false"
-        size="is-small"
-        :type="
-          v.info.alive
-            ? v.selected
-              ? 'is-primary'
-              : 'is-success'
-            : v.info.alive === null
-            ? 'is-light'
-            : 'is-danger'
-        "
-        @click.native="handleClickConnectedServer(v.which)"
-      >
-        <template #header>
-          <div class="node-status-card__header">
-            <span class="node-status-card__title">
-              {{ formatServerName(v.info) }}
-              <span
-                v-if="v.info.subscription_name"
-                class="node-status-card__subscription"
-              >
-                [{{ v.info.subscription_name }}]
-              </span>
-            </span>
-            <span
-              v-if="formatOutboundLabel(v.which)"
-              class="node-status-card__group"
-            >
-              {{ formatOutboundLabel(v.which) }}
-            </span>
-          </div>
-        </template>
-        <div v-if="v.showContent" class="node-status-card__body">
-          <p>{{ $t("server.protocol") }}: {{ v.info.net }}</p>
-          <p v-if="v.info.delay && v.info.delay < 99999">
-            {{ $t("server.latency") }}: {{ v.info.delay }}ms
-          </p>
-          <p v-if="!v.info.alive && v.info.last_seen_time">
-            {{ $t("server.lastSeenTime") }}:
-            {{ v.info.last_seen_time | unix2datetime }}
-          </p>
-          <p v-if="v.info.last_try_time">
-            {{ $t("server.lastTryTime") }}:
-            {{ v.info.last_try_time | unix2datetime }}
-          </p>
+      <div class="sidebar-drawer-head">
+        <div>
+          <p class="sidebar-drawer-title">{{ $t("nodeFilter.connectedNodesTitle") }}</p>
+          <p class="sidebar-drawer-hint">{{ $t("nodeFilter.locateHint") }}</p>
         </div>
-      </b-message>
+        <button
+          type="button"
+          class="delete"
+          :aria-label="$t('operations.close')"
+          @click="showSidebar = false"
+        ></button>
+      </div>
+      <div class="sidebar-drawer-body">
+        <div v-if="!connectedServerInfo.length" class="va-empty-state">
+          {{ $t("common.empty") }}
+        </div>
+        <b-message
+          v-for="v of connectedServerInfo"
+          :key="connectedServerKey(v.which)"
+          :closable="false"
+          size="is-small"
+          :type="
+            v.info.alive
+              ? v.selected
+                ? 'is-primary'
+                : 'is-success'
+              : v.info.alive === null
+              ? 'is-light'
+              : 'is-danger'
+          "
+          @click.native="handleClickConnectedServer(v.which)"
+        >
+          <template #header>
+            <div class="node-status-card__header">
+              <span class="node-status-card__title">
+                {{ formatServerName(v.info) }}
+                <span
+                  v-if="v.info.subscription_name"
+                  class="node-status-card__subscription"
+                >
+                  [{{ v.info.subscription_name }}]
+                </span>
+              </span>
+              <span
+                v-if="formatOutboundLabel(v.which)"
+                class="node-status-card__group"
+              >
+                {{ formatOutboundLabel(v.which) }}
+              </span>
+            </div>
+          </template>
+          <div v-if="v.showContent" class="node-status-card__body">
+            <p>{{ $t("server.protocol") }}: {{ v.info.net }}</p>
+            <p v-if="v.info.delay && v.info.delay < 99999">
+              {{ $t("server.latency") }}: {{ v.info.delay }}ms
+            </p>
+            <p v-if="!v.info.alive && v.info.last_seen_time">
+              {{ $t("server.lastSeenTime") }}:
+              {{ v.info.last_seen_time | unix2datetime }}
+            </p>
+            <p v-if="v.info.last_try_time">
+              {{ $t("server.lastTryTime") }}:
+              {{ v.info.last_try_time | unix2datetime }}
+            </p>
+          </div>
+        </b-message>
+      </div>
     </b-sidebar>
     <b-message
       v-if="ready && coreVersionValid === false"
@@ -85,82 +89,44 @@
     </b-message>
     <div v-if="ready" class="hero-body">
       <slot />
-      <b-field
-        v-if="
-          overHeight ||
-          isCheckedRowsPingable() ||
-          isCheckedRowsDeletable() ||
-          isCheckedRowsExportable()
-        "
+      <div
+        v-if="checkedRows.length > 0"
         id="toolbar"
-        grouped
-        group-multiline
-        :style="{
-          background: overHeight
-            ? isCheckedRowsPingable() || isCheckedRowsDeletable()
-              ? 'rgba(0, 0, 0, 0.1)'
-              : 'rgba(0, 0, 0, 0.05)'
-            : 'transparent',
-        }"
+        class="batch-toolbar"
         :class="{ 'float-toolbar': overHeight }"
       >
-        <div style="max-width: 60%">
-          <button
-            :class="{
-              button: true,
-              field: true,
-              'is-info': true,
-              'mobile-small': true,
-              'not-display': !overHeight && !isCheckedRowsPingable(),
-            }"
-            :disabled="!isCheckedRowsPingable()"
+        <span class="batch-toolbar__count">
+          {{ $t("nodeFilter.selectedCount", { count: checkedRows.length }) }}
+        </span>
+        <div class="batch-toolbar__actions">
+          <b-button
+            v-if="isCheckedRowsPingable()"
+            size="is-small"
+            type="is-info"
+            icon-left="access-point-network"
             @click="handleClickLatency(true)"
           >
-            <i class="mdi mdi-access-point-network" aria-hidden="true" />
-            <span>PING</span>
-          </button>
-          <button
-            :class="{
-              button: true,
-              field: true,
-              'is-info': true,
-              'mobile-small': true,
-              'not-display': !overHeight && !isCheckedRowsPingable(),
-            }"
-            :disabled="!isCheckedRowsPingable()"
+            PING
+          </b-button>
+          <b-button
+            v-if="isCheckedRowsPingable()"
+            size="is-small"
+            type="is-info"
+            outlined
+            icon-left="web"
             @click="handleClickLatency(false)"
           >
-            <i class="mdi mdi-access-point-network" aria-hidden="true" />
-            <span>HTTP</span>
-          </button>
-          <button
-            :class="{
-              button: true,
-              field: true,
-              'is-delete': true,
-              'mobile-small': true,
-              'not-display': !overHeight && !isCheckedRowsDeletable(),
-            }"
-            :disabled="!isCheckedRowsDeletable()"
-            @click="handleClickDelete"
-          >
-            <i class="mdi mdi-delete-outline" aria-hidden="true" />
-            <span>{{ $t("operations.delete") }}</span>
-          </button>
+            HTTP
+          </b-button>
           <b-dropdown
+            v-if="isCheckedRowsExportable()"
             aria-role="list"
             position="is-bottom-left"
-            :class="{
-              field: true,
-              'mobile-small': true,
-              'not-display': !overHeight && !isCheckedRowsExportable(),
-            }"
           >
             <template #trigger>
-              <button class="button is-info mobile-small" :disabled="!isCheckedRowsExportable()">
-                <i class="mdi mdi-export-variant" aria-hidden="true" />
-                <span>{{ $t("operations.export") }}</span>
-              </button>
+              <b-button size="is-small" icon-left="export-variant" icon-right="menu-down">
+                {{ $t("operations.export") }}
+              </b-button>
             </template>
             <b-dropdown-item aria-role="listitem" @click="handleClickExportSelected('copy')">
               {{ $t("operations.copySelected") }}
@@ -169,58 +135,176 @@
               {{ $t("operations.downloadTxt") }}
             </b-dropdown-item>
           </b-dropdown>
+          <b-button
+            v-if="isCheckedRowsDeletable()"
+            size="is-small"
+            type="is-danger"
+            outlined
+            icon-left="delete-outline"
+            @click="handleClickDelete"
+          >
+            {{ $t("operations.delete") }}
+          </b-button>
+          <b-button
+            size="is-small"
+            type="is-text"
+            @click="checkedRows = []"
+          >
+            {{ $t("nodeFilter.clearSelection") }}
+          </b-button>
         </div>
-      </b-field>
+      </div>
 
-      <b-collapse
+      <div
         v-if="!tableData.subscriptions.length && !tableData.servers.length"
-        class="card welcome-driver"
-        aria-id="contentIdForA11y3"
+        class="onboarding-card"
       >
-        <div
-          slot="trigger"
-          slot-scope="props"
-          class="card-header"
-          role="button"
-          aria-controls="contentIdForA11y3"
-        >
-          <p class="card-header-title">
-            {{ $t("welcome.title") }}
-          </p>
-          <a class="card-header-icon">
-            <b-icon :icon="props.open ? 'menu-down' : 'menu-up'"></b-icon>
-          </a>
-        </div>
-        <div class="card-content">
-          <div class="content">
-            <p>{{ $t("welcome.messages.0") }}</p>
-            <p>{{ $t("welcome.messages.1") }}</p>
+        <div class="onboarding-card__header">
+          <i class="mdi mdi-rocket-launch-outline onboarding-card__icon" aria-hidden="true"></i>
+          <div>
+            <h2 class="onboarding-card__title">{{ $t("welcome.title") }}</h2>
+            <p class="onboarding-card__subtitle">{{ $t("welcome.messages.0") }}</p>
           </div>
         </div>
-        <footer class="card-footer">
-          <a class="card-footer-item" @click="handleClickCreate">{{
-            $t("operations.create")
-          }}</a>
-          <a class="card-footer-item" @click="handleClickImport">{{
-            $t("operations.import")
-          }}</a>
-        </footer>
-      </b-collapse>
-      <b-tabs
+        <div class="onboarding-steps">
+          <div class="onboarding-step">
+            <strong>{{ $t("onboarding.step1Title") }}</strong>
+            <p>{{ $t("onboarding.step1Desc") }}</p>
+          </div>
+          <div class="onboarding-step">
+            <strong>{{ $t("onboarding.step2Title") }}</strong>
+            <p>{{ $t("onboarding.step2Desc") }}</p>
+          </div>
+          <div class="onboarding-step">
+            <strong>{{ $t("onboarding.step3Title") }}</strong>
+            <p>{{ $t("onboarding.step3Desc") }}</p>
+          </div>
+        </div>
+        <div class="onboarding-card__actions">
+          <b-button type="is-primary" icon-left="import" @click="handleClickImport">
+            {{ $t("operations.import") }}
+          </b-button>
+          <b-button icon-left="file-plus-outline" @click="handleClickCreate">
+            {{ $t("operations.create") }}
+          </b-button>
+        </div>
+      </div>
+
+      <div
         v-if="tableData.subscriptions.length || tableData.servers.length"
+        class="node-surface"
+      >
+        <div class="node-action-bar">
+          <div class="node-action-bar__left">
+            <b-button
+              size="is-small"
+              type="is-primary"
+              icon-left="import"
+              @click="handleClickImport"
+            >
+              {{ $t("operations.import") }}
+            </b-button>
+            <b-button
+              size="is-small"
+              icon-left="file-plus-outline"
+              @click="handleClickCreate"
+            >
+              {{ $t("operations.create") }}
+            </b-button>
+          </div>
+          <div class="node-action-bar__right">
+            <b-input
+              v-if="tab === 0"
+              v-model="subSearch"
+              size="is-small"
+              icon="magnify"
+              :icon-right="subSearch ? 'close-circle' : ''"
+              :icon-right-clickable="!!subSearch"
+              :placeholder="$t('nodeFilter.searchSubPlaceholder')"
+              class="node-search-input"
+              @icon-right-click="subSearch = ''"
+            />
+            <template v-else>
+              <b-input
+                v-model="nodeSearch"
+                size="is-small"
+                icon="magnify"
+                :icon-right="nodeSearch ? 'close-circle' : ''"
+                :icon-right-clickable="!!nodeSearch"
+                :placeholder="$t('nodeFilter.searchPlaceholder')"
+                class="node-search-input"
+                @icon-right-click="nodeSearch = ''"
+              />
+              <div class="node-quick-filters">
+                <button
+                  type="button"
+                  class="va-chip"
+                  :class="{ 'is-selected': quickFilter === 'all' }"
+                  @click="quickFilter = 'all'"
+                >
+                  {{ $t("nodeFilter.all") }}
+                </button>
+                <button
+                  type="button"
+                  class="va-chip"
+                  :class="{ 'is-selected': quickFilter === 'connected' }"
+                  @click="quickFilter = 'connected'"
+                >
+                  {{ $t("nodeFilter.connected") }}
+                </button>
+                <button
+                  v-if="tab >= 2"
+                  type="button"
+                  class="va-chip"
+                  :class="{ 'is-selected': quickFilter === 'fav' }"
+                  @click="quickFilter = 'fav'"
+                >
+                  <i class="mdi mdi-heart" aria-hidden="true"></i>
+                  {{ $t("nodeFilter.favorites") }}
+                </button>
+              </div>
+              <b-select
+                v-if="currentTabProtocols.length > 1"
+                v-model="protocolFilter"
+                size="is-small"
+                class="node-protocol-select"
+              >
+                <option value="">{{ $t("nodeFilter.allProtocols") }}</option>
+                <option v-for="proto in currentTabProtocols" :key="proto" :value="proto">
+                  {{ proto }}
+                </option>
+              </b-select>
+              <b-checkbox
+                v-if="tab >= 2 && hasDisabledInCurrentSub"
+                v-model="hideDisabled"
+                size="is-small"
+                class="hide-disabled-toggle"
+              >
+                {{ $t("nodeFilter.hideDisabled") }}
+              </b-checkbox>
+            </template>
+          </div>
+        </div>
+
+      <b-tabs
         v-model="tab"
         position="is-centered"
         type="is-toggle-rounded"
         class="main-tabs"
         @input="handleTabsChange"
       >
-        <b-tab-item label="SUBSCRIPTION">
-          <b-field :label="`SUBSCRIPTION(${tableData.subscriptions.length})`">
+        <b-tab-item>
+          <template #header>
+            <span>SUBSCRIPTION</span>
+            <span class="tab-count">{{ tableData.subscriptions.length }}</span>
+          </template>
+          <b-field :label="`SUBSCRIPTION (${filteredSubscriptions.length}/${tableData.subscriptions.length})`">
             <b-table
-              :data="tableData.subscriptions"
+              :data="filteredSubscriptions"
               :checked-rows.sync="checkedRows"
               default-sort="id"
               checkable
+              hoverable
             >
               <b-table-column
                 v-slot="props"
@@ -330,25 +414,47 @@
             </b-table>
           </b-field>
         </b-tab-item>
-        <b-tab-item
-          label="SERVER"
-          :icon="connectedServerInTab['server'] ? 'circle-medium' : ''"
-        >
-          <b-field :label="`SERVER(${tableData.servers.length})`">
+        <b-tab-item>
+          <template #header>
+            <span
+              v-if="connectedServerInTab['server']"
+              class="tab-connected-dot"
+              aria-hidden="true"
+            ></span>
+            <span>SERVER</span>
+            <span class="tab-count">{{ tableData.servers.length }}</span>
+          </template>
+          <b-field :label="`SERVER (${filteredServers.length}/${tableData.servers.length})`">
             <b-table
+              :paginated="filteredServers.length > 100"
               per-page="100"
               :current-page.sync="currentPage.servers"
-              :data="tableData.servers"
+              :data="filteredServers"
               :checked-rows.sync="checkedRows"
               checkable
+              hoverable
               default-sort="id"
             >
+              <template #empty>
+                <div class="va-empty-state">
+                  <p>{{ $t("nodeFilter.noMatches") }}</p>
+                  <b-button
+                    v-if="hasActiveFilters"
+                    size="is-small"
+                    style="margin-top: 0.5rem"
+                    @click="resetFilters"
+                  >
+                    {{ $t("nodeFilter.resetFilters") }}
+                  </b-button>
+                </div>
+              </template>
               <b-table-column
                 v-slot="props"
                 field="id"
                 label="ID"
                 numeric
                 sortable
+                width="64"
               >
                 {{ props.row.id }}
               </b-table-column>
@@ -358,7 +464,16 @@
                 :label="$t('server.name')"
                 sortable
               >
-                {{ props.row.name }}
+                <div class="node-name-cell">
+                  <span class="node-name-text">{{ props.row.name }}</span>
+                  <span
+                    v-for="group in nodeOutboundGroups(props.row, undefined)"
+                    :key="group"
+                    class="node-group-badge"
+                  >
+                    {{ group.toUpperCase() }}
+                  </span>
+                </div>
               </b-table-column>
               <b-table-column
                 v-slot="props"
@@ -366,7 +481,7 @@
                 :label="$t('server.address')"
                 sortable
               >
-                <p class="address-column" :title="props.row.address">
+                <p class="address-column code-font" :title="props.row.address">
                   {{ props.row.address }}
                 </p>
               </b-table-column>
@@ -376,7 +491,7 @@
                 :label="$t('server.protocol')"
                 sortable
               >
-                {{ props.row.net }}
+                <span class="protocol-pill">{{ props.row.net }}</span>
               </b-table-column>
               <b-table-column
                 v-slot="props"
@@ -387,13 +502,11 @@
                 :custom-sort="sortping"
               >
                 <p
-                  :class="{
-                    'latency-column': true,
-                    'latency-valid': props.row.pingLatency.endsWith('ms'),
-                  }"
+                  class="latency-column"
+                  :class="latencyClass(props.row.pingLatency)"
                   :title="props.row.pingLatency"
                 >
-                  {{ props.row.pingLatency }}
+                  {{ props.row.pingLatency || "—" }}
                 </p>
               </b-table-column>
               <b-table-column
@@ -401,12 +514,13 @@
                 :label="$t('operations.name')"
                 sortable
                 :custom-sort="sortConnections"
-                width="300"
+                width="210"
               >
                 <div class="operate-box">
                   <b-dropdown
                     v-if="loadBalanceValid"
                     position="is-bottom-left"
+                    append-to-body
                   >
                     <b-button
                       slot="trigger"
@@ -438,6 +552,11 @@
                         class="node-group-option"
                         :class="{ 'node-group-option--active': isNodeInOutbound(props.row, undefined, group) }"
                       >
+                        <i
+                          v-if="isNodeInOutbound(props.row, undefined, group)"
+                          class="mdi mdi-check"
+                          aria-hidden="true"
+                        ></i>
                         {{ group.toUpperCase() }}
                       </span>
                     </b-dropdown-item>
@@ -458,22 +577,20 @@
                   </b-button>
                   <b-button
                     size="is-small"
-                    icon-left="pencil"
-                    :outlined="!props.row.connected"
-                    type="is-info"
+                    icon-left="pencil-outline"
+                    type="is-light"
+                    :title="$t('operations.modify')"
+                    :aria-label="$t('operations.modify')"
                     @click="handleClickModifyServer(props.row)"
-                  >
-                    {{ $t("operations.modify") }}
-                  </b-button>
+                  />
                   <b-button
                     size="is-small"
-                    icon-left="share-variant"
-                    :outlined="!props.row.connected"
-                    type="is-success"
+                    icon-left="share-variant-outline"
+                    type="is-light"
+                    :title="$t('operations.share')"
+                    :aria-label="$t('operations.share')"
                     @click="handleClickShare(props.row)"
-                  >
-                    {{ $t("operations.share") }}
-                  </b-button>
+                  />
                 </div>
               </b-table-column>
             </b-table>
@@ -482,31 +599,53 @@
         <b-tab-item
           v-for="(sub, subi) of tableData.subscriptions"
           :key="sub.id"
-          :label="
-            (sub.remarks && sub.remarks.toUpperCase()) || sub.host.toUpperCase()
-          "
-          :icon="connectedServerInTab['subscriptionServer'][subi] ? 'circle-medium' : ''"
         >
+          <template #header>
+            <span
+              v-if="connectedServerInTab['subscriptionServer'][subi]"
+              class="tab-connected-dot"
+              aria-hidden="true"
+            ></span>
+            <span>{{ (sub.remarks && sub.remarks.toUpperCase()) || sub.host.toUpperCase() }}</span>
+            <span class="tab-count">{{ sub.servers.length }}</span>
+          </template>
           <b-field
             v-if="tab === subi + 2"
-            :label="`${sub.host.toUpperCase()}(${sub.servers.length}${
+            :label="`${sub.host.toUpperCase()} (${getFilteredSubServers(sub, subi).length}/${sub.servers.length}${
               sub.info ? ') (' : ''
             }${sub.info})`"
           >
             <b-table
+              :paginated="getFilteredSubServers(sub, subi).length > 100"
               :current-page.sync="currentPage[sub.id]"
               per-page="100"
-              :data="sub.servers"
+              :data="getFilteredSubServers(sub, subi)"
               :checked-rows.sync="checkedRows"
+              :row-class="(row) => (row.disabled ? 'is-disabled-node-row' : '')"
               checkable
+              hoverable
               default-sort="id"
             >
+              <template #empty>
+                <div class="va-empty-state">
+                  <p>{{ $t("nodeFilter.noMatches") }}</p>
+                  <b-button
+                    v-if="hasActiveFilters"
+                    size="is-small"
+                    style="margin-top: 0.5rem"
+                    @click="resetFilters"
+                  >
+                    {{ $t("nodeFilter.resetFilters") }}
+                  </b-button>
+                </div>
+              </template>
               <b-table-column
                 v-slot="props"
                 field="id"
                 label="ID"
                 numeric
                 sortable
+                width="64"
               >
                 {{ props.row.id }}
               </b-table-column>
@@ -516,7 +655,22 @@
                 :label="$t('server.name')"
                 sortable
               >
-                {{ props.row.name }}
+                <div class="node-name-cell">
+                  <span class="node-name-text">{{ props.row.name }}</span>
+                  <span
+                    v-if="props.row.disabled"
+                    class="node-disabled-badge"
+                  >
+                    {{ $t("nodeFilter.disabledTag") }}
+                  </span>
+                  <span
+                    v-for="group in nodeOutboundGroups(props.row, subi)"
+                    :key="group"
+                    class="node-group-badge"
+                  >
+                    {{ group.toUpperCase() }}
+                  </span>
+                </div>
               </b-table-column>
               <b-table-column
                 v-slot="props"
@@ -524,7 +678,7 @@
                 :label="$t('server.address')"
                 sortable
               >
-                <p class="address-column" :title="props.row.address">
+                <p class="address-column code-font" :title="props.row.address">
                   {{ props.row.address }}
                 </p>
               </b-table-column>
@@ -532,10 +686,9 @@
                 v-slot="props"
                 field="net"
                 :label="$t('server.protocol')"
-                style="font-size: 0.9em"
                 sortable
               >
-                {{ props.row.net }}
+                <span class="protocol-pill">{{ props.row.net }}</span>
               </b-table-column>
               <b-table-column
                 v-slot="props"
@@ -546,13 +699,11 @@
                 :custom-sort="sortping"
               >
                 <p
-                  :class="{
-                    'latency-column': true,
-                    'latency-valid': props.row.pingLatency.endsWith('ms'),
-                  }"
+                  class="latency-column"
+                  :class="latencyClass(props.row.pingLatency)"
                   :title="props.row.pingLatency"
                 >
-                  {{ props.row.pingLatency }}
+                  {{ props.row.pingLatency || "—" }}
                 </p>
               </b-table-column>
               <b-table-column
@@ -560,12 +711,13 @@
                 :label="$t('operations.name')"
                 sortable
                 :custom-sort="sortConnections"
-                width="620"
+                width="195"
               >
                 <div class="operate-box">
                   <b-dropdown
                     v-if="loadBalanceValid"
                     position="is-bottom-left"
+                    append-to-body
                   >
                     <b-button
                       slot="trigger"
@@ -597,6 +749,11 @@
                         class="node-group-option"
                         :class="{ 'node-group-option--active': isNodeInOutbound(props.row, subi, group) }"
                       >
+                        <i
+                          v-if="isNodeInOutbound(props.row, subi, group)"
+                          class="mdi mdi-check"
+                          aria-hidden="true"
+                        ></i>
                         {{ group.toUpperCase() }}
                       </span>
                     </b-dropdown-item>
@@ -615,70 +772,74 @@
                         : $t("operations.connect")
                     }}
                   </b-button>
+
                   <b-button
                     size="is-small"
-                    outlined
-                    type="is-info"
-                    @click="handleClickViewServer(props.row, subi)"
-                  >
-                    <i class="mdi mdi-eye-outline node-action-icon" aria-hidden="true"></i>
-                    {{ $t("operations.view") }}
-                  </b-button>
-                  <b-button
-                    size="is-small"
-                    outlined
-                    type="is-success"
-                    @click="handleClickShare(props.row, subi)"
-                  >
-                    <i class="mdi mdi-share-variant node-action-icon" aria-hidden="true"></i>
-                    {{ $t("operations.share") }}
-                  </b-button>
-                  <b-button
-                    size="is-small"
+                    :type="props.row.fav ? 'is-warning' : 'is-light'"
+                    :outlined="props.row.fav"
                     :title="props.row.fav ? $t('operations.unfavNode') : $t('operations.favNode')"
-                    type="is-warning"
-                    outlined
+                    :aria-label="props.row.fav ? $t('operations.unfavNode') : $t('operations.favNode')"
                     :aria-pressed="props.row.fav ? 'true' : 'false'"
                     @click="toggleNodeFav(props.row, subi)"
                   >
                     <i
                       :class="props.row.fav ? 'mdi mdi-heart' : 'mdi mdi-heart-outline'"
-                      class="node-action-icon"
                       aria-hidden="true"
                     ></i>
-                    {{ props.row.fav ? $t("operations.unfavNode") : $t("operations.favNode") }}
                   </b-button>
-                  <b-button
-                    size="is-small"
-                    :title="props.row.disabled ? $t('operations.enableNode') : $t('operations.disableNode')"
-                    type="is-danger"
-                    outlined
-                    :aria-pressed="props.row.disabled ? 'true' : 'false'"
-                    @click="toggleNodeDisabled(props.row, subi)"
-                  >
-                    <i
-                      :class="props.row.disabled ? 'mdi mdi-check-circle-outline' : 'mdi mdi-cancel'"
-                      class="node-action-icon"
-                      aria-hidden="true"
-                    ></i>
-                    {{ props.row.disabled ? $t("operations.enableNode") : $t("operations.disableNode") }}
-                  </b-button>
-                  <b-button
-                    size="is-small"
-                    :title="$t('operations.removeNodeWithMemory')"
-                    outlined
-                    type="is-danger"
-                    @click="removeNodeWithMemory(props.row, subi)"
-                  >
-                    <i class="mdi mdi-delete-outline node-action-icon" aria-hidden="true"></i>
-                    {{ $t("operations.removeNodeWithMemoryShort") }}
-                  </b-button>
+
+                  <b-dropdown position="is-bottom-left" append-to-body aria-role="menu">
+                    <template #trigger>
+                      <b-button
+                        size="is-small"
+                        type="is-light"
+                        icon-left="dots-horizontal"
+                        :title="$t('nodeFilter.moreActions')"
+                        :aria-label="$t('nodeFilter.moreActions')"
+                      />
+                    </template>
+                    <b-dropdown-item
+                      aria-role="menuitem"
+                      @click="handleClickViewServer(props.row, subi)"
+                    >
+                      <i class="mdi mdi-eye-outline node-action-icon" aria-hidden="true"></i>
+                      {{ $t("operations.view") }}
+                    </b-dropdown-item>
+                    <b-dropdown-item
+                      aria-role="menuitem"
+                      @click="handleClickShare(props.row, subi)"
+                    >
+                      <i class="mdi mdi-share-variant-outline node-action-icon" aria-hidden="true"></i>
+                      {{ $t("operations.share") }}
+                    </b-dropdown-item>
+                    <b-dropdown-item
+                      aria-role="menuitem"
+                      @click="toggleNodeDisabled(props.row, subi)"
+                    >
+                      <i
+                        :class="props.row.disabled ? 'mdi mdi-check-circle-outline' : 'mdi mdi-cancel'"
+                        class="node-action-icon"
+                        aria-hidden="true"
+                      ></i>
+                      {{ props.row.disabled ? $t("operations.enableNode") : $t("operations.disableNode") }}
+                    </b-dropdown-item>
+                    <hr class="dropdown-divider" />
+                    <b-dropdown-item
+                      aria-role="menuitem"
+                      class="is-danger-menu-item"
+                      @click="removeNodeWithMemory(props.row, subi)"
+                    >
+                      <i class="mdi mdi-delete-outline node-action-icon" aria-hidden="true"></i>
+                      {{ $t("operations.removeNodeWithMemoryShort") }}
+                    </b-dropdown-item>
+                  </b-dropdown>
                 </div>
               </b-table-column>
             </b-table>
           </b-field>
         </b-tab-item>
       </b-tabs>
+      </div>
     </div>
     <b-loading v-else :is-full-page="true" :active="true">
       <i class="mdi mdi-loading mdi-spin" aria-hidden="true" />
@@ -715,13 +876,23 @@
       aria-role="dialog"
       aria-modal
     >
-      <div class="modal-card" style="max-width: 600px; margin: auto">
+      <div class="modal-card" style="max-width: 640px; width: calc(100vw - 2rem); margin: auto">
         <header class="modal-card-head">
           <p class="modal-card-title">{{ $t("operations.detectRule") }}</p>
+          <button
+            type="button"
+            class="delete"
+            :aria-label="$t('operations.close')"
+            @click="showModalDetectRule = false"
+          ></button>
         </header>
         <section class="modal-card-body">
           <b-field :label="$t('detectRule.domain')">
-            <b-input v-model="detectRuleQuery.domain" placeholder="www.google.com" />
+            <b-input
+              v-model="detectRuleQuery.domain"
+              placeholder="www.google.com"
+              @keyup.enter.native="handleDetectRule"
+            />
           </b-field>
           <div class="columns">
             <div class="column">
@@ -792,6 +963,11 @@
             </b-table>
           </div>
         </section>
+        <footer class="modal-card-foot flex-end">
+          <b-button @click="showModalDetectRule = false">
+            {{ $t("operations.close") }}
+          </b-button>
+        </footer>
       </div>
     </b-modal>
     <b-modal :active.sync="showModalImport" has-modal-card trap-focus
@@ -859,6 +1035,11 @@ export default {
       detectRuleQuery: { domain: "", port: "", network: "", inbound: "" },
       detectRuleResult: null,
       currentPage: { servers: 1, subscriptions: 1 },
+      nodeSearch: "",
+      subSearch: "",
+      quickFilter: "all",
+      protocolFilter: "",
+      hideDisabled: false,
       tableData: {
         servers: [],
         subscriptions: [],
@@ -868,6 +1049,7 @@ export default {
       ready: false,
       tab: 0,
       runningState: {
+        status: "checking",
         running: this.$t("common.checkRunning"),
         networkPaused: false,
         connectedServer: null,
@@ -892,6 +1074,45 @@ export default {
   computed: {
     loadBalanceValid() {
       return localStorage["loadBalanceValid"] === "true";
+    },
+    filteredSubscriptions() {
+      const q = (this.subSearch || "").trim().toLowerCase();
+      if (!q) return this.tableData.subscriptions;
+      return this.tableData.subscriptions.filter(
+        (sub) =>
+          (sub.host || "").toLowerCase().includes(q) ||
+          (sub.remarks || "").toLowerCase().includes(q)
+      );
+    },
+    filteredServers() {
+      return this.filterNodeList(this.tableData.servers, undefined);
+    },
+    currentTabProtocols() {
+      let list = [];
+      if (this.tab === 1) {
+        list = this.tableData.servers || [];
+      } else if (this.tab >= 2) {
+        const sub = this.tableData.subscriptions[this.tab - 2];
+        list = sub ? sub.servers || [] : [];
+      }
+      const set = new Set();
+      for (const row of list) {
+        if (row.net) set.add(row.net);
+      }
+      return Array.from(set).sort();
+    },
+    hasDisabledInCurrentSub() {
+      if (this.tab < 2) return false;
+      const sub = this.tableData.subscriptions[this.tab - 2];
+      return !!(sub && (sub.servers || []).some((s) => s.disabled));
+    },
+    hasActiveFilters() {
+      return !!(
+        this.nodeSearch.trim() ||
+        this.quickFilter !== "all" ||
+        this.protocolFilter ||
+        this.hideDisabled
+      );
     },
   },
   watch: {
@@ -1002,11 +1223,75 @@ export default {
     }
   },
   methods: {
+    toggleSidebar() {
+      this.showSidebar = !this.showSidebar;
+    },
+    getRunningStatusKey(running, networkPaused = false) {
+      if (networkPaused) return "waiting";
+      return running ? "running" : "stopped";
+    },
     getRunningLabel(running, networkPaused = false) {
       if (networkPaused) {
         return this.$t("common.waitingNetwork");
       }
       return running ? this.$t("common.isRunning") : this.$t("common.notRunning");
+    },
+    refreshStatusLabel() {
+      const map = {
+        running: this.$t("common.isRunning"),
+        stopped: this.$t("common.notRunning"),
+        waiting: this.$t("common.waitingNetwork"),
+        checking: this.$t("common.checkRunning"),
+      };
+      this.runningState.running = map[this.runningState.status] || this.$t("common.checkRunning");
+      this.$emit("input", this.runningState);
+    },
+    filterNodeList(list, subi) {
+      if (!Array.isArray(list)) return [];
+      const q = (this.nodeSearch || "").trim().toLowerCase();
+      return list.filter((row) => {
+        if (this.hideDisabled && row.disabled) return false;
+        if (this.protocolFilter && row.net !== this.protocolFilter) return false;
+        if (this.quickFilter === "fav" && !row.fav) return false;
+        if (this.quickFilter === "connected") {
+          const isConn = this.loadBalanceValid
+            ? this.isNodeInAnyOutbound(row, subi)
+            : !!row.connected;
+          if (!isConn) return false;
+        }
+        if (q) {
+          const hay = `${row.name || ""} ${row.address || ""} ${row.net || ""}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+    },
+    getFilteredSubServers(sub, subi) {
+      return this.filterNodeList(sub ? sub.servers : [], subi);
+    },
+    resetFilters() {
+      this.nodeSearch = "";
+      this.quickFilter = "all";
+      this.protocolFilter = "";
+      this.hideDisabled = false;
+    },
+    nodeOutboundGroups(row, sub) {
+      return this.connectedTouches()
+        .filter((which) => this.isSameNodeTouch(row, sub, which))
+        .map((which) => which.outbound || "proxy")
+        .filter((v, idx, arr) => arr.indexOf(v) === idx);
+    },
+    latencyClass(latency) {
+      if (!latency) return "latency-empty";
+      if (latency === "testing...") return "latency-testing";
+      if (typeof latency === "string" && latency.endsWith("ms")) {
+        const ms = parseInt(latency, 10);
+        if (Number.isNaN(ms)) return "latency-bad";
+        if (ms < 150) return "latency-good";
+        if (ms < 400) return "latency-warn";
+        return "latency-bad";
+      }
+      return "latency-bad";
     },
     connectedServerKey(which = {}) {
       const parts = [
@@ -1051,6 +1336,7 @@ export default {
       this.tableData = touch;
       if (running !== undefined) {
         Object.assign(this.runningState, {
+          status: this.getRunningStatusKey(running, networkPaused),
           running: this.getRunningLabel(running, networkPaused),
           networkPaused,
           connectedServer: touch.connectedServer,
@@ -1091,12 +1377,25 @@ export default {
     },
     handleClickConnectedServer(which) {
       const that = this;
+      this.showSidebar = false;
+      this.resetFilters();
       this.locateTabToConnected(which);
       let tabIndex = -1;
       if (which._type === "server") {
         tabIndex = 1;
+        const idx = this.tableData.servers.findIndex((s) => s.id === which.id);
+        if (idx >= 0) {
+          this.$set(this.currentPage, "servers", Math.floor(idx / 100) + 1);
+        }
       } else {
         tabIndex = 2 + which.sub;
+        const sub = this.tableData.subscriptions[which.sub];
+        if (sub) {
+          const idx = sub.servers.findIndex((s) => s.id === which.id);
+          if (idx >= 0) {
+            this.$set(this.currentPage, sub.id, Math.floor(idx / 100) + 1);
+          }
+        }
       }
       let tryCnt = 0;
       const maxTry = 5;
@@ -1316,8 +1615,14 @@ export default {
     // correct status without waiting for the next /touch poll.
     notifyStopped(networkPaused = false) {
       const next = this.getRunningLabel(false, networkPaused);
-      if (this.runningState.running !== next || this.runningState.networkPaused !== networkPaused) {
+      const nextStatus = this.getRunningStatusKey(false, networkPaused);
+      if (
+        this.runningState.running !== next ||
+        this.runningState.status !== nextStatus ||
+        this.runningState.networkPaused !== networkPaused
+      ) {
         Object.assign(this.runningState, {
+          status: nextStatus,
           running: next,
           networkPaused,
         });
@@ -1326,8 +1631,14 @@ export default {
     },
     notifyRunning(networkPaused = false) {
       const next = this.getRunningLabel(true, networkPaused);
-      if (this.runningState.running !== next || this.runningState.networkPaused !== networkPaused) {
+      const nextStatus = this.getRunningStatusKey(true, networkPaused);
+      if (
+        this.runningState.running !== next ||
+        this.runningState.status !== nextStatus ||
+        this.runningState.networkPaused !== networkPaused
+      ) {
         Object.assign(this.runningState, {
+          status: nextStatus,
           running: next,
           networkPaused,
         });
@@ -1429,6 +1740,7 @@ export default {
         if (res.data.code === "SUCCESS") {
           row.connected = false;
           Object.assign(this.runningState, {
+            status: this.getRunningStatusKey(res.data.data.running, res.data.data.networkPaused),
             running: this.getRunningLabel(res.data.data.running, res.data.data.networkPaused),
             networkPaused: !!res.data.data.networkPaused,
             connectedServer: res.data.data.touch.connectedServer,
@@ -1539,6 +1851,7 @@ export default {
           loading.close();
           if (res.data.code === "SUCCESS") {
             Object.assign(this.runningState, {
+              status: this.getRunningStatusKey(res.data.data.running, res.data.data.networkPaused),
               running: this.getRunningLabel(res.data.data.running, res.data.data.networkPaused),
               networkPaused: !!res.data.data.networkPaused,
               connectedServer: res.data.data.touch.connectedServer,
@@ -1617,6 +1930,7 @@ export default {
         loading.close();
         if (res.data.code === "SUCCESS") {
           Object.assign(this.runningState, {
+            status: this.getRunningStatusKey(res.data.data.running, res.data.data.networkPaused),
             running: this.getRunningLabel(res.data.data.running, res.data.data.networkPaused),
             networkPaused: !!res.data.data.networkPaused,
             connectedServer: res.data.data.touch.connectedServer,
@@ -1707,6 +2021,10 @@ export default {
       // store the index in local storage to remember the tab.
       localStorage.lastNodeTab = index;
       this.checkedRows = [];
+      this.protocolFilter = "";
+      if (index < 2 && this.quickFilter === "fav") {
+        this.quickFilter = "all";
+      }
     },
     isCheckedRowsDeletable() {
       // CONST.SubscriptionServerType is not deletable
@@ -1802,7 +2120,7 @@ export default {
         }
         this.$buefy.toast.open({
           message: this.$t("common.success"),
-          type: "is-primary",
+          type: "is-success",
           position: "is-top",
           duration: 2500,
           queue: false,
@@ -1861,7 +2179,7 @@ export default {
           this.syncLatestNodeOverview();
           this.$buefy.toast.open({
             message: this.$t("common.success"),
-            type: "is-primary",
+            type: "is-success",
             position: "is-top",
             duration: 5000,
             queue: false,
@@ -1898,7 +2216,7 @@ export default {
         handleResponse(res, this, () => {
           this.$buefy.toast.open({
             message: this.$t("common.success"),
-            type: "is-primary",
+            type: "is-success",
             position: "is-top",
             duration: 3000,
             queue: false,
@@ -1925,7 +2243,7 @@ export default {
         handleResponse(res, this, () => {
           this.$buefy.toast.open({
             message: this.$t("common.success"),
-            type: "is-primary",
+            type: "is-success",
             position: "is-top",
             duration: 3000,
             queue: false,
@@ -2065,7 +2383,12 @@ td {
 }
 
 .node-section {
-  margin-top: 1rem;
+  margin-top: 0.75rem;
+
+  .hero-body {
+    padding-top: 1.25rem;
+    padding-bottom: 2.5rem;
+  }
 
   .mdi {
     margin-right: 0.1em;
@@ -2075,7 +2398,7 @@ td {
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
-    gap: 0.375rem;
+    gap: 0.35rem;
 
     > * {
       flex: 0 0 auto;
@@ -2084,51 +2407,278 @@ td {
   }
 
   .node-action-icon {
-    margin-right: 0.3rem;
+    margin-right: 0.4rem;
     font-size: 1rem;
     line-height: 1;
+    vertical-align: middle;
   }
 
   .node-group-trigger--added.button.is-primary {
-    background-color: #00695c;
-    border-color: #00695c;
+    background-color: var(--va-success);
+    border-color: var(--va-success);
     color: #fff;
     font-weight: 600;
 
     &:hover,
     &:focus {
-      background-color: #00574d;
-      border-color: #00574d;
+      filter: brightness(0.94);
       color: #fff;
-    }
-
-    &:focus:not(:active) {
-      box-shadow: 0 0 0 0.125em rgba(0, 105, 92, 0.35);
     }
   }
 }
 
-.card {
-  max-width: 500px;
-  margin: auto;
+.node-surface {
+  background: var(--va-surface);
+  border: 1px solid var(--va-border);
+  border-radius: var(--va-radius-md);
+  box-shadow: var(--va-shadow-sm);
+  padding: 1rem 1.15rem;
+}
+
+.node-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--va-border);
+}
+
+.node-action-bar__left,
+.node-action-bar__right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.node-action-bar__right {
+  flex: 1 1 20rem;
+  justify-content: flex-end;
+}
+
+.node-search-input {
+  width: 240px;
+  max-width: 100%;
+}
+
+.node-quick-filters {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.hide-disabled-toggle {
+  margin-left: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.tab-connected-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--va-success);
+  margin-right: 0.4rem;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35);
+}
+
+.tab-count {
+  margin-left: 0.4rem;
+  font-size: 0.72rem;
+  opacity: 0.75;
+  font-weight: 600;
+}
+
+.node-name-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.node-name-text {
+  font-weight: 500;
+  color: var(--va-text);
+  word-break: break-word;
+}
+
+.node-group-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  background: var(--va-primary-soft);
+  color: var(--va-primary);
+}
+
+.node-disabled-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  background: var(--va-danger-soft);
+  color: var(--va-danger);
+}
+
+.protocol-pill {
+  display: inline-block;
+  padding: 0.14rem 0.48rem;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  background: var(--va-surface-subtle);
+  border: 1px solid var(--va-border);
+  color: var(--va-text-muted);
+  white-space: nowrap;
+}
+
+.onboarding-card {
+  max-width: 760px;
+  margin: 1rem auto 0;
+  padding: 1.75rem;
+  border-radius: var(--va-radius-lg);
+  background: var(--va-surface);
+  border: 1px solid var(--va-border);
+  box-shadow: var(--va-shadow-sm);
+}
+
+.onboarding-card__header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.onboarding-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 12px;
+  background: var(--va-primary-soft);
+  color: var(--va-primary);
+  font-size: 1.65rem;
+  flex-shrink: 0;
+}
+
+.onboarding-card__title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--va-text);
+  margin: 0;
+}
+
+.onboarding-card__subtitle {
+  margin: 0.25rem 0 0;
+  color: var(--va-text-muted);
+  font-size: 0.92rem;
+}
+
+.onboarding-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 1.4rem;
+}
+
+.onboarding-step {
+  padding: 0.95rem 1rem;
+  border-radius: var(--va-radius-md);
+  background: var(--va-surface-subtle);
+  border: 1px solid var(--va-border);
+
+  strong {
+    display: block;
+    margin-bottom: 0.35rem;
+    font-size: 0.88rem;
+    color: var(--va-text);
+  }
+
+  p {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--va-text-muted);
+  }
+}
+
+.onboarding-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.sidebar-drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem 1.1rem;
+  border-bottom: 1px solid var(--va-border);
+}
+
+.sidebar-drawer-title {
+  font-weight: 700;
+  font-size: 0.98rem;
+  color: var(--va-text);
+}
+
+.sidebar-drawer-hint {
+  font-size: 0.78rem;
+  color: var(--va-text-muted);
+  margin-top: 0.15rem;
+}
+
+.sidebar-drawer-body {
+  padding: 0.75rem;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .ping-latency {
-  font-size: 0.8em;
+  font-size: 0.85em;
 }
 
 .traffic-column {
-  font-size: 0.8em;
+  font-size: 0.82em;
   .traffic-line {
     margin: 0;
   }
   .expire-warning {
     margin: 0;
-    color: #ff9800;
+    color: var(--va-warning);
     &.expire-critical {
-      color: #f14668;
-      font-weight: bold;
+      color: var(--va-danger);
+      font-weight: 700;
     }
+  }
+}
+
+@media screen and (max-width: 720px) {
+  .node-surface {
+    padding: 0.75rem;
+  }
+
+  .node-action-bar__right {
+    justify-content: flex-start;
+  }
+
+  .node-search-input {
+    width: 100%;
+  }
+
+  .onboarding-steps {
+    grid-template-columns: 1fr;
   }
 }
 </style>
@@ -2136,75 +2686,59 @@ td {
 <style lang="scss">
 @import "bulma/sass/utilities/all.sass";
 
-#toolbar {
-  @media screen and (max-width: 450px) {
-    &.float-toolbar {
-      top: 4.25rem;
-      margin-left: 25px;
-      width: calc(100% - 50px);
-    }
-    .field.is-grouped .field:not(:last-child) {
-      margin-right: 0.3rem;
-    }
-  }
-
-  .field.is-grouped.is-grouped-multiline:last-child {
-    margin-bottom: 0;
-  }
-
-  padding: 0.75em 0.75em;
-  margin-bottom: 1rem;
+#toolbar.batch-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 1rem;
+  margin-bottom: 0.85rem;
   position: sticky;
-  top: 65px;
-  z-index: 2;
-  background: rgba(0, 0, 0, 0.05);
+  top: 4rem;
+  z-index: 10;
+  background: var(--va-surface-elevated);
+  border: 1px solid var(--va-primary);
+  border-radius: var(--va-radius-md);
+  box-shadow: var(--va-shadow-md);
   width: 100%;
-  border-radius: 3px;
-  pointer-events: none;
-
-  * {
-    pointer-events: auto;
-  }
-
-  transition: all 200ms linear;
-
-  button {
-    transition: all 100ms ease-in-out;
-  }
+  transition: box-shadow 0.16s ease;
 }
 
-.tabs {
-  .icon + span {
-    color: #ff6719; //方案1
-  }
+.batch-toolbar__count {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--va-primary);
+}
 
-  .icon {
-    display: none; //方案1
-    margin: 0 0 0 -0.5em !important;
+.batch-toolbar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
 
-    .mdi {
-      font-size: 32px;
-      color: coral;
-    }
-  }
+.is-disabled-node-row {
+  opacity: 0.55;
+}
+
+.is-danger-menu-item {
+  color: var(--va-danger) !important;
 }
 
 .node-group-option {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   width: 100%;
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
 }
 
 .node-group-option--active {
-  background-color: #ffe08a;
-  color: #5f4b00;
+  background-color: var(--va-primary-soft);
+  color: var(--va-primary);
   font-weight: 600;
-}
-
-body.theme-dark .node-group-option--active {
-  background-color: #6a5318;
-  color: #ffe29a;
 }
 
 @keyframes loading-rotate {
@@ -2214,20 +2748,6 @@ body.theme-dark .node-group-option--active {
   to {
     transform: rotate(360deg);
   }
-}
-
-.not-show {
-  opacity: 0;
-  pointer-events: none !important;
-  overflow: hidden;
-  width: 0 !important;
-  display: inline-block !important;
-  padding-left: 0 !important;
-  margin-left: 0 !important;
-  border-left: 0 !important;
-  padding-right: 0 !important;
-  margin-right: 0 !important;
-  border-right: 0 !important;
 }
 
 .not-display {
@@ -2243,50 +2763,18 @@ table th {
   font-size: 40px;
 }
 
-.mobile-small {
-  @media screen and (max-width: 450px) {
-    border-radius: 2px;
-    font-size: 0.65rem;
-  }
-}
-
-.b-sidebar.node-status-sidebar-reduced > .sidebar-content.is-fixed {
-  z-index: 1;
-  left: 1px;
-  top: 4.25rem;
-  background-color: white;
-  width: unset;
-  line-height: 0;
-  border-radius: 4px;
-}
-
 .b-sidebar.node-status-sidebar > .sidebar-content.is-fixed {
-  left: 1px;
-  top: 4.25rem;
-  background-color: white;
-  max-height: calc(100vh - 5rem);
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  top: 3.5rem;
+  height: calc(100vh - 3.5rem);
+  width: min(360px, 90vw);
+  background-color: var(--va-surface);
+  box-shadow: var(--va-shadow-md);
 
   .message {
     cursor: pointer;
-  }
-
-  .tabs:not(:last-child),
-  .pagination:not(:last-child),
-  .message:not(:last-child),
-  .level:not(:last-child),
-  .breadcrumb:not(:last-child),
-  .highlight:not(:last-child),
-  .block:not(:last-child),
-  .title:not(:last-child),
-  .subtitle:not(:last-child),
-  .table-container:not(:last-child),
-  .table:not(:last-child),
-  .progress:not(:last-child),
-  .notification:not(:last-child),
-  .content:not(:last-child),
-  .box:not(:last-child) {
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.6rem;
   }
 }
 
@@ -2303,7 +2791,7 @@ table th {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.35rem;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
 }
 
 .node-status-card__subscription {
@@ -2324,12 +2812,12 @@ table th {
 }
 
 .message.is-light .node-status-card__group {
-  border-color: var(--node-status-group-light-border, rgba(0, 0, 0, 0.45));
+  border-color: var(--node-status-group-light-border, rgba(0, 0, 0, 0.25));
   background-color: var(--node-status-group-light-bg, rgba(0, 0, 0, 0.05));
 }
 
 .node-status-card__body {
-  font-size: 0.85rem;
+  font-size: 0.84rem;
 }
 
 .node-status-card__body p {
@@ -2342,48 +2830,72 @@ table th {
 
 tr.highlight-row-connected {
   transition: background-color 0.05s linear;
-  background-color: var(--node-highlight-connected, #a8cff0);
+  background-color: var(--node-highlight-connected);
 }
 
 tr.highlight-row-connected > td {
   transition: background-color 0.05s linear;
-  background-color: var(--node-highlight-connected, #a8cff0) !important;
+  background-color: var(--node-highlight-connected) !important;
 }
 
 tr.highlight-row-disconnected {
   transition: background-color 0.05s linear;
-  background-color: var(--node-highlight-disconnected, rgba(255, 69, 58, 0.55));
+  background-color: var(--node-highlight-disconnected);
 }
 
 tr.highlight-row-disconnected > td {
   transition: background-color 0.05s linear;
-  background-color: var(--node-highlight-disconnected, rgba(255, 69, 58, 0.55)) !important;
+  background-color: var(--node-highlight-disconnected) !important;
 }
 
 .click-through {
   pointer-events: none;
 }
+
 .address-column {
-  max-width: 350px !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
-}
-.latency-column {
-  max-width: 120px !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-}
-.latency-valid {
-  color: green;
+  color: var(--va-text-muted);
+  font-size: 0.86em;
 }
 
-@media screen and (max-width: 1920px) {
-  .latency-column {
-    max-width: 70px !important;
-  }
+.latency-column {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.latency-good {
+  color: var(--va-latency-good);
+}
+
+.latency-warn {
+  color: var(--va-latency-warn);
+}
+
+.latency-bad {
+  color: var(--va-latency-bad);
+}
+
+.latency-testing {
+  color: var(--va-text-subtle);
+  font-style: italic;
+  font-weight: 400;
+}
+
+.latency-empty {
+  color: var(--va-text-subtle);
+  font-weight: 400;
+}
+
+@media screen and (max-width: 1200px) {
   .address-column {
-    max-width: 150px !important;
+    max-width: 190px;
   }
 }
 </style>

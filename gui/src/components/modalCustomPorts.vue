@@ -1,9 +1,15 @@
 <template>
-  <div class="modal-card" style="max-width: 450px; margin: auto">
+  <div class="modal-card" style="max-width: 480px; width: calc(100vw - 2rem); margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">
         {{ $t("customAddressPort.title") }}
       </p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$emit('close')"
+      ></button>
     </header>
     <section class="modal-card-body">
       <b-field
@@ -15,9 +21,7 @@
           v-model="table.backendAddress"
           placeholder="http://localhost:2017"
           pattern="(|https?://.+|/.+)"
-        >
-          >
-        </b-input>
+        />
       </b-field>
       <template v-if="backendReady && dockerMode === false && !addressChanged">
         <b-field

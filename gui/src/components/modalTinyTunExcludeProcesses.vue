@@ -2,6 +2,12 @@
   <div class="modal-card" style="width: 680px; max-width: 100%; margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("tinytun.processExclude.title") }}</p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section class="modal-card-body">
       <b-message type="is-warning" has-icon>

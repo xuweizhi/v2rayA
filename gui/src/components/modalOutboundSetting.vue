@@ -1,9 +1,15 @@
 <template>
-  <div class="modal-card" style="max-width: 450px; margin: auto">
+  <div class="modal-card" style="max-width: 480px; width: calc(100vw - 2rem); margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">
         {{ outbound }} - {{ $t("common.outboundSetting") }}
       </p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$emit('close')"
+      ></button>
     </header>
     <section class="modal-card-body">
       <b-field :label="$t('outbound.preProxy')" :message="$t('outbound.preProxyHelp')">
@@ -62,14 +68,12 @@
         </b-select>
       </b-field>
     </section>
-    <footer class="modal-card-foot flex-end">
-      <button class="button is-danger" type="button" @click="handleClickDelete">
+    <footer class="modal-card-foot outbound-setting-foot">
+      <button class="button is-danger is-outlined" type="button" @click="handleClickDelete">
         {{ $t("operations.delete") }}
       </button>
-      <div
-        style="display: flex; justify-content: flex-end; width: -moz-available"
-      >
-        <button class="button" @click="$emit('close')">
+      <div class="outbound-setting-foot__right">
+        <button class="button" type="button" @click="$emit('close')">
           {{ $t("operations.cancel") }}
         </button>
         <button class="button is-primary" :disabled="!backendReady || !ruleReady" @click="handleClickSubmit">
@@ -212,8 +216,8 @@ export default {
       }).then((res) => {
         handleResponse(res, this, () => {
           this.$buefy.toast.open({
-            message: res.data.code,
-            type: "is-primary",
+            message: this.$t("common.success"),
+            type: "is-success",
             position: "is-top",
             queue: false,
           });
@@ -230,6 +234,18 @@ export default {
 <style scoped>
 .member-source { display: block; }
 .member-preview { margin: .5rem 0 1rem; overflow-wrap: anywhere; }
+.outbound-setting-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.outbound-setting-foot__right {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
 </style>
 
 <style lang="scss">

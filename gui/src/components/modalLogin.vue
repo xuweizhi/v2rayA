@@ -9,21 +9,29 @@
       <p style="text-align: center">
         <img src="@/assets/img/logo2.png" alt="v2rayA" />
       </p>
-      <b-field :label="$t('login.username')" type="is-success">
+      <b-field :label="$t('login.username')">
         <b-input
           ref="username"
           v-model="username"
+          autocomplete="username"
+          @input="validationError = ''"
           @keyup.enter.native="handleEnter"
         ></b-input>
       </b-field>
-      <b-field :label="$t('login.password')" type="is-success">
+      <b-field :label="$t('login.password')">
         <b-input
           v-model="password"
           type="password"
+          password-reveal
+          :autocomplete="first ? 'new-password' : 'current-password'"
           :maxlength="first ? '32' : ''"
+          @input="validationError = ''"
           @keyup.enter.native="handleEnter"
         ></b-input>
       </b-field>
+      <p v-if="validationError" role="alert" class="help is-danger" style="margin-bottom: 0.75rem">
+        {{ validationError }}
+      </p>
       <b-message v-if="first" type="is-info" class="after-line-dot5">
         <p>{{ $t("register.messages.0") }}</p>
         <p>{{ $t("register.messages.1") }}</p>
@@ -32,7 +40,7 @@
     </section>
     <footer class="modal-card-foot flex-end">
       <b-button
-        :class="{ 'is-primary': !first, 'is-twitter': first }"
+        type="is-primary"
         :loading="isSubmitting"
         :disabled="isSubmitting"
         @click="handleClickSubmit"
@@ -61,6 +69,7 @@ export default {
     username: "",
     password: "",
     isSubmitting: false,
+    validationError: "",
   }),
   mounted() {
     this.$refs.username.focus();
@@ -70,6 +79,11 @@ export default {
       if (this.isSubmitting) {
         return;
       }
+      if (!this.username.trim() || !this.password) {
+        this.validationError = this.$t("loginValidation.emptyCredentials");
+        return;
+      }
+      this.validationError = "";
       this.isSubmitting = true;
       if (this.first) {
         //register

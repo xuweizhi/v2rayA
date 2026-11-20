@@ -1,12 +1,19 @@
 <template>
-  <div class="modal-card" style="max-width: 520px; margin: auto">
+  <div class="modal-card server-modal">
     <header class="modal-card-head">
       <p class="modal-card-title">
         {{ $tc("configureServer.title", readonly ? 2 : 1) }}
       </p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
-    <section ref="section" :class="{ 'modal-card-body': true }">
-      <b-tabs v-model="tabChoice" position="is-centered" class="block" type="is-boxed is-twitter same-width-5">
+    <section ref="section" class="modal-card-body">
+      <fieldset :disabled="readonly" class="server-fieldset">
+      <b-tabs v-model="tabChoice" class="block server-protocol-tabs" type="is-toggle" :animated="false">
         <b-tab-item label="VMESS">
           <b-field label="Name" label-position="on-border">
             <b-input ref="v2ray_name" v-model="v2ray.ps" :placeholder="$t('configureServer.servername')" expanded />
@@ -113,7 +120,7 @@
             <b-input ref="v2ray_service_name" v-model="v2ray.path" type="text" expanded />
           </b-field>
           <b-field v-show="v2ray.net === 'grpc'" label="MultiMode" label-position="on-border">
-            <b-switch v-model="v2ray.multiMode">{{ v2ray.multiMode ? $t('operations.yes') : $t('operations.no') }}</b-switch>
+            <b-switch v-model="v2ray.multiMode" :disabled="readonly">{{ v2ray.multiMode ? $t('operations.yes') : $t('operations.no') }}</b-switch>
           </b-field>
           <b-field v-show="v2ray.net === 'grpc'" label="Idle Timeout" label-position="on-border">
             <b-input v-model="v2ray.idleTimeout" type="number" placeholder="Idle Timeout (s)" expanded />
@@ -122,7 +129,7 @@
             <b-input v-model="v2ray.healthCheckTimeout" type="number" placeholder="Health Check Timeout (s)" expanded />
           </b-field>
           <b-field v-show="v2ray.net === 'grpc'" label="Permit Without Stream" label-position="on-border">
-            <b-switch v-model="v2ray.permitWithoutStream">{{ v2ray.permitWithoutStream ? $t('operations.yes') : $t('operations.no') }}</b-switch>
+            <b-switch v-model="v2ray.permitWithoutStream" :disabled="readonly">{{ v2ray.permitWithoutStream ? $t('operations.yes') : $t('operations.no') }}</b-switch>
           </b-field>
           <b-field v-show="v2ray.net === 'grpc'" label="Initial Windows Size" label-position="on-border">
             <b-input v-model="v2ray.initialWindowsSize" type="number" placeholder="Initial Windows Size" expanded />
@@ -147,11 +154,13 @@
               <option value="PATCH">PATCH</option>
             </b-select>
           </b-field>
+          <details v-show="v2ray.net === 'xhttp'" class="va-advanced-details">
+            <summary>{{ $t("serverForm.advancedXhttp") }}</summary>
           <b-field v-show="v2ray.net === 'xhttp'" label="noGRPCHeader" label-position="on-border">
-            <b-switch v-model="v2ray.noGRPCHeader">{{ v2ray.noGRPCHeader ? $t('operations.yes') : $t('operations.no') }}</b-switch>
+            <b-switch v-model="v2ray.noGRPCHeader" :disabled="readonly">{{ v2ray.noGRPCHeader ? $t('operations.yes') : $t('operations.no') }}</b-switch>
           </b-field>
           <b-field v-show="v2ray.net === 'xhttp'" label="noSSEHeader" label-position="on-border">
-            <b-switch v-model="v2ray.noSSEHeader">{{ v2ray.noSSEHeader ? $t('operations.yes') : $t('operations.no') }}</b-switch>
+            <b-switch v-model="v2ray.noSSEHeader" :disabled="readonly">{{ v2ray.noSSEHeader ? $t('operations.yes') : $t('operations.no') }}</b-switch>
           </b-field>
           <b-field v-show="v2ray.net === 'xhttp'" label="scMaxEachPostBytes (From-To)" label-position="on-border">
             <b-input v-model="v2ray.scMaxEachPostBytesFrom" type="number" placeholder="From" expanded />
@@ -200,11 +209,12 @@
               <div v-for="(hdr, idx) in v2ray.xhttpHeaders" :key="idx" style="display:flex;gap:4px;margin-bottom:4px">
                 <b-input v-model="hdr.key" placeholder="Header-Name" expanded />
                 <b-input v-model="hdr.value" placeholder="value" expanded />
-                <b-button type="is-danger is-light" icon-left="delete" size="is-small" @click="v2ray.xhttpHeaders.splice(idx,1)" />
+                <b-button v-if="!readonly" type="is-danger is-light" icon-left="delete" size="is-small" @click="v2ray.xhttpHeaders.splice(idx,1)" />
               </div>
-              <b-button size="is-small" icon-left="plus" @click="v2ray.xhttpHeaders.push({key:'',value:''})">Add Header</b-button>
+              <b-button v-if="!readonly" size="is-small" icon-left="plus" @click="v2ray.xhttpHeaders.push({key:'',value:''})">Add Header</b-button>
             </div>
           </b-field>
+          </details>
           <!-- QUIC -->
           <b-field v-show="v2ray.net === 'quic'" label="QUIC Security" label-position="on-border">
             <b-select v-model="v2ray.quicSecurity" expanded>
@@ -321,7 +331,7 @@
             <b-input ref="vless_service_name" v-model="v2ray.path" type="text" expanded />
           </b-field>
           <b-field v-show="v2ray.net === 'grpc'" label="MultiMode" label-position="on-border">
-            <b-switch v-model="v2ray.multiMode">{{ v2ray.multiMode ? $t('operations.yes') : $t('operations.no') }}</b-switch>
+            <b-switch v-model="v2ray.multiMode" :disabled="readonly">{{ v2ray.multiMode ? $t('operations.yes') : $t('operations.no') }}</b-switch>
           </b-field>
           <b-field v-show="v2ray.net === 'grpc'" label="Idle Timeout" label-position="on-border">
             <b-input ref="vless_idleTimeout" v-model="v2ray.idleTimeout" type="number" placeholder="Idle Timeout (s)" expanded />
@@ -330,7 +340,7 @@
             <b-input ref="vless_healthCheckTimeout" v-model="v2ray.healthCheckTimeout" type="number" placeholder="Health Check Timeout (s)" expanded />
           </b-field>
           <b-field v-show="v2ray.net === 'grpc'" label="Permit Without Stream" label-position="on-border">
-            <b-switch v-model="v2ray.permitWithoutStream">{{ v2ray.permitWithoutStream ? $t('operations.yes') : $t('operations.no') }}</b-switch>
+            <b-switch v-model="v2ray.permitWithoutStream" :disabled="readonly">{{ v2ray.permitWithoutStream ? $t('operations.yes') : $t('operations.no') }}</b-switch>
           </b-field>
           <b-field v-show="v2ray.net === 'grpc'" label="Initial Windows Size" label-position="on-border">
             <b-input ref="vless_initialWindowsSize" v-model="v2ray.initialWindowsSize" type="number" placeholder="Initial Windows Size" expanded />
@@ -355,11 +365,13 @@
               <option value="PATCH">PATCH</option>
             </b-select>
           </b-field>
+          <details v-show="v2ray.net === 'xhttp'" class="va-advanced-details">
+            <summary>{{ $t("serverForm.advancedXhttp") }}</summary>
           <b-field v-show="v2ray.net === 'xhttp'" label="noGRPCHeader" label-position="on-border">
-            <b-switch v-model="v2ray.noGRPCHeader">{{ v2ray.noGRPCHeader ? $t('operations.yes') : $t('operations.no') }}</b-switch>
+            <b-switch v-model="v2ray.noGRPCHeader" :disabled="readonly">{{ v2ray.noGRPCHeader ? $t('operations.yes') : $t('operations.no') }}</b-switch>
           </b-field>
           <b-field v-show="v2ray.net === 'xhttp'" label="noSSEHeader" label-position="on-border">
-            <b-switch v-model="v2ray.noSSEHeader">{{ v2ray.noSSEHeader ? $t('operations.yes') : $t('operations.no') }}</b-switch>
+            <b-switch v-model="v2ray.noSSEHeader" :disabled="readonly">{{ v2ray.noSSEHeader ? $t('operations.yes') : $t('operations.no') }}</b-switch>
           </b-field>
           <b-field v-show="v2ray.net === 'xhttp'" label="scMaxEachPostBytes (From-To)" label-position="on-border">
             <b-input ref="vless_scMaxEachPostBytesFrom" v-model="v2ray.scMaxEachPostBytesFrom" type="number" placeholder="From" expanded />
@@ -408,11 +420,12 @@
               <div v-for="(hdr, idx) in v2ray.xhttpHeaders" :key="idx" style="display:flex;gap:4px;margin-bottom:4px">
                 <b-input v-model="hdr.key" placeholder="Header-Name" expanded />
                 <b-input v-model="hdr.value" placeholder="value" expanded />
-                <b-button type="is-danger is-light" icon-left="delete" size="is-small" @click="v2ray.xhttpHeaders.splice(idx,1)" />
+                <b-button v-if="!readonly" type="is-danger is-light" icon-left="delete" size="is-small" @click="v2ray.xhttpHeaders.splice(idx,1)" />
               </div>
-              <b-button size="is-small" icon-left="plus" @click="v2ray.xhttpHeaders.push({key:'',value:''})">Add Header</b-button>
+              <b-button v-if="!readonly" size="is-small" icon-left="plus" @click="v2ray.xhttpHeaders.push({key:'',value:''})">Add Header</b-button>
             </div>
           </b-field>
+          </details>
           <!-- QUIC -->
           <b-field v-show="v2ray.net === 'quic'" label="QUIC Security" label-position="on-border">
             <b-select v-model="v2ray.quicSecurity" expanded>
@@ -911,14 +924,20 @@
           </b-field>
         </b-tab-item>
       </b-tabs>
+      </fieldset>
     </section>
-    <footer v-if="!readonly" class="modal-card-foot flex-end">
-      <button class="button" type="button" @click="$parent.close()">
-        {{ $t("operations.cancel") }}
+    <footer class="modal-card-foot flex-end">
+      <button v-if="readonly" class="button" type="button" @click="$parent.close()">
+        {{ $t("operations.close") }}
       </button>
-      <button class="button is-primary" @click="handleClickSubmit">
-        {{ $t("operations.saveApply") }}
-      </button>
+      <template v-else>
+        <button class="button" type="button" @click="$parent.close()">
+          {{ $t("operations.cancel") }}
+        </button>
+        <button class="button is-primary" @click="handleClickSubmit">
+          {{ $t("operations.saveApply") }}
+        </button>
+      </template>
     </footer>
   </div>
 </template>
@@ -1205,17 +1224,12 @@ export default {
             this.tabChoice = 11;
           }
           this.$nextTick(() => {
-            if (this.readonly) {
+            if (this.readonly && this.$refs.section) {
               this.$refs.section
                 .querySelectorAll("input, textarea")
-                .forEach((x) => (x.readOnly = "readOnly"));
-              this.$refs.section.querySelectorAll("select").forEach((x) => {
-                const text = x.querySelector(
-                  `option[value="${x.value}"]`
-                ).textContent;
-                console.log(x.value, text);
-                x.outerHTML = `<input type="text" class="input" readonly="readonly" value="${text}">`;
-              });
+                .forEach((x) => {
+                  x.readOnly = true;
+                });
             }
           });
         });
@@ -2098,12 +2112,51 @@ export default {
 </script>
 
 <style lang="scss">
-.is-twitter .is-active a {
-  color: #4099ff !important;
+.server-modal {
+  max-width: 680px;
+  width: calc(100vw - 2rem);
+  margin: auto;
 }
 
-.same-width-5 li {
-  min-width: 5em;
-  width: unset !important;
+.server-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.server-protocol-tabs .tabs ul {
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-start;
+  border-bottom: 0;
+}
+
+.server-protocol-tabs .tabs li a {
+  border-radius: 6px !important;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.va-advanced-details {
+  margin: 0.85rem 0;
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--va-radius-sm);
+  border: 1px solid var(--va-border);
+  background: var(--va-surface-subtle);
+
+  summary {
+    cursor: pointer;
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--va-text-muted);
+    user-select: none;
+  }
+
+  &[open] summary {
+    margin-bottom: 0.85rem;
+    color: var(--va-primary);
+  }
 }
 </style>

@@ -2,6 +2,12 @@
   <div class="modal-card" style="max-width: 640px; margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("customInbound.title") }}</p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$emit('close')"
+      ></button>
     </header>
     <section class="modal-card-body">
       <!-- Existing custom inbounds list -->

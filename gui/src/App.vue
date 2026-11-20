@@ -6,12 +6,34 @@
           <img src="@/assets/img/logo2.png" alt="v2rayA" class="logo no-select" />
         </b-navbar-item>
         <b-navbar-item tag="div">
-          <b-tag id="statusTag" class="pointerTag" role="button" tabindex="0" :type="statusMap[runningState.running]"
-            @mouseenter.native="handleOnStatusMouseEnter" @mouseleave.native="handleOnStatusMouseLeave"
-            @keydown.native.enter.prevent="handleClickStatus"
-            @keydown.native.space.prevent="handleClickStatus"
-            @click.native="handleClickStatus">{{ coverStatusText ? coverStatusText : runningState.running }}
-          </b-tag>
+          <button
+            id="statusTag"
+            type="button"
+            class="status-pill"
+            :class="[`is-${statusState}`, { 'is-busy': statusBusy }]"
+            :disabled="statusBusy || statusState === 'checking'"
+            :title="statusActionTitle"
+            :aria-label="statusActionTitle"
+            @click="handleClickStatus"
+          >
+            <span class="status-pill__dot" aria-hidden="true"></span>
+            <span class="status-pill__label">{{ runningState.running }}</span>
+            <i
+              v-if="statusBusy"
+              class="mdi mdi-loading mdi-spin status-pill__icon"
+              aria-hidden="true"
+            ></i>
+            <i
+              v-else-if="statusState === 'running'"
+              class="mdi mdi-stop-circle-outline status-pill__icon"
+              aria-hidden="true"
+            ></i>
+            <i
+              v-else-if="statusState === 'stopped' || statusState === 'waiting'"
+              class="mdi mdi-play-circle-outline status-pill__icon"
+              aria-hidden="true"
+            ></i>
+          </button>
         </b-navbar-item>
         <b-navbar-item tag="div">
           <OutboundGroupPanel
@@ -29,69 +51,131 @@
       <template slot="start"></template>
 
       <template slot="end">
-        <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="openNodeAction('handleClickCreate')">
-          <i class="mdi mdi-file-plus-outline app-nav-icon" aria-hidden="true"></i>
-          {{ $t("operations.create") }}
-        </b-navbar-item>
-        <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="openNodeAction('handleClickImport')">
-          <i class="mdi mdi-import app-nav-icon" aria-hidden="true"></i>
-          {{ $t("operations.import") }}
-        </b-navbar-item>
-        <b-navbar-item v-if="!noviceMode" tag="button" type="button" class="navbar-action" @click.native="openNodeAction('openDetectRule')">
-          <i class="mdi mdi-radar app-nav-icon" aria-hidden="true"></i>
-          {{ $t("operations.detectRule") }}
-        </b-navbar-item>
-        <b-navbar-item v-if="!noviceMode" tag="button" type="button" class="navbar-action" @click.native="openNodeAction('handleClickConnections')">
-          <i class="mdi mdi-cloud-outline app-nav-icon" aria-hidden="true"></i>
-          {{ $t("operations.connections") }}
-        </b-navbar-item>
-        <b-navbar-item v-if="!noviceMode" tag="button" type="button" class="navbar-action" @click.native="handleClickTraffic">
-          <i class="mdi mdi-chart-areaspline app-nav-icon" aria-hidden="true"></i>
-          {{ $t("operations.traffic") }}
-        </b-navbar-item>
+        <b-dropdown position="is-bottom-left" aria-role="menu" class="toolsdropdown">
+          <button slot="trigger" class="navbar-item navbar-dropdown-trigger" type="button">
+            <i class="mdi mdi-tools app-nav-icon" aria-hidden="true"></i>
+            <span class="no-select">{{ $t("dashboard.tools") }}</span>
+            <i class="mdi mdi-menu-down" aria-hidden="true"></i>
+          </button>
+          <b-dropdown-item
+            v-if="!noviceMode"
+            aria-role="menuitem"
+            class="no-select"
+            @click="openNodeAction('handleClickConnections')"
+          >
+            <i class="mdi mdi-cloud-outline app-menu-icon" aria-hidden="true"></i>
+            {{ $t("operations.connections") }}
+          </b-dropdown-item>
+          <b-dropdown-item
+            v-if="!noviceMode"
+            aria-role="menuitem"
+            class="no-select"
+            @click="handleClickTraffic"
+          >
+            <i class="mdi mdi-chart-areaspline app-menu-icon" aria-hidden="true"></i>
+            {{ $t("operations.traffic") }}
+          </b-dropdown-item>
+          <b-dropdown-item
+            v-if="!noviceMode"
+            aria-role="menuitem"
+            class="no-select"
+            @click="openNodeAction('openDetectRule')"
+          >
+            <i class="mdi mdi-radar app-menu-icon" aria-hidden="true"></i>
+            {{ $t("operations.detectRule") }}
+          </b-dropdown-item>
+          <b-dropdown-item
+            aria-role="menuitem"
+            class="no-select"
+            @click="handleClickDiagnose"
+          >
+            <i class="mdi mdi-stethoscope app-menu-icon" aria-hidden="true"></i>
+            {{ $t("diagnose.title") }}
+          </b-dropdown-item>
+          <b-dropdown-item
+            aria-role="menuitem"
+            class="no-select"
+            @click="handleClickLogs"
+          >
+            <i class="mdi mdi-text-box-outline app-menu-icon" aria-hidden="true"></i>
+            {{ $t("common.log") }}
+          </b-dropdown-item>
+        </b-dropdown>
+
         <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="handleClickSetting">
           <i class="mdi mdi-cog-outline app-nav-icon" aria-hidden="true"></i>
           {{ $t("common.setting") }}
         </b-navbar-item>
-        <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="handleClickAbout">
-          <i class="mdi mdi-heart-outline app-nav-icon" aria-hidden="true"></i>
-          {{ $t("common.about") }}
+
+        <b-navbar-item
+          tag="button"
+          type="button"
+          class="navbar-action notice-nav-btn"
+          :title="$t('notice.title')"
+          :aria-label="$t('notice.title')"
+          @click.native="handleClickNotices"
+        >
+          <span class="notice-icon-wrap">
+            <i class="mdi mdi-bell-outline app-nav-icon" aria-hidden="true"></i>
+            <span v-if="unreadNotices > 0" class="notice-badge">
+              {{ unreadNotices > 99 ? "99+" : unreadNotices }}
+            </span>
+          </span>
+          <span class="notice-nav-label">{{ $t("notice.title") }}</span>
         </b-navbar-item>
-        <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="handleClickLogs">
-          <i class="mdi mdi-information-outline app-nav-icon" aria-hidden="true"></i>
-          {{ $t("common.log") }}
-        </b-navbar-item>
-        <b-navbar-item tag="button" type="button" class="navbar-action" @click.native="toggleTheme">
+
+        <b-navbar-item
+          tag="button"
+          type="button"
+          class="navbar-action"
+          :title="themeSwitchLabel"
+          :aria-label="themeSwitchLabel"
+          @click.native="toggleTheme"
+        >
           <i
             :class="themePreference === 'auto' ? 'mdi mdi-theme-light-dark' : (isDarkTheme ? 'mdi mdi-weather-sunny' : 'mdi mdi-weather-night')"
             class="app-nav-icon"
             aria-hidden="true"
           ></i>
-          {{ themeSwitchLabel }}
+          <span class="theme-nav-label">{{ themeSwitchLabel }}</span>
         </b-navbar-item>
-        <b-dropdown position="is-bottom-left" aria-role="menu" class="langdropdown">
-          <button slot="trigger" class="navbar-item navbar-dropdown-trigger" type="button">
-            <i class="mdi mdi-earth app-nav-icon" aria-hidden="true"></i>
-            <span class="no-select">{{ currentLangLabel }}</span>
-            <i class="mdi mdi-menu-down" aria-hidden="true"></i>
-          </button>
-          <b-dropdown-item v-for="lang of langs" :key="lang.code" aria-role="menuitem" class="no-select"
-            @click="handleClickLang(lang.code)">
-            <span style="font-weight: 500; min-width: 120px; display: inline-block">{{ lang.label }}</span>
-            <span style="margin-left: 8px; color: #7a7a7a">{{ lang.code }}</span>
-          </b-dropdown-item>
-        </b-dropdown>
+
         <b-dropdown position="is-bottom-left" aria-role="menu" style="margin-right: 10px" class="menudropdown">
           <button slot="trigger" class="navbar-item navbar-dropdown-trigger" type="button">
+            <i class="mdi mdi-account-circle-outline app-nav-icon" aria-hidden="true"></i>
             <span class="no-select">{{ username }}</span>
             <i class="mdi mdi-menu-down" aria-hidden="true"></i>
           </button>
-          <b-dropdown-item custom aria-role="menuitem">
-            {{ $t('common.loggedAs', { username }) }}
+          <b-dropdown-item custom aria-role="menuitem" class="menu-section-header">
+            {{ $t("common.loggedAs", { username }) }}
           </b-dropdown-item>
           <hr class="dropdown-divider" />
+          <b-dropdown-item custom aria-role="menuitem" class="menu-section-title">
+            <i class="mdi mdi-earth" aria-hidden="true"></i>
+            {{ $t("dashboard.language") }}
+          </b-dropdown-item>
+          <b-dropdown-item
+            v-for="lang of langs"
+            :key="lang.code"
+            aria-role="menuitem"
+            class="no-select lang-menu-item"
+            :class="{ 'is-active': lang.flag === currentLocale }"
+            @click="handleClickLang(lang.code)"
+          >
+            <span class="lang-item-label">{{ lang.label }}</span>
+            <i
+              v-if="lang.flag === currentLocale"
+              class="mdi mdi-check lang-item-check"
+              aria-hidden="true"
+            ></i>
+          </b-dropdown-item>
+          <hr class="dropdown-divider" />
+          <b-dropdown-item aria-role="menuitem" class="no-select" @click="handleClickAbout">
+            <i class="mdi mdi-information-outline app-menu-icon" aria-hidden="true"></i>
+            {{ $t("common.about") }}
+          </b-dropdown-item>
           <b-dropdown-item value="logout" aria-role="menuitem" class="no-select" @click="handleClickLogout">
-            <i class="mdi mdi-logout" aria-hidden="true"></i>
+            <i class="mdi mdi-logout app-menu-icon" aria-hidden="true"></i>
             {{ $t("operations.logout") }}
           </b-dropdown-item>
         </b-dropdown>
@@ -105,8 +189,19 @@
       :observatory="observatory"
       @novice-mode-change="handleNoviceModeChange"
     >
-      <DashboardSummary ref="dashboardSummary" :traffic="traffic" :running-state="runningState" :outbound="outboundName"
-        @traffic="handleClickTraffic" @diagnose="handleClickDiagnose" @settings="handleClickSetting" />
+      <DashboardSummary
+        ref="dashboardSummary"
+        :traffic="traffic"
+        :running-state="runningState"
+        :outbound="outboundName"
+        :novice-mode="noviceMode"
+        :connected-count="connectedNodeCount"
+        @traffic="handleClickTraffic"
+        @diagnose="handleClickDiagnose"
+        @settings="handleClickSetting"
+        @logs="handleClickLogs"
+        @active-nodes="openNodeAction('toggleSidebar')"
+      />
     </node>
     <b-modal :active.sync="showCustomPorts" has-modal-card trap-focus aria-role="dialog" aria-modal
       class="modal-custom-ports">
@@ -133,6 +228,8 @@ import ModalLog from "@/components/modalLog";
 import ModalLogin from "@/components/modalLogin";
 import ModalTraffic from "@/components/modalTraffic";
 import ModalDiagnose from "@/components/modalDiagnose";
+import ModalNotice from "@/components/modalNotice";
+import ModalAbout from "@/components/modalAbout";
 import DashboardSummary from "@/components/dashboardSummary";
 
 export default {
@@ -144,14 +241,12 @@ export default {
       loginModalActive: false,
       loginModalFirst: false,
       showSidebar: true,
-      statusMap: {
-        [this.$t("common.checkRunning")]: "is-light",
-        [this.$t("common.notRunning")]: "is-danger",
-        [this.$t("common.isRunning")]: "is-success",
-        [this.$t("common.waitingNetwork")]: "is-warning",
-      },
-      coverStatusText: "",
+      statusBusy: false,
+      unreadNotices: 0,
+      viewportWidth: typeof window !== "undefined" ? window.innerWidth : 1280,
+      currentLocale: this.$i18n ? this.$i18n.locale : (localStorage["_lang"] || "zh"),
       runningState: {
+        status: "checking",
         running: this.$t("common.checkRunning"),
         networkPaused: false,
         connectedServer: null,
@@ -170,8 +265,8 @@ export default {
       outbounds: ["proxy"],
       outboundDropdownHover: {},
       updateOutboundDropdown: true,
-      themePreference: 'auto',
-      systemDark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+      themePreference: "auto",
+      systemDark: window.matchMedia("(prefers-color-scheme: dark)").matches,
       wsReconnectTimer: null,
       appDestroyed: false,
       traffic: {
@@ -193,27 +288,53 @@ export default {
       return payload["uname"];
     },
     isMobile() {
-      return window.screen.width < 800;
+      return this.viewportWidth < 800;
+    },
+    statusState() {
+      if (this.runningState.status) {
+        return this.runningState.status;
+      }
+      if (this.runningState.running === this.$t("common.isRunning")) return "running";
+      if (this.runningState.running === this.$t("common.waitingNetwork")) return "waiting";
+      if (this.runningState.running === this.$t("common.notRunning")) return "stopped";
+      return "checking";
+    },
+    statusActionTitle() {
+      if (this.statusState === "running") {
+        return this.$t("dashboard.clickToStop");
+      }
+      if (this.statusState === "stopped" || this.statusState === "waiting") {
+        return this.$t("dashboard.clickToStart");
+      }
+      return this.runningState.running;
+    },
+    connectedNodeCount() {
+      const list = this.runningState.connectedServer;
+      if (!Array.isArray(list)) return 0;
+      return list.filter((s) => (s.outbound || "proxy") === this.outboundName).length;
     },
     currentLangLabel() {
-      const currentLang = localStorage["_lang"] || "zh";
-      const lang = this.langs.find(l => l.flag === currentLang);
+      const lang = this.langs.find((l) => l.flag === this.currentLocale);
       return lang ? lang.label : "中文-中国";
     },
     isDarkTheme() {
-      if (this.themePreference === 'dark') return true;
-      if (this.themePreference === 'light') return false;
+      if (this.themePreference === "dark") return true;
+      if (this.themePreference === "light") return false;
       return this.systemDark;
     },
     themeSwitchLabel() {
-      if (this.themePreference === 'auto') return this.$t('common.autoTheme');
-      if (this.themePreference === 'dark') return this.$t('common.darkTheme');
-      return this.$t('common.lightTheme');
+      if (this.themePreference === "auto") return this.$t("common.autoTheme");
+      if (this.themePreference === "dark") return this.$t("common.darkTheme");
+      return this.$t("common.lightTheme");
     },
   },
   mounted() {
     console.log("app created");
     this.initTheme();
+    this._onWindowResize = () => {
+      this.viewportWidth = window.innerWidth;
+    };
+    window.addEventListener("resize", this._onWindowResize);
     let ba = localStorage.getItem("backendAddress");
     if (ba) {
       let u = parseURL(ba);
@@ -303,9 +424,13 @@ export default {
       // 静默处理认证错误（如 token 过期），避免触发 axios 401 拦截器弹出登录框
     });
     this.connectWsMessage();
+    this.loadUnreadNotices();
   },
   beforeDestroy() {
     this.appDestroyed = true;
+    if (this._onWindowResize) {
+      window.removeEventListener("resize", this._onWindowResize);
+    }
     if (this.wsReconnectTimer) {
       clearTimeout(this.wsReconnectTimer);
       this.wsReconnectTimer = null;
@@ -620,29 +745,52 @@ export default {
       });
     },
     handleClickLang(langCode) {
-      const lang = this.langs.find(l => l.code === langCode);
+      const lang = this.langs.find((l) => l.code === langCode);
       if (lang) {
         localStorage["_lang"] = lang.flag;
-        location.reload();
+        this.currentLocale = lang.flag;
+        this.$i18n.locale = lang.flag;
+        const labelMap = {
+          running: this.$t("common.isRunning"),
+          stopped: this.$t("common.notRunning"),
+          waiting: this.$t("common.waitingNetwork"),
+          checking: this.$t("common.checkRunning"),
+        };
+        this.runningState.running = labelMap[this.statusState] || this.$t("common.checkRunning");
+        if (this.$refs.nodeRef && typeof this.$refs.nodeRef.refreshStatusLabel === "function") {
+          this.$refs.nodeRef.refreshStatusLabel();
+        }
       }
+    },
+    loadUnreadNotices() {
+      if (!localStorage["token"]) return;
+      this.$axios({ url: apiRoot + "/notices", method: "get" })
+        .then((res) => {
+          if (res.data && res.data.code === "SUCCESS" && res.data.data) {
+            this.unreadNotices = res.data.data.unread || 0;
+          }
+        })
+        .catch(() => {});
+    },
+    handleClickNotices() {
+      this.$buefy.modal.open({
+        parent: this,
+        component: ModalNotice,
+        hasModalCard: true,
+        canCancel: true,
+        events: {
+          close: () => {
+            this.loadUnreadNotices();
+          },
+        },
+      });
+      this.unreadNotices = 0;
     },
     handleOnOutboundMouseEnter(outbound) {
       this.outboundDropdownHover = { [outbound]: true };
     },
     handleOnOutboundMouseLeave() {
       this.outboundDropdownHover = {};
-    },
-    handleOnStatusMouseEnter() {
-      if (this.runningState.running === this.$t("common.isRunning")) {
-        this.coverStatusText = this.$t("v2ray.stop");
-      } else if (this.runningState.running === this.$t("common.notRunning")) {
-        this.coverStatusText = this.$t("v2ray.start");
-      } else if (this.runningState.running === this.$t("common.waitingNetwork")) {
-        this.coverStatusText = this.$t("common.waitingNetwork");
-      }
-    },
-    handleOnStatusMouseLeave() {
-      this.coverStatusText = "";
     },
     handleClickSetting() {
       const that = this;
@@ -666,33 +814,17 @@ export default {
     },
     handleClickAbout() {
       this.$buefy.modal.open({
-        width: 640,
-        content: `
-<div class="modal-card" style="margin:auto">
-                    <header class="modal-card-head">
-                        <p class="modal-card-title">mzz2017 / v2rayA</p>
-                    </header>
-                    <section class="modal-card-body lazy">
-                        ${this.$t(`about`)}
-                    </section>
-                    <footer class="modal-card-foot">
-                        <a class="is-link" href="https://github.com/v2rayA/v2rayA" target="_blank">
-                          <img class="leave-right" src="https://img.shields.io/github/stars/mzz2017/v2rayA.svg?style=social" alt="stars">
-                          <img class="leave-right" src="https://img.shields.io/github/forks/mzz2017/v2rayA.svg?style=social" alt="forks">
-                          <img class="leave-right" src="https://img.shields.io/github/watchers/mzz2017/v2rayA.svg?style=social" alt="watchers">
-                        </a>
-                    </footer>
-                </div>
-`,
+        parent: this,
+        component: ModalAbout,
+        hasModalCard: true,
+        canCancel: true,
       });
     },
     handleClickStatus() {
-      if (
-        this.runningState.running === this.$t("common.notRunning") ||
-        this.runningState.running === this.$t("common.waitingNetwork")
-      ) {
+      if (this.statusBusy) return;
+      if (this.statusState === "stopped" || this.statusState === "waiting") {
         let cancel;
-        let loading = this.$buefy.loading.open();
+        this.statusBusy = true;
         waitingConnected(
           this.$axios({
             url: apiRoot + "/v2ray",
@@ -700,10 +832,43 @@ export default {
             cancelToken: new axios.CancelToken(function executor(c) {
               cancel = c;
             }),
-          }).then((res) => {
+          })
+            .then((res) => {
+              if (res.data.code === "SUCCESS") {
+                Object.assign(this.runningState, {
+                  status: "running",
+                  running: this.$t("common.isRunning"),
+                  networkPaused: false,
+                  connectedServer: res.data.data.touch.connectedServer,
+                });
+              } else {
+                this.$buefy.toast.open({
+                  message: res.data.message,
+                  type: "is-warning",
+                  duration: 5000,
+                  position: "is-top",
+                  queue: false,
+                });
+              }
+            })
+            .catch(() => {})
+            .finally(() => {
+              this.statusBusy = false;
+            }),
+          3 * 1000,
+          cancel
+        );
+      } else if (this.statusState === "running") {
+        this.statusBusy = true;
+        this.$axios({
+          url: apiRoot + "/v2ray",
+          method: "delete",
+        })
+          .then((res) => {
             if (res.data.code === "SUCCESS") {
               Object.assign(this.runningState, {
-                running: this.$t("common.isRunning"),
+                status: "stopped",
+                running: this.$t("common.notRunning"),
                 networkPaused: false,
                 connectedServer: res.data.data.touch.connectedServer,
               });
@@ -716,33 +881,11 @@ export default {
                 queue: false,
               });
             }
-          }).finally(() => {
-            loading.close();
-          }),
-          3 * 1000,
-          cancel
-        );
-      } else if (this.runningState.running === this.$t("common.isRunning")) {
-        this.$axios({
-          url: apiRoot + "/v2ray",
-          method: "delete",
-        }).then((res) => {
-          if (res.data.code === "SUCCESS") {
-            Object.assign(this.runningState, {
-              running: this.$t("common.notRunning"),
-              networkPaused: false,
-              connectedServer: res.data.data.touch.connectedServer,
-            });
-          } else {
-            this.$buefy.toast.open({
-              message: res.data.message,
-              type: "is-warning",
-              duration: 5000,
-              position: "is-top",
-              queue: false,
-            });
-          }
-        });
+          })
+          .catch(() => {})
+          .finally(() => {
+            this.statusBusy = false;
+          });
       }
     },
     handleClickLogout() {
@@ -798,14 +941,148 @@ export default {
 }
 
 .logo {
-  min-height: 2.5rem;
-  margin-left: 1em;
-  margin-right: 1em;
+  min-height: 2.25rem;
+  margin-left: 0.5rem;
+  margin-right: 0.5rem;
 }
 
 .app-nav-icon {
-  margin-right: 0.25rem;
-  font-size: 1.25em;
+  margin-right: 0.3rem;
+  font-size: 1.2em;
+}
+
+.app-menu-icon {
+  margin-right: 0.45rem;
+  font-size: 1.05em;
+  vertical-align: middle;
+}
+
+.status-pill {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.72rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.75;
+  }
+
+  &.is-running {
+    background: var(--va-success-soft);
+    border-color: var(--va-success);
+    color: var(--va-success);
+
+    &:hover:not(:disabled) {
+      background: var(--va-success);
+      color: #ffffff;
+    }
+  }
+
+  &.is-stopped {
+    background: var(--va-surface-subtle);
+    border-color: var(--va-border-strong);
+    color: var(--va-text);
+
+    &:hover:not(:disabled) {
+      background: var(--va-primary);
+      border-color: var(--va-primary);
+      color: #ffffff;
+    }
+  }
+
+  &.is-waiting {
+    background: var(--va-warning-soft);
+    border-color: var(--va-warning);
+    color: var(--va-warning);
+
+    &:hover:not(:disabled) {
+      background: var(--va-warning);
+      color: #ffffff;
+    }
+  }
+
+  &.is-checking {
+    background: var(--va-surface-subtle);
+    border-color: var(--va-border);
+    color: var(--va-text-muted);
+  }
+}
+
+.status-pill__dot {
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.status-pill__icon {
+  font-size: 1.05em;
+  line-height: 1;
+}
+
+.notice-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.notice-badge {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.25rem;
+  min-width: 1.05rem;
+  height: 1.05rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--va-danger);
+  color: #ffffff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.05rem;
+  text-align: center;
+}
+
+.notice-nav-label,
+.theme-nav-label {
+  display: none;
+}
+
+.menu-section-header {
+  font-size: 0.8rem;
+  color: var(--va-text-muted);
+}
+
+.menu-section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--va-text-subtle);
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+.lang-menu-item {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.lang-item-check {
+  color: var(--va-primary);
+  font-size: 1rem;
 }
 
 .navbar-action,
@@ -821,34 +1098,34 @@ export default {
 
 .navbar-action:focus-visible,
 .navbar-dropdown-trigger:focus-visible,
-.pointerTag:focus-visible {
-  outline: 2px solid #3273dc;
+.status-pill:focus-visible {
+  outline: 2px solid var(--va-primary);
   outline-offset: -2px;
 }
 
-.pointerTag:hover {
-  cursor: pointer;
+@media screen and (max-width: 959px) {
+  .notice-nav-label,
+  .theme-nav-label {
+    display: inline;
+  }
 }
 </style>
 
 <style lang="scss">
 html {
-  //  &::-webkit-scrollbar {
-  //    // remove annoying scrollbar
-  //    display: none;
-  //  }
-
   #app {
-    min-height: calc(100vh - 3.25rem);
-    /*overflow-y: auto;*/
-    //overflow-scrolling: touch;
-    //-webkit-overflow-scrolling: touch;
+    min-height: calc(100vh - 3.5rem);
   }
+}
+
+.app-navbar.navbar.is-light {
+  background-color: var(--va-surface);
+  border-bottom: 1px solid var(--va-border);
+  box-shadow: var(--va-shadow-sm);
 }
 
 @media screen and (max-width: 1023px) {
   .dropdown.is-mobile-modal .dropdown-menu {
-    // fix modal blur issues
     left: 0 !important;
     right: 0 !important;
     margin: auto;
@@ -856,7 +1133,7 @@ html {
   }
 }
 
-@media screen and (max-width: 1199px) {
+@media screen and (max-width: 959px) {
   .app-navbar.navbar {
     display: block;
   }
@@ -883,11 +1160,11 @@ html {
 
   .app-navbar .navbar-menu {
     display: none;
-    max-height: calc(100vh - 3.25rem);
+    max-height: calc(100vh - 3.5rem);
     overflow: auto;
     padding: 0.5rem 0;
-    background: #fff;
-    box-shadow: 0 8px 16px rgba(10, 10, 10, 0.1);
+    background: var(--va-surface);
+    box-shadow: var(--va-shadow-md);
   }
 
   .app-navbar .navbar-menu.is-active {
@@ -910,27 +1187,9 @@ html {
     display: block;
     width: 100%;
   }
-
-  body.theme-dark .app-navbar .navbar-menu {
-    background: var(--md-surface-container);
-  }
 }
 
-@media screen and (min-width: 1200px) and (max-width: 1439px) {
-  .app-navbar .navbar-menu .navbar-item {
-    padding-right: 0.35rem;
-    padding-left: 0.35rem;
-    font-size: 0.86rem;
-  }
-
-  .app-navbar .logo {
-    margin-right: 0.35rem;
-    margin-left: 0.35rem;
-  }
-}
-
-.dropdown-item:focus {
-  // remove ugly outline
+.dropdown-item:focus:not(:focus-visible) {
   outline: none !important;
 }
 
@@ -940,7 +1199,7 @@ html {
 }
 
 .menudropdown .dropdown-item {
-  font-size: 0.8em;
+  font-size: 0.85rem;
 }
 
 .leave-right {
@@ -963,13 +1222,12 @@ a.navbar-item.is-active,
 .navbar-link.is-active,
 .is-link,
 a {
-  $success: #506da4;
-  color: $success;
+  color: var(--va-link);
 }
 
 .icon-loading_ico-copy {
   font-size: 2.5rem;
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--va-text-subtle);
   animation: loading-rotate 2s infinite linear;
 }
 
@@ -1003,7 +1261,7 @@ a {
 .about-small {
   font-size: 0.85em;
   text-indent: 1em;
-  color: rgba(0, 0, 0, 0.6);
+  color: var(--va-text-muted);
 }
 
 .margin-right-2em {
@@ -1016,10 +1274,6 @@ a {
 
 .padding-right-1rem {
   padding-right: 2rem !important;
-}
-
-#statusTag {
-  width: 5em;
 }
 
 .dropdown-menu .is-fullwidth {

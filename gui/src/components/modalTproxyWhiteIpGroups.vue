@@ -1,21 +1,39 @@
 <template>
-    <div class="modal-card" style="max-width: 450px; margin: auto">
+    <div class="modal-card" style="max-width: 480px; width: calc(100vw - 2rem); margin: auto">
         <header class="modal-card-head">
             <p class="modal-card-title">
                 {{ $t("tproxyWhiteIpGroups.title") }}
             </p>
+            <button
+                type="button"
+                class="delete"
+                :aria-label="$t('operations.close')"
+                @click="$emit('close')"
+            ></button>
         </header>
         <section class="modal-card-body">
             <b-message type="is-info" class="after-line-dot5">
                 <p>{{ $t("tproxyWhiteIpGroups.messages.0") }}</p>
             </b-message>
-            <b-field :label="$t('tproxyWhiteIpGroups.formName1')">
-                <b-select multiple v-model="countryCodes" expanded>
-                    <option value="CN">{{ $t("tproxyWhiteIpGroups.cn") }}</option>
-                    <option value="PRIVATE">{{ $t("tproxyWhiteIpGroups.private") }}</option>
-                    <option value="US">{{ $t("tproxyWhiteIpGroups.us") }}</option>
-                    <option value="CLOUDFLARE">{{ $t("tproxyWhiteIpGroups.cloudflare") }}</option>
-                </b-select>
+            <b-field :label="$t('tproxyWhiteIpGroups.title')">
+                <div class="va-chip-group" role="group" :aria-label="$t('tproxyWhiteIpGroups.title')">
+                    <button
+                        v-for="group in ipGroupOptions"
+                        :key="group.value"
+                        type="button"
+                        class="va-chip"
+                        :class="{ 'is-selected': countryCodes.includes(group.value) }"
+                        :aria-pressed="String(countryCodes.includes(group.value))"
+                        @click="toggleCountryCode(group.value)"
+                    >
+                        <i
+                            v-if="countryCodes.includes(group.value)"
+                            class="mdi mdi-check"
+                            aria-hidden="true"
+                        ></i>
+                        {{ $t(group.labelKey) }}
+                    </button>
+                </div>
             </b-field>
             <b-field :label="$t('tproxyWhiteIpGroups.formName2')">
                 <b-input v-model="customIps" type="textarea" :placeholder="$t('tproxyWhiteIpGroups.formPlaceholder2')"
@@ -41,6 +59,12 @@ import { handleResponse } from "@/assets/js/utils";
 export default {
     name: "modalTproxyWhiteIpGroups",
     data: () => ({
+        ipGroupOptions: [
+            { value: "CN", labelKey: "tproxyWhiteIpGroups.cn" },
+            { value: "PRIVATE", labelKey: "tproxyWhiteIpGroups.private" },
+            { value: "US", labelKey: "tproxyWhiteIpGroups.us" },
+            { value: "CLOUDFLARE", labelKey: "tproxyWhiteIpGroups.cloudflare" },
+        ],
         countryCodes: [],
         customIps: "",
     }),
@@ -59,6 +83,14 @@ export default {
         });
     },
     methods: {
+        toggleCountryCode(code) {
+            const idx = this.countryCodes.indexOf(code);
+            if (idx >= 0) {
+                this.countryCodes.splice(idx, 1);
+            } else {
+                this.countryCodes.push(code);
+            }
+        },
         validateCIDRArray(arr) {
             const ipv4Cidr = /^(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}\/(?:[0-9]|[12]\d|3[0-2])$/;
 

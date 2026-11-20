@@ -2,6 +2,12 @@
   <div class="modal-card traffic-modal">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("traffic.title") }}</p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section class="modal-card-body">
       <div class="traffic-summary">
@@ -49,6 +55,9 @@
       </div>
       <p class="traffic-note">{{ $t("traffic.note") }}</p>
     </section>
+    <footer class="modal-card-foot flex-end">
+      <b-button @click="$parent.close()">{{ $t("operations.close") }}</b-button>
+    </footer>
   </div>
 </template>
 

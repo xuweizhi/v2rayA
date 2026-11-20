@@ -1,7 +1,13 @@
 <template>
-  <div class="modal-card" style="max-width: 540px; margin: auto">
+  <div class="modal-card" style="max-width: 580px; width: calc(100vw - 2rem); margin: auto">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("configureSubscription.title") }}</p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$parent.close()"
+      ></button>
     </header>
     <section class="modal-card-body">
       <b-field label="SUBSCRIPTION">
@@ -62,9 +68,24 @@
         </b-select>
       </b-field>
       <b-field :label="$t('subscription.protocols')" :message="$t('subscription.protocolsHelp')">
-        <b-select v-model="extra.includeProtocols" multiple expanded>
-          <option v-for="protocol in protocols" :key="protocol" :value="protocol">{{ protocol }}</option>
-        </b-select>
+        <div class="va-chip-group" role="group" :aria-label="$t('subscription.protocols')">
+          <button
+            v-for="protocol in protocols"
+            :key="protocol"
+            type="button"
+            class="va-chip"
+            :class="{ 'is-selected': isProtocolSelected(protocol) }"
+            :aria-pressed="String(isProtocolSelected(protocol))"
+            @click="toggleProtocol(protocol)"
+          >
+            <i
+              v-if="isProtocolSelected(protocol)"
+              class="mdi mdi-check"
+              aria-hidden="true"
+            ></i>
+            {{ protocol }}
+          </button>
+        </div>
       </b-field>
       <b-field :label="$t('subscription.includeRegex')">
         <b-input v-model="extra.includeRegex" />
@@ -137,6 +158,20 @@ export default {
     },
   },
   methods: {
+    isProtocolSelected(protocol) {
+      return Array.isArray(this.extra.includeProtocols) && this.extra.includeProtocols.includes(protocol);
+    },
+    toggleProtocol(protocol) {
+      if (!Array.isArray(this.extra.includeProtocols)) {
+        this.$set(this.extra, "includeProtocols", []);
+      }
+      const idx = this.extra.includeProtocols.indexOf(protocol);
+      if (idx >= 0) {
+        this.extra.includeProtocols.splice(idx, 1);
+      } else {
+        this.extra.includeProtocols.push(protocol);
+      }
+    },
     async previewFilters() {
       this.previewLoading = true;
       try {

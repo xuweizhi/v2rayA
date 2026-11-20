@@ -2,6 +2,13 @@
   <div class="modal-card import-card">
     <header class="modal-card-head">
       <p class="modal-card-title">{{ $t("operations.import") }}</p>
+      <button
+        type="button"
+        class="delete"
+        :disabled="busy"
+        :aria-label="$t('operations.close')"
+        @click="$emit('close')"
+      ></button>
     </header>
     <section class="modal-card-body">
       <template v-if="!result">
@@ -139,7 +146,7 @@ export default {
         if (result && result.skipped) {
           this.result = result;
         } else {
-          this.$buefy.toast.open({ message: result ? this.$t("import.summary", result) : this.$t("common.success"), type: "is-primary" });
+          this.$buefy.toast.open({ message: result ? this.$t("import.summary", result) : this.$t("common.success"), type: "is-success" });
           this.$emit("close");
         }
       } catch (err) {

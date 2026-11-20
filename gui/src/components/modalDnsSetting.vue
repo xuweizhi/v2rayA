@@ -12,6 +12,12 @@
         <b-icon icon="help-circle-outline" size="is-small" />
         {{ $t("dns.help") }}
       </a>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$emit('close')"
+      ></button>
     </header>
     <section class="modal-card-body">
       <!-- DNS rules table -->
@@ -64,8 +70,27 @@
           <div class="col-actions">
             <b-button
               size="is-small"
+              icon-left="arrow-up"
+              :disabled="index === 0"
+              :title="$t('ruleOrder.moveUp')"
+              :aria-label="$t('ruleOrder.moveUp')"
+              @click="moveRule(index, -1)"
+            />
+            <b-button
+              size="is-small"
+              icon-left="arrow-down"
+              :disabled="index === rules.length - 1"
+              :title="$t('ruleOrder.moveDown')"
+              :aria-label="$t('ruleOrder.moveDown')"
+              @click="moveRule(index, 1)"
+            />
+            <b-button
+              size="is-small"
               type="is-danger"
-              icon-left="delete"
+              outlined
+              icon-left="delete-outline"
+              :title="$t('operations.delete')"
+              :aria-label="$t('operations.delete')"
               @click="removeRule(index)"
             />
           </div>
@@ -201,6 +226,13 @@ export default {
     removeRule(index) {
       this.rules.splice(index, 1);
     },
+    moveRule(index, delta) {
+      const target = index + delta;
+      if (target < 0 || target >= this.rules.length) return;
+      const item = this.rules[index];
+      this.rules.splice(index, 1);
+      this.rules.splice(target, 0, item);
+    },
     resetDefault() {
       this.rules = DEFAULT_RULES.map((r) => ({ ...r }));
     },
@@ -225,7 +257,7 @@ export default {
               }));
               this.$buefy.toast.open({
                 message: this.$t("dns.autoSetupApplied"),
-                type: "is-primary",
+                type: "is-success",
                 position: "is-top",
                 duration: 3000,
                 queue: false,
@@ -299,7 +331,7 @@ export default {
 
   .dns-row {
     display: grid;
-    grid-template-columns: 220px 1fr 120px 42px;
+    grid-template-columns: 220px 1fr 120px 104px;
     gap: 0;
     align-items: start;
     border-bottom: 1px solid #f0f0f0;
@@ -338,6 +370,7 @@ export default {
     align-items: flex-start;
     padding-top: 8px;
     justify-content: center;
+    gap: 4px;
   }
 
   .dns-domains-input ::v-deep textarea {

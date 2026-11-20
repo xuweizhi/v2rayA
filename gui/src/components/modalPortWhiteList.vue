@@ -4,6 +4,12 @@
       <p class="modal-card-title">
         {{ $t("egressPortWhitelist.title") }}
       </p>
+      <button
+        type="button"
+        class="delete"
+        :aria-label="$t('operations.close')"
+        @click="$emit('close')"
+      ></button>
     </header>
     <section class="modal-card-body">
       <b-message type="is-info" class="after-line-dot5">

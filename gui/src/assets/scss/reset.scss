@@ -1,84 +1,252 @@
 @import "../iconfont/fonts/font_ex";
-body.has-navbar-fixed-top, html.has-navbar-fixed-top{
-  padding-top:2.25rem;
+
+:root {
+  /* Unified v2rayA Design Tokens — Light Theme */
+  --va-bg: #f6f7fb;
+  --va-surface: #ffffff;
+  --va-surface-elevated: #ffffff;
+  --va-surface-subtle: #f1f3f8;
+  --va-surface-hover: #eef2f9;
+  --va-border: #e2e6ef;
+  --va-border-strong: #cbd2e1;
+  --va-text: #181c24;
+  --va-text-muted: #5a6478;
+  --va-text-subtle: #7c869a;
+
+  --va-primary: #3b6cf5;
+  --va-primary-hover: #2d5ce0;
+  --va-primary-soft: rgba(59, 108, 245, 0.11);
+  --va-primary-text: #ffffff;
+
+  --va-success: #16a34a;
+  --va-success-soft: rgba(22, 163, 74, 0.12);
+  --va-warning: #d97706;
+  --va-warning-soft: rgba(217, 119, 6, 0.13);
+  --va-danger: #dc2626;
+  --va-danger-soft: rgba(220, 38, 38, 0.11);
+  --va-info: #0284c7;
+  --va-info-soft: rgba(2, 132, 199, 0.12);
+
+  --va-link: #2f5ee5;
+  --va-focus-ring: rgba(59, 108, 245, 0.45);
+  --va-shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --va-shadow-md: 0 8px 24px rgba(15, 23, 42, 0.1);
+  --va-radius-sm: 6px;
+  --va-radius-md: 10px;
+  --va-radius-lg: 14px;
+
+  --va-latency-good: #15803d;
+  --va-latency-warn: #b45309;
+  --va-latency-bad: #dc2626;
+
+  --node-highlight-connected: rgba(59, 108, 245, 0.14);
+  --node-highlight-disconnected: rgba(220, 38, 38, 0.14);
+}
+
+html,
+body {
+  background-color: var(--va-bg);
+  color: var(--va-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+body.has-navbar-fixed-top,
+html.has-navbar-fixed-top {
+  padding-top: 3.5rem;
 }
 
 body::-webkit-scrollbar {
-  width: 1em;
+  width: 0.65rem;
+  height: 0.65rem;
 }
- 
+
 body::-webkit-scrollbar-track {
-  background-color: #f9f9f9;
+  background-color: var(--va-surface-subtle);
 }
- 
+
 body::-webkit-scrollbar-thumb {
-  background-color: #d0d0d0;
-  outline: 1px solid slategrey;
+  background-color: var(--va-border-strong);
+  border-radius: 999px;
 }
 
 nav::-webkit-scrollbar {
-  height: 0.75em;
+  height: 0.5rem;
 }
 
 nav::-webkit-scrollbar-track {
-  background-color: #f9f9f9;
-  border-radius: 5px;
+  background-color: var(--va-surface-subtle);
+  border-radius: 999px;
 }
 
 nav::-webkit-scrollbar-thumb {
-  background-color: #d0d0d0;
-  //outline: 1px solid slategrey;
-  border-radius: 5px;
+  background-color: var(--va-border-strong);
+  border-radius: 999px;
 }
 
 code {
-  color: #0087e1 !important;
+  color: var(--va-link) !important;
+  background-color: var(--va-surface-subtle);
+  border-radius: 4px;
 }
 
-html{
-  @media screen and (max-width: 1400px) {
-      font-size:0.9em;
-    @media screen and (max-width: 767px) {
-      font-size:0.8em;
-      @media screen and (max-width: 350px) {
-        font-size:0.7em;
-      }
-    }
+/* Keep mobile typography comfortably readable instead of shrinking below 14px */
+html {
+  font-size: 16px;
+  @media screen and (max-width: 1200px) {
+    font-size: 15px;
+  }
+  @media screen and (max-width: 767px) {
+    font-size: 14px;
   }
 }
 
-.routinga-animation-content{
+.routinga-animation-content {
   width: 100%;
   height: 100%;
   max-height: 100%;
   max-width: unset !important;
 }
 
-.modal-close:not(:hover){
+.modal-close:not(:hover) {
   filter: drop-shadow(0 0 5px #000);
+}
+
+.modal-card {
+  border-radius: var(--va-radius-md);
+  overflow: hidden;
+  box-shadow: var(--va-shadow-md);
+  border: 1px solid var(--va-border);
+}
+
+.modal-card-head {
+  background-color: var(--va-surface);
+  border-bottom: 1px solid var(--va-border);
+  padding: 1rem 1.25rem;
+  gap: 0.75rem;
+}
+
+.modal-card-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--va-text);
+  line-height: 1.35;
+}
+
+.modal-card-body {
+  background-color: var(--va-surface);
+  color: var(--va-text);
+  padding: 1.25rem;
+}
+
+.modal-card-foot {
+  background-color: var(--va-surface-subtle);
+  border-top: 1px solid var(--va-border);
+  padding: 0.85rem 1.25rem;
 }
 
 .icon-camera {
   font-size: 1.5em;
 }
 
-.control:last-of-type:not(:first-of-type) > *:first-child{
-  border-radius: 0 4px 4px 0 !important;
+.control:last-of-type:not(:first-of-type) > *:first-child {
+  border-radius: 0 6px 6px 0 !important;
 }
 
 @font-face {
   font-family: sarasa inter regular;
-  src: url("/src/assets/font/Inter-Regular.woff2")
+  src: url("/src/assets/font/Inter-Regular.woff2");
 }
 
 .code-font {
   font-family: sarasa inter regular, Consolas, monospace, Monaco, Menlo, Courier New;
 }
 
-.noscroll{
+.noscroll {
   overflow: hidden;
 }
 
 .field.is-floating-label .label {
   overflow: visible !important;
+}
+
+/* Unified multi-select chip group replacing Ctrl+click <select multiple> */
+.va-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.va-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.32rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--va-border-strong);
+  background: var(--va-surface);
+  color: var(--va-text);
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    border-color: var(--va-primary);
+    background: var(--va-primary-soft);
+  }
+
+  &.is-selected {
+    border-color: var(--va-primary);
+    background: var(--va-primary);
+    color: var(--va-primary-text);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--va-primary);
+    outline-offset: 2px;
+  }
+}
+
+/* Secondary attached button helper (replaces inline rgba(0,0,0,0.75) hacks) */
+.va-attached-btn.button {
+  margin-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  color: var(--va-text);
+  border-color: var(--va-border-strong);
+  background-color: var(--va-surface);
+
+  &:hover,
+  &:focus {
+    background-color: var(--va-surface-hover);
+    border-color: var(--va-primary);
+    color: var(--va-primary);
+  }
+}
+
+.va-attached-btn--middle.button {
+  border-radius: 0 !important;
+}
+
+.va-empty-state {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: var(--va-text-muted);
+  font-size: 0.92rem;
+}
+
+/* Accessible focus rings */
+:focus-visible {
+  outline: 2px solid var(--va-primary);
+  outline-offset: 2px;
+}
+
+.button:focus-visible,
+.input:focus-visible,
+.textarea:focus-visible,
+.select select:focus-visible {
+  outline: 2px solid var(--va-focus-ring);
+  outline-offset: 1px;
 }
