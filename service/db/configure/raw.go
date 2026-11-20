@@ -8,6 +8,8 @@ import (
 )
 
 type ServerRaw struct {
+	// Retained marks a missing provider node kept for a still-active connection.
+	Retained  bool                `json:"retained,omitempty"`
 	ServerObj serverObj.ServerObj `json:"serverObj"`
 	Latency   string              `json:"latency"`
 	Disabled  bool                `json:"disabled,omitempty"`
@@ -17,6 +19,8 @@ type ServerRaw struct {
 // SubscriptionExtra holds per-subscription advanced settings that are stored
 // in a single JSON column of the subscriptions table.
 type SubscriptionExtra struct {
+	// AgePassword is the local age identity or passphrase used for this provider.
+	AgePassword string `json:"agePassword,omitempty"`
 	// UserAgent is the User-Agent used when downloading the subscription.
 	// Empty means the default clash-compatible UA.
 	UserAgent string `json:"userAgent,omitempty"`
@@ -59,6 +63,7 @@ type SubscriptionExtra struct {
 }
 
 type SubscriptionRaw struct {
+	DatabaseID      int64             `json:"databaseID,omitempty"`
 	Remarks         string            `json:"remarks,omitempty"`
 	Address         string            `json:"address"`
 	Status          string            `json:"status"` //update time, error info, etc.

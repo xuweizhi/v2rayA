@@ -25,13 +25,19 @@ func (t *Template) applyPreProxies(sd *ServerData) error {
 	}
 	var groups []string
 	for group, setting := range sd.OutboundName2Setting {
-		if setting.PreProxy != "" {
+		if setting.PreProxy != "" || (setting.MemberRule != nil && len(sd.OutboundName2ServerObjs[group]) == 0) {
 			groups = append(groups, group)
 		}
 	}
 	sort.Strings(groups)
 	for _, group := range groups {
 		pre := sd.OutboundName2Setting[group].PreProxy
+		if pre == "" {
+			// Routes that depend on this empty group must stop here. The next
+			// rebuild replaces the blackhole when a node becomes eligible.
+			t.Outbounds = append(t.Outbounds, coreObj.OutboundObject{Tag: group, Protocol: "blackhole"})
+			continue
+		}
 		bridge := internalGroupTag("pre", group)
 		routeTag := internalGroupTag("pre-in", group)
 		config, _ := json.Marshal(map[string]string{"inboundTag": routeTag})

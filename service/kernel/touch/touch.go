@@ -30,6 +30,8 @@ type Server struct {
 	Fav         bool                `json:"fav,omitempty"`
 }
 type Subscription struct {
+	HasAgePassword  bool                        `json:"hasAgePassword,omitempty"`
+	AgePassword     *string                     `json:"agePassword,omitempty"` // Write-only: nil keeps the stored credential.
 	Remarks         string                      `json:"remarks,omitempty"`
 	ID              int                         `json:"id"`
 	TYPE            configure.TouchType         `json:"_type"`
@@ -96,7 +98,10 @@ func GenerateTouch() (t Touch) {
 				}
 			}
 		}
+		publicExtra := v.Extra
+		publicExtra.AgePassword = ""
 		t.Subscriptions[i] = Subscription{
+			HasAgePassword:  v.Extra.AgePassword != "",
 			Remarks:         v.Remarks,
 			ID:              i + 1,
 			Host:            u.Host,
@@ -106,7 +111,7 @@ func GenerateTouch() (t Touch) {
 			Info:            v.Info,
 			AutoSelect:      v.AutoSelect,
 			DecryptPassword: v.DecryptPassword,
-			Extra:           v.Extra,
+			Extra:           publicExtra,
 			Upload:          v.Extra.Upload,
 			Download:        v.Extra.Download,
 			Total:           v.Extra.Total,

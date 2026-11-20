@@ -794,124 +794,10 @@
         </section>
       </div>
     </b-modal>
-    <input
-      id="QRCodeImport"
-      ref="qrCodeImport"
-      type="file"
-      style="display: none"
-      accept="image/*"
-    />
-    <b-modal
-      :active.sync="showModalImport"
-      has-modal-card
-      trap-focus
-      aria-role="dialog"
-      aria-modal
-      @after-enter="handleModalImportShow"
-    >
-      <div class="modal-card" style="width: 350px">
-        <header class="modal-card-head">
-          <p class="modal-card-title">{{ $t("operations.import") }}</p>
-        </header>
-        <section class="modal-card-body">
-          {{ $t("import.message") }}
-          <b-input
-            ref="importInput"
-            v-model="importWhat"
-            icon-right="camera"
-            icon-right-clickable
-            @icon-right-click="handleClickImportQRCode"
-            @keyup.native="handleImportEnter"
-          ></b-input>
-          <b-input
-            v-model="importPassword"
-            :placeholder="$t('import.passwordPlaceholder')"
-          ></b-input>
-        </section>
-        <footer class="modal-card-foot">
-          <button
-            class="button is-link is-light"
-            type="button"
-            @click="handleClickImportInBatch"
-          >
-            {{ $t("operations.inBatch") }}
-          </button>
-          <div
-            style="
-              display: flex;
-              justify-content: flex-end;
-              width: -moz-available;
-            "
-          >
-            <button
-              class="button"
-              type="button"
-              @click="showModalImport = false"
-            >
-              {{ $t("operations.cancel") }}
-            </button>
-            <button
-              class="button is-primary"
-              type="button"
-              @click="handleClickImportConfirm"
-            >
-              {{ $t("operations.confirm") }}
-            </button>
-          </div>
-        </footer>
-      </div>
-    </b-modal>
-    <b-modal
-      :active.sync="showModalImportInBatch"
-      has-modal-card
-      trap-focus
-      aria-role="dialog"
-      aria-modal
-      @close="showModalImport = false"
-    >
-      <div class="modal-card" style="width: 350px">
-        <header class="modal-card-head">
-          <p class="modal-card-title">{{ $t("operations.import") }}</p>
-        </header>
-        <section class="modal-card-body">
-          {{ $t("import.batchMessage") }}
-          <b-input
-            ref="importInput"
-            v-model="importWhat"
-            type="textarea"
-            custom-class="horizon-scroll"
-          ></b-input>
-        </section>
-        <footer class="modal-card-foot">
-          <div
-            style="
-              display: flex;
-              justify-content: flex-end;
-              width: -moz-available;
-            "
-          >
-            <button
-              class="button"
-              type="button"
-              @click="
-                () => {
-                  showModalImport = false;
-                  showModalImportInBatch = false;
-                }
-              "
-            >
-              {{ $t("operations.cancel") }}
-            </button>
-            <button
-              class="button is-primary"
-              type="button"
-              @click="handleClickImportConfirm"
-            >
-              {{ $t("operations.confirm") }}
-            </button>
-          </div>
-        </footer>
-      </div>
+    <b-modal :active.sync="showModalImport" has-modal-card trap-focus
+      aria-role="dialog" aria-modal :can-cancel="!importBusy">
+      <modal-import v-if="showModalImport" @busy="importBusy = $event"
+        @imported="syncLatestNodeOverview()" @close="showModalImport = false" />
     </b-modal>
   </section>
 </template>
@@ -919,7 +805,7 @@
 <script>
 import { locateServer, handleResponse } from "@/assets/js/utils";
 import CONST from "@/assets/js/const";
-import { Decoder } from "@nuintun/qrcode";
+import ModalImport from "@/components/modalImport";
 import ModalServer from "@/components/modalServer";
 import ModalSubscription from "@/components/modalSubcription";
 import modalConnections from "@/components/modalConnections";
@@ -931,7 +817,7 @@ import dayjs from "dayjs";
 
 export default {
   name: "NodeManager",
-  components: { ModalSubscription, ModalServer },
+  components: { ModalSubscription, ModalServer, ModalImport },
   filters: {
     unix2datetime(x) {
       x = dayjs.unix(x);
@@ -967,13 +853,11 @@ export default {
       enterReducedSidebar: false,
       showSidebar: false,
       novice: false,
-      importWhat: "",
-      importPassword: "",
+      importBusy: false,
       showModalImport: false,
       showModalDetectRule: false,
       detectRuleQuery: { domain: "", port: "", network: "", inbound: "" },
       detectRuleResult: null,
-      showModalImportInBatch: false,
       currentPage: { servers: 1, subscriptions: 1 },
       tableData: {
         servers: [],
@@ -1096,24 +980,12 @@ export default {
     loadTouch();
   },
   beforeDestroy() {
-    if (this.$refs.qrCodeImport) {
-      this.$refs.qrCodeImport.removeEventListener(
-        "change",
-        this.handleFileChange,
-        false
-      );
-    }
     if (this.windowScrollHandler) {
       window.removeEventListener("scroll", this.windowScrollHandler);
     }
     if (this.scrollTimer) clearTimeout(this.scrollTimer);
   },
   mounted() {
-    this.$refs.qrCodeImport.addEventListener(
-      "change",
-      this.handleFileChange,
-      false
-    );
     this.windowScrollHandler = (e) => {
       if (this.scrollTimer) clearTimeout(this.scrollTimer);
       this.scrollTimer = setTimeout(() => {
@@ -1282,57 +1154,6 @@ export default {
       }
 
       waitingAndLocate();
-    },
-    handleClickImportInBatch() {
-      this.showModalImportInBatch = true;
-    },
-    handleModalImportShow() {
-      this.$refs.importInput.focus();
-    },
-    handleImportEnter(event) {
-      if (event.keyCode !== 13) {
-        return;
-      }
-      this.handleClickImportConfirm();
-    },
-    handleFileChange(e) {
-      const that = this;
-      const file = e.target.files[0];
-      e.target.value = "";
-      if (!file) return;
-      // console.log(file);
-      if (!file.type.match(/image\/.*/)) {
-        this.$buefy.toast.open({
-          message: this.$t("import.qrcodeError"),
-          type: "is-warning",
-          position: "is-top",
-          queue: false,
-        });
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = function (e) {
-        // target.result property represents the DataURL of the target object
-        // console.log(e.target.result);
-        const file = e.target.result;
-        const qrcode = new Decoder();
-        qrcode
-          .scan(file)
-          .then((result) => {
-            console.log(result);
-            that.handleClickImportConfirm(result.data);
-          })
-          .catch((error) => {
-            console.error(error);
-            that.$buefy.toast.open({
-              message: that.$t("import.qrcodeError"),
-              type: "is-warning",
-              position: "is-top",
-              queue: false,
-            });
-          });
-      };
-      reader.readAsDataURL(file);
     },
     sortNumberServers(a, b, isAsc) {
       if (!isAsc) {
@@ -1544,45 +1365,8 @@ export default {
         this.tab = serversOffset;
       }
     },
-    handleClickImportQRCode() {
-      this.$refs.qrCodeImport.click();
-    },
     handleClickImport() {
       this.showModalImport = true;
-    },
-    handleClickImportConfirm(value) {
-      if (typeof value != "string") {
-        value = null;
-      }
-      return this.$axios({
-        url: apiRoot + "/import",
-        method: "post",
-        data: {
-          url: value || this.importWhat,
-          password: this.importPassword || undefined,
-        },
-      }).then((res) => {
-        if (res.data.code === "SUCCESS") {
-          this.syncLatestNodeOverview();
-          this.$buefy.toast.open({
-            message: this.$t("common.success"),
-            type: "is-primary",
-            position: "is-top",
-            queue: false,
-          });
-          this.showModalImport = false;
-          this.showModalImportInBatch = false;
-          this.importWhat = "";
-          this.importPassword = "";
-        } else {
-          this.$buefy.toast.open({
-            message: res.data.message,
-            type: "is-warning",
-            position: "is-top",
-            queue: false,
-          });
-        }
-      });
     },
     deleteSelectedServers() {
       this.$axios({

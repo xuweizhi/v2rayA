@@ -10,6 +10,7 @@ import (
 )
 
 var ErrInvalidParameter = fmt.Errorf("invalid parameters")
+var ErrUnsupportedLinkType = fmt.Errorf("unsupported link type")
 
 type ServerObj interface {
 	Configuration(info PriorInfo) (c Configuration, err error)
@@ -78,7 +79,7 @@ func New(name string) (ServerObj, error) {
 		creator := emptyCreators[PluginManagerScheme]
 		return creator()
 	} else {
-		return nil, fmt.Errorf("unsupported link type: %v", name)
+		return nil, fmt.Errorf("%w: %v", ErrUnsupportedLinkType, name)
 	}
 }
 func NewFromLink(name string, link string) (ServerObj, error) {
@@ -89,7 +90,7 @@ func NewFromLink(name string, link string) (ServerObj, error) {
 		creator := fromLinkCreators[PluginManagerScheme]
 		return creator(link)
 	} else {
-		return nil, fmt.Errorf("unsupported link type: %v", name)
+		return nil, fmt.Errorf("%w: %v", ErrUnsupportedLinkType, name)
 	}
 }
 

@@ -1,40 +1,39 @@
 package controller
 
 import (
-	"fmt"
-
 	"github.com/gin-gonic/gin"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/v2rayA/v2rayA/common"
-	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/server/service"
 )
 
-func PostImport(ctx *gin.Context) {
-	var body struct {
-		URL      string      `json:"url"`
-		Which    interface{} `json:"which"`
-		Password string      `json:"password"`
+func PostImportLink(ctx *gin.Context) {
+	var req struct {
+		URL string `json:"url"`
 	}
-	if err := ctx.ShouldBindJSON(&body); err != nil {
-		common.ResponseError(ctx, logError(fmt.Sprintf("bad request: %v", err)))
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		common.ResponseError(ctx, logError("invalid import link request"))
 		return
 	}
-
-	var which *configure.Which
-	if body.Which != nil {
-		b, _ := jsoniter.Marshal(body.Which)
-		err := jsoniter.Unmarshal(b, &which)
-		if err != nil {
-			common.ResponseError(ctx, logError(fmt.Sprintf("bad request (which parse error): %v", err)))
-			return
-		}
-	}
-
-	err := service.Import(body.URL, which, body.Password)
+	link, err := service.ParseImportLink(req.URL)
 	if err != nil {
 		common.ResponseError(ctx, logError(err))
 		return
 	}
-	getTouch(ctx)
+	common.ResponseSuccess(ctx, link)
+}
+
+func PostImport(ctx *gin.Context) {
+	var req service.ImportRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		common.ResponseError(ctx, logError("invalid import request"))
+		return
+	}
+	result, err := service.ImportProfile(req)
+	if err != nil {
+		common.ResponseError(ctx, logError(err))
+		return
+	}
+	data := touchData()
+	data["importResult"] = result
+	common.ResponseSuccess(ctx, data)
 }

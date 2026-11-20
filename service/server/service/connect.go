@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/v2rayA/v2rayA/db"
 	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/kernel/ipforward"
 	"github.com/v2rayA/v2rayA/kernel/v2ray"
@@ -14,10 +15,14 @@ import (
 var V2OnlyFeatureError = fmt.Errorf("v2fly/v2ray-core only feature")
 
 func StopV2ray() (err error) {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
 	v2ray.ProcessManager.Stop(true)
 	return nil
 }
 func StartV2ray() (err error) {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
 	if err = checkSupport(nil); err != nil {
 		return err
 	}
@@ -36,6 +41,30 @@ func StartV2ray() (err error) {
 }
 
 func Disconnect(which configure.Which, clearOutbound bool) (err error) {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
+	if which.Outbound == "" {
+		which.Outbound = "proxy"
+	}
+	if configure.GetOutboundSetting(which.Outbound).MemberRule != nil {
+		return fmt.Errorf("turn off automatic group membership before editing members")
+	}
+	return disconnect(which, clearOutbound)
+}
+
+// DeleteOutbound serializes removal with timer-driven membership refreshes.
+func DeleteOutbound(group string) error {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
+	if configure.GetConnectedServersByOutbound(group).Len() > 0 {
+		if err := disconnect(configure.Which{Outbound: group}, true); err != nil {
+			return err
+		}
+	}
+	return configure.RemoveOutbound(group)
+}
+
+func disconnect(which configure.Which, clearOutbound bool) (err error) {
 	if which.Outbound == "" {
 		which.Outbound = "proxy"
 	}
@@ -93,7 +122,13 @@ func checkSupport(toAppend []*configure.Which) (err error) {
 	return nil
 }
 
-func Connect(which *configure.Which) (err error) {
+func Connect(which *configure.Which) error {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
+	return connect(which)
+}
+
+func connect(which *configure.Which) (err error) {
 	log.Trace("Connect: begin")
 	defer log.Trace("Connect: done")
 	defer func() {
@@ -106,6 +141,9 @@ func Connect(which *configure.Which) (err error) {
 	}
 	if which.Outbound == "" {
 		which.Outbound = "proxy"
+	}
+	if configure.GetOutboundSetting(which.Outbound).MemberRule != nil {
+		return fmt.Errorf("turn off automatic group membership before editing members")
 	}
 	if _, err = which.LocateServerRaw(); err != nil {
 		return err
@@ -173,6 +211,8 @@ func restoreOutboundConnections(group string, previous *configure.Whiches) error
 // ReplaceOutboundConnections atomically replaces members of one outbound group.
 // It updates v2ray config once after DB changes, and rolls back on failure.
 func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err error) {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
 	log.Trace("ReplaceOutboundConnections: begin")
 	defer log.Trace("ReplaceOutboundConnections: done")
 	defer func() {
@@ -185,12 +225,15 @@ func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err
 		outbound = "proxy"
 	}
 
+	if configure.GetOutboundSetting(outbound).MemberRule != nil {
+		return fmt.Errorf("turn off automatic group membership before editing members")
+	}
 	if !outboundExists(outbound) {
 		return fmt.Errorf("outbound %q does not exist", outbound)
 	}
 
 	// Normalize outbound and deduplicate touches.
-	normalized := make([]configure.Which, 0, len(touches))
+	normalized := configure.NewWhiches(nil)
 	seen := make(map[string]struct{})
 	for i, wt := range touches {
 		if wt.ID <= 0 {
@@ -215,32 +258,19 @@ func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err
 			continue
 		}
 		seen[key] = struct{}{}
-		normalized = append(normalized, wt)
+		normalized.Add(wt)
 	}
 
 	backup := configure.GetConnectedServersByOutbound(outbound)
-	restore := func() {
-		if backup != nil {
-			_ = configure.OverwriteConnects(backup)
-		} else {
-			_ = configure.ClearConnects(outbound)
-		}
-	}
-
-	if err = configure.ClearConnects(outbound); err != nil {
+	if err := db.Set("outbound."+outbound, "connectedServers", normalized); err != nil {
 		return err
 	}
-	for _, wt := range normalized {
-		if err = configure.AddConnect(wt); err != nil {
-			restore()
-			return err
-		}
-	}
-
 	if v2ray.ProcessManager.Running() {
-		if err = v2ray.UpdateV2RayConfig(); err != nil {
-			restore()
-			_ = v2ray.UpdateV2RayConfig()
+		if err := v2ray.UpdateV2RayConfig(); err != nil {
+			err = errors.Join(err, db.Set("outbound."+outbound, "connectedServers", backup))
+			if !v2ray.ProcessManager.Running() {
+				err = errors.Join(err, v2ray.UpdateV2RayConfig())
+			}
 			return err
 		}
 	}

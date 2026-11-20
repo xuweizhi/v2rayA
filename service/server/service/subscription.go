@@ -1,24 +1,25 @@
 package service
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
-	"github.com/mohae/deepcopy"
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/common/httpClient"
 	"github.com/v2rayA/v2rayA/common/resolv"
 	"github.com/v2rayA/v2rayA/conf"
+	"github.com/v2rayA/v2rayA/db"
 	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/kernel/serverObj"
 	"github.com/v2rayA/v2rayA/kernel/touch"
@@ -27,29 +28,38 @@ import (
 )
 
 type SIP008 struct {
-	Version        int    `json:"version"`
-	Username       string `json:"username"`
-	UserUUID       string `json:"user_uuid"`
-	BytesUsed      uint64 `json:"bytes_used"`
-	BytesRemaining uint64 `json:"bytes_remaining"`
-	Servers        []struct {
-		Server     string `json:"server"`
-		ServerPort int    `json:"server_port"`
-		Password   string `json:"password"`
-		Method     string `json:"method"`
-		Plugin     string `json:"plugin"`
-		PluginOpts string `json:"plugin_opts"`
-		Remarks    string `json:"remarks"`
-		ID         string `json:"id"`
-	} `json:"servers"`
+	Version        int                   `json:"version"`
+	Username       string                `json:"username"`
+	UserUUID       string                `json:"user_uuid"`
+	BytesUsed      uint64                `json:"bytes_used"`
+	BytesRemaining uint64                `json:"bytes_remaining"`
+	Servers        []jsoniter.RawMessage `json:"servers"`
 }
 
-func resolveSIP008(raw string) (infos []serverObj.ServerObj, sip SIP008, err error) {
-	err = jsoniter.Unmarshal([]byte(raw), &sip)
-	if err != nil {
-		return
+type sip008Server struct {
+	Server     string `json:"server"`
+	ServerPort int    `json:"server_port"`
+	Password   string `json:"password"`
+	Method     string `json:"method"`
+	Plugin     string `json:"plugin"`
+	PluginOpts string `json:"plugin_opts"`
+	Remarks    string `json:"remarks"`
+}
+
+func resolveSIP008(raw string, report *ImportResult) (infos []serverObj.ServerObj, sip SIP008, err error) {
+	if jsoniter.Unmarshal([]byte(raw), &sip) != nil {
+		return nil, sip, errors.New("invalid SIP008 profile metadata or servers list")
 	}
-	for _, server := range sip.Servers {
+	for index, data := range sip.Servers {
+		var server sip008Server
+		if jsoniter.Unmarshal(data, &server) != nil {
+			report.skip(fmt.Sprintf("SIP008 server %d: invalid field type", index+1))
+			continue
+		}
+		if server.Server == "" || server.ServerPort <= 0 || server.ServerPort > 65535 || server.Method == "" || server.Password == "" {
+			report.skip(fmt.Sprintf("SIP008 server %d: missing address, port, cipher or password", index+1))
+			continue
+		}
 		rawQuery := url.Values{}
 		if server.Plugin != "" {
 			// SIP008's "plugin" is the plugin name and "plugin_opts" its options;
@@ -69,33 +79,10 @@ func resolveSIP008(raw string) (infos []serverObj.ServerObj, sip SIP008, err err
 		}
 		obj, err := serverObj.NewFromLink("shadowsocks", u.String())
 		if err != nil {
-			return nil, SIP008{}, err
+			report.skip(fmt.Sprintf("SIP008 server %d: invalid Shadowsocks node", index+1))
+			continue
 		}
 		infos = append(infos, obj)
-	}
-	return
-}
-
-func resolveByLines(raw string) (infos []serverObj.ServerObj, status string, err error) {
-	// Split raw
-	rows := strings.Split(strings.TrimSpace(raw), "\n")
-	// Parse
-	infos = make([]serverObj.ServerObj, 0)
-	for _, row := range rows {
-		if strings.HasPrefix(row, "STATUS=") {
-			status = strings.TrimPrefix(row, "STATUS=")
-			continue
-		}
-		var data serverObj.ServerObj
-		data, err = ResolveURL(row)
-		if err != nil {
-			if !errors.Is(err, EmptyAddressErr) {
-				log.Warn("resolveByLines: %v: %v", err, row)
-			}
-			err = nil
-			continue
-		}
-		infos = append(infos, data)
 	}
 	return
 }
@@ -155,13 +142,10 @@ func parseSubscriptionUserInfo(str string) SubscriptionUserInfo {
 	}
 	return sui
 }
-func trapBOM(fileBytes []byte) []byte {
-	trimmedBytes := bytes.Trim(fileBytes, "\xef\xbb\xbf")
-	return trimmedBytes
-}
 
 // subscriptionFetchResult is the parsed result of fetching a subscription.
 type subscriptionFetchResult struct {
+	report  ImportResult
 	infos   []serverObj.ServerObj
 	status  string
 	traffic SubscriptionUserInfo
@@ -215,6 +199,12 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 		if err == nil {
 			break
 		}
+		// The transport includes the subscription URL (and often its token) in
+		// url.Error. Keep its underlying cause for diagnostics on all clients.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		if i < len(clients)-1 {
 			log.Warn("subscription download via client %d/%d failed: %v; trying next", i+1, len(clients), err)
 		}
@@ -230,52 +220,23 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 	if err != nil {
 		return result, err
 	}
-	// Password-protected subscriptions (announced by the
-	// "subscription-encryption" response header) must be decrypted before
-	// parsing.
-	if isSubscriptionEncrypted(res.Header) {
-		var decrypted string
-		decrypted, err = common.DecryptSubscriptionBody(b, password)
-		if err != nil {
-			return result, err
-		}
-		b = []byte(decrypted)
-	}
-	// base64 decode. trapBOM due to https://github.com/v2rayA/v2rayA/issues/612
-	raw, err := common.Base64StdDecode(string(trapBOM(b)))
-	if err != nil {
-		raw, _ = common.Base64URLDecode(string(b))
-	}
-	// Many providers serve a full Clash YAML to clash-capable clients and a
-	// reduced node list to others. Parse the YAML form when present.
-	var infos []serverObj.ServerObj
-	var status string
-	if isClashYAML(raw) {
-		infos, status, err = resolveClashYAML(raw)
-		if err == nil {
-			result.nodeDNS, err = resolveClashNodeDNS(raw)
-		}
-	} else {
-		infos, status, err = ResolveByLines(raw)
-	}
+	b, err = common.DecodeSubscriptionBody(b, res.Header.Get("Subscription-Encryption"), password, extra.AgePassword)
 	if err != nil {
 		return result, err
 	}
-	if len(infos) == 0 {
-		return result, fmt.Errorf("no valid nodes in the subscription response")
+	profile, err := parseProfile(string(b))
+	if err != nil {
+		return subscriptionFetchResult{report: profile.report}, err
 	}
-	// Use the same identity on initial import and refresh. Several distinct
-	// credentials or transports can share a single host and port.
-	seen := make(map[string]bool, len(infos))
-	unique := infos[:0]
-	for _, node := range infos {
-		link := node.ExportToURL()
-		if !seen[link] {
-			unique = append(unique, node)
-			seen[link] = true
+	infos := filterServersByExtra(profile.nodes, extra)
+	if excluded := len(profile.nodes) - len(infos); excluded > 0 {
+		profile.report.Imported = len(infos)
+		profile.report.Skipped += excluded
+		if len(profile.report.Reasons) < maxImportReasons {
+			profile.report.Reasons = append(profile.report.Reasons, fmt.Sprintf("%d nodes excluded by subscription filters", excluded))
 		}
 	}
-	infos = filterServersByExtra(unique, extra)
+	status := profile.status
 	subscriptionUserInfo := res.Header.Get("Subscription-Userinfo")
 	sui := parseSubscriptionUserInfo(subscriptionUserInfo)
 	if len(status) > 0 {
@@ -283,7 +244,7 @@ func ResolveSubscriptionWithClient(source string, client *http.Client, password 
 	} else {
 		status = sui.String()
 	}
-	return subscriptionFetchResult{infos: infos, status: status, traffic: sui, nodeDNS: result.nodeDNS}, nil
+	return subscriptionFetchResult{infos: infos, status: status, traffic: sui, nodeDNS: profile.nodeDNS, report: profile.report}, nil
 }
 
 // subscriptionDownloadClients returns the HTTP clients to try in order,
@@ -410,21 +371,9 @@ func applyServerFlags(sr *configure.ServerRaw, extra configure.SubscriptionExtra
 	}
 }
 
-// isSubscriptionEncrypted reports whether the response announces the
-// "subscription-encryption" scheme (used by password-protected subscriptions).
-func isSubscriptionEncrypted(h http.Header) bool {
-	v := strings.TrimSpace(h.Get("subscription-encryption"))
-	return strings.EqualFold(v, "true") || v == "1"
-}
-
 func ResolveByLines(raw string) (infos []serverObj.ServerObj, status string, err error) {
-	var sip SIP008
-	if infos, sip, err = resolveSIP008(raw); err == nil {
-		status = getDataUsageStatus(sip.BytesUsed, sip.BytesRemaining)
-	} else {
-		infos, status, err = resolveByLines(raw)
-	}
-	return
+	p, err := parseProfile(raw)
+	return p.nodes, p.status, err
 }
 
 func getDataUsageStatus(bytesUsed, bytesRemaining uint64) (status string) {
@@ -438,15 +387,15 @@ func getDataUsageStatus(bytesUsed, bytesRemaining uint64) (status string) {
 }
 
 func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
-	subscriptions := configure.GetSubscriptions()
-	if index < 0 || index >= len(subscriptions) {
+	membershipMu.Lock()
+	source := configure.GetSubscription(index)
+	membershipMu.Unlock()
+	if source == nil {
 		return fmt.Errorf("subscription not found")
 	}
-	oldRaw := deepcopy.Copy(subscriptions[index]).(configure.SubscriptionRaw)
-	oldConnections := deepcopy.Copy(configure.GetConnectedServers()).(*configure.Whiches)
-	addr := subscriptions[index].Address
-	password := subscriptions[index].DecryptPassword
-	extra := subscriptions[index].Extra
+	addr := source.Address
+	password := source.DecryptPassword
+	extra := source.Extra
 	c := httpClient.GetHttpClientAutomatically()
 	resolv.CheckResolvConf()
 	result, err := ResolveSubscriptionWithClient(addr, c, password, extra)
@@ -454,6 +403,20 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 		reason := "failed to resolve subscription address: " + err.Error()
 		log.Warn("UpdateSubscription: %v: %v", err, result.infos)
 		return fmt.Errorf("UpdateSubscription: %v", reason)
+	}
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
+	subscriptions, err := configure.ReadSubscriptions()
+	if err != nil {
+		return err
+	}
+	if index >= len(subscriptions) {
+		return fmt.Errorf("subscription removed during download")
+	}
+	oldRaw := subscriptions[index]
+	if oldRaw.DatabaseID != source.DatabaseID || oldRaw.Address != addr || oldRaw.DecryptPassword != password ||
+		!reflect.DeepEqual(oldRaw.Extra, extra) || !reflect.DeepEqual(oldRaw.Servers, source.Servers) {
+		return fmt.Errorf("subscription changed during download; retry the refresh")
 	}
 	subscriptionInfos := result.infos
 	status := result.status
@@ -466,41 +429,82 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 		}
 	}
 	infoServerRaws := make([]configure.ServerRaw, len(subscriptionInfos))
-	css := configure.GetConnectedServers()
-	cssAfter := css.Get()
+	groups := configure.GetOutbounds()
+	previous := make(map[string]*configure.Whiches, len(groups))
+	var connections []*configure.Which
+	for _, group := range groups {
+		previous[group] = configure.GetConnectedServersByOutbound(group)
+		for _, w := range previous[group].Get() {
+			copy := *w
+			connections = append(connections, &copy)
+		}
+	}
+	for i, info := range subscriptionInfos {
+		raw := configure.ServerRaw{ServerObj: info, Latency: oldNameLatency[info.GetName()]}
+		applyServerFlags(&raw, extra)
+		infoServerRaws[i] = raw
+	}
+	ruleMembers, err := refreshRuleMembers(index, subscriptions, infoServerRaws, previous)
+	if err != nil {
+		return err
+	}
+	cssAfter := make([]*configure.Which, 0, len(connections))
+	// Nonempty rules replace the entire group. Zero matches keep the old
+	// endpoint exactly, even if a different node now occupies its position.
+	retained := map[string]int{}
+	for i, n := range infoServerRaws {
+		retained[n.ServerObj.ExportToURL()] = i + 1
+	}
+	standalone := standaloneMembers{}
+	for _, w := range connections {
+		nodes, managed := ruleMembers[w.Outbound]
+		if managed && (len(nodes) > 0 || !enabledMember(w, subscriptions, standalone)) {
+			continue
+		}
+		if managed && w.TYPE == configure.SubscriptionServerType && w.Sub == index {
+			n := oldRaw.Servers[w.ID-1]
+			link := n.ServerObj.ExportToURL()
+			id := retained[link]
+			if id > 0 && !enabledNode(&infoServerRaws[id-1], &extra) {
+				continue
+			}
+			if id == 0 {
+				n.Retained = true
+				infoServerRaws = append(infoServerRaws, n)
+				id = len(infoServerRaws)
+				retained[link] = id
+			}
+			w.ID = id
+		}
+		cssAfter = append(cssAfter, w)
+	}
 	// serverObj.ServerObj is a pointer(interface), and shouldn't be as a key
 	link2Raw := make(map[string]*configure.ServerRaw)
 	connectedVmessInfo2CssIndex := make(map[string][]int)
-	for i, cs := range css.Get() {
-		if cs.TYPE == configure.SubscriptionServerType && cs.Sub == index {
-			if sRaw, err := cs.LocateServerRaw(); err != nil {
-				return err
-			} else {
-				if sRaw.ServerObj == nil {
-					log.Warn("UpdateSubscription: skipping connected server with nil ServerObj (Sub=%d, ID=%d)", cs.Sub, cs.ID)
-					continue
-				}
-				link := sRaw.ServerObj.ExportToURL()
-				link2Raw[link] = sRaw
-				connectedVmessInfo2CssIndex[link] = append(connectedVmessInfo2CssIndex[link], i)
-			}
+	for i, cs := range cssAfter {
+		if _, managed := ruleMembers[cs.Outbound]; managed {
+			continue
 		}
+		if cs.TYPE != configure.SubscriptionServerType || cs.Sub != index {
+			continue
+		}
+		if cs.ID < 1 || cs.ID > len(oldRaw.Servers) || oldRaw.Servers[cs.ID-1].ServerObj == nil {
+			return fmt.Errorf("invalid saved member in %s", cs.Outbound)
+		}
+		raw := &oldRaw.Servers[cs.ID-1]
+		link := raw.ServerObj.ExportToURL()
+		link2Raw[link] = raw
+		connectedVmessInfo2CssIndex[link] = append(connectedVmessInfo2CssIndex[link], i)
 	}
 	// Replace list with new one, and find one with the same server value as the current connection, set it as Connected; if none, disconnect
 	for i, info := range subscriptionInfos {
-		infoServerRaw := configure.ServerRaw{
-			ServerObj: info,
-			Latency:   oldNameLatency[info.GetName()],
-		}
-		applyServerFlags(&infoServerRaw, extra)
-		link := infoServerRaw.ServerObj.ExportToURL()
+		link := info.ExportToURL()
 		if cssIndexes, ok := connectedVmessInfo2CssIndex[link]; ok {
 			for _, cssIndex := range cssIndexes {
 				cssAfter[cssIndex].ID = i + 1
 			}
 			delete(connectedVmessInfo2CssIndex, link)
 		}
-		infoServerRaws[i] = infoServerRaw
 	}
 	// Fallback: subscription providers often rename nodes (traffic/expiry counters in
 	// names) while keeping the same endpoint. Remap remaining connected servers to new
@@ -566,22 +570,49 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 		delete(connectedVmessInfo2CssIndex, link)
 	}
 	for link, cssIndexes := range connectedVmessInfo2CssIndex {
+		id := retained[link]
+		if !disconnectIfNecessary && id == 0 {
+			n := *link2Raw[link]
+			n.Retained = true
+			infoServerRaws = append(infoServerRaws, n)
+			id = len(infoServerRaws)
+		}
 		for _, cssIndex := range cssIndexes {
 			if disconnectIfNecessary {
-				err = Disconnect(*css.Get()[cssIndex], false)
-				if err != nil {
-					reason := "failed to disconnect previous server"
-					return fmt.Errorf("UpdateSubscription: %v", reason)
-				}
+				cssAfter[cssIndex] = nil
+				connectedServerChanged = true
 			} else {
-				// Append previously connected node
-				infoServerRaws = append(infoServerRaws, *link2Raw[link])
-				cssAfter[cssIndex].ID = len(infoServerRaws)
+				cssAfter[cssIndex].ID = id
 			}
 		}
 	}
-	if err := configure.OverwriteConnects(configure.NewWhiches(cssAfter)); err != nil {
-		return err
+	grouped := map[string]*configure.Whiches{}
+	for _, group := range groups {
+		grouped[group] = configure.NewWhiches(nil)
+	}
+	for _, w := range cssAfter {
+		if w != nil {
+			grouped[w.Outbound].Add(*w)
+		}
+	}
+	for group, nodes := range ruleMembers {
+		if len(nodes) > 0 {
+			grouped[group] = configure.NewWhiches(nodes)
+		}
+	}
+	nextStates := map[string]any{}
+	oldStates := map[string]any{}
+	for group, members := range grouped {
+		prev := previous[group]
+		if !sameMembers(members.Get(), prev.Get()) {
+			oldStates[memberKey(group)] = prev
+			nextStates[memberKey(group)] = members
+			connectedServerChanged = true
+		}
+		// A provider can replace a node at the very same list position.
+		if _, managed := ruleMembers[group]; managed && memberEndpointsChanged(members.Get(), index, oldRaw.Servers, infoServerRaws) {
+			connectedServerChanged = true
+		}
 	}
 	subscriptions[index].Servers = infoServerRaws
 	subscriptions[index].Status = string(touch.NewUpdateStatus())
@@ -593,139 +624,172 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	subscriptions[index].Extra.Download = result.traffic.Download
 	subscriptions[index].Extra.Total = result.traffic.Total
 	subscriptions[index].Extra.Expire = result.traffic.Expire.Unix()
-	if err := configure.SetSubscription(index, &subscriptions[index]); err != nil {
+	return publishSubscriptionMembers(index, &oldRaw, &subscriptions[index], oldStates, nextStates, connectedServerChanged || dnsChanged)
+}
+
+func memberEndpointsChanged(members []*configure.Which, index int, before, after []configure.ServerRaw) bool {
+	for _, w := range members {
+		if w.TYPE != configure.SubscriptionServerType || w.Sub != index {
+			continue
+		}
+		pos := w.ID - 1
+		if pos < 0 || pos >= len(before) || pos >= len(after) || before[pos].ServerObj == nil || after[pos].ServerObj == nil ||
+			before[pos].ServerObj.ExportToURL() != after[pos].ServerObj.ExportToURL() {
+			return true
+		}
+	}
+	return false
+}
+
+// Positional node references and the provider rows they address must be
+// published and rolled back in the same transaction.
+func publishSubscriptionMembers(index int, old, updated *configure.SubscriptionRaw, oldStates, nextStates map[string]any, reload bool) error {
+	if err := db.SetSubscriptionAndState(index, updated, nextStates); err != nil {
 		return err
 	}
-	// A remapped connection may point at a server whose config differs from the old
-	// one; the running core keeps using the old config until it is regenerated.
-	if (connectedServerChanged || dnsChanged) && v2ray.ProcessManager.Running() {
+	if reload && v2ray.ProcessManager.Running() {
 		if err := v2ray.UpdateV2RayConfig(); err != nil {
-			return restoreSubscriptionConfig(index, &oldRaw, oldConnections, err)
+			err = errors.Join(err, db.SetSubscriptionAndState(index, old, oldStates))
+			if !v2ray.ProcessManager.Running() {
+				err = errors.Join(err, v2ray.UpdateV2RayConfig())
+			}
+			return err
 		}
 	}
 	return nil
 }
 
-func ModifySubscriptionRemark(subscription touch.Subscription) (err error) {
-	raw := configure.GetSubscription(subscription.ID - 1)
-	if raw == nil {
-		return fmt.Errorf("failed to find the corresponding subscription")
-	}
+func ModifySubscriptionRemark(subscription touch.Subscription) error {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
 	if err := subscription.Extra.Validate(); err != nil {
 		return err
 	}
+	index := subscription.ID - 1
+	previous := configure.GetSubscription(index)
+	if previous == nil {
+		return fmt.Errorf("failed to find the corresponding subscription")
+	}
+	updated := *previous
+
 	// Provider data comes from the downloaded profile, never from the editor.
-	subscription.Extra.ProviderNodeDNS = raw.Extra.ProviderNodeDNS
-	dnsChanged := strings.Join(raw.Extra.EffectiveNodeDNS(), "\n") != strings.Join(subscription.Extra.EffectiveNodeDNS(), "\n")
-	oldRaw := deepcopy.Copy(*raw).(configure.SubscriptionRaw)
-	oldConnections := deepcopy.Copy(configure.GetConnectedServers()).(*configure.Whiches)
-	raw.Remarks = subscription.Remarks
-	raw.Address = subscription.Address
-	raw.AutoSelect = subscription.AutoSelect
-	raw.DecryptPassword = subscription.DecryptPassword
-	raw.Extra = subscription.Extra
-	if len(raw.Extra.RemovedTags) > 0 {
-		removed := make(map[string]bool, len(raw.Extra.RemovedTags))
-		for _, t := range raw.Extra.RemovedTags {
-			removed[t] = true
+	subscription.Extra.ProviderNodeDNS = previous.Extra.ProviderNodeDNS
+	// The overview omits AGE identities. An ordinary metadata edit must keep
+	// the saved credential; an explicit empty value clears it.
+	subscription.Extra.AgePassword = previous.Extra.AgePassword
+	if subscription.AgePassword != nil {
+		subscription.Extra.AgePassword = *subscription.AgePassword
+	}
+	reload := !slices.Equal(previous.Extra.EffectiveNodeDNS(), subscription.Extra.EffectiveNodeDNS())
+	updated.Extra = subscription.Extra
+	updated.Remarks = subscription.Remarks
+	updated.Address = subscription.Address
+	updated.AutoSelect = subscription.AutoSelect
+	updated.DecryptPassword = subscription.DecryptPassword
+
+	membershipChanged := !slices.Equal(previous.Extra.DisabledTags, updated.Extra.DisabledTags) ||
+		!slices.Equal(previous.Extra.RemovedTags, updated.Extra.RemovedTags)
+	// Preserve identity even when two different nodes share a display name.
+	newIDs := make([]int, len(previous.Servers)+1)
+	updated.Servers = make([]configure.ServerRaw, 0, len(previous.Servers))
+	for i, node := range previous.Servers {
+		if node.ServerObj != nil && slices.Contains(updated.Extra.RemovedTags, node.ServerObj.GetName()) {
+			membershipChanged = true
+			continue
 		}
-		// Map every current server ID of this subscription to its node name
-		// while the original list is still intact.
-		nameByOldID := make(map[int]string, len(raw.Servers))
-		for i, srv := range raw.Servers {
-			if srv.ServerObj != nil {
-				nameByOldID[i+1] = srv.ServerObj.GetName()
-			}
+		wasDisabled := node.Disabled
+		applyServerFlags(&node, updated.Extra)
+		if wasDisabled != node.Disabled {
+			membershipChanged = true
 		}
-		// Disconnect any connected server that is being removed.
-		for _, cs := range configure.GetConnectedServers().Get() {
-			if cs.TYPE == configure.SubscriptionServerType && cs.Sub == subscription.ID-1 {
-				if name, ok := nameByOldID[cs.ID]; ok && removed[name] {
-					if e := Disconnect(*cs, false); e != nil {
-						log.Warn("ModifySubscriptionRemark: failed to disconnect removed server %v: %v", name, e)
-					}
-				}
-			}
-		}
-		filtered := make([]configure.ServerRaw, 0, len(raw.Servers))
-		for _, s := range raw.Servers {
-			if s.ServerObj != nil && removed[s.ServerObj.GetName()] {
+		updated.Servers = append(updated.Servers, node)
+		newIDs[i+1] = len(updated.Servers)
+	}
+	// Earlier versions could leave a disabled node selected. Repeating a
+	// PATCH with the same flags should repair only groups still using it.
+	if !membershipChanged && len(updated.Extra.DisabledTags) > 0 {
+		for _, group := range configure.GetOutbounds() {
+			if configure.GetOutboundSetting(group).MemberRule == nil {
 				continue
 			}
-			filtered = append(filtered, s)
+			old := configure.GetConnectedServersByOutbound(group).Get()
+			if slices.ContainsFunc(old, func(w *configure.Which) bool {
+				return w.TYPE == configure.SubscriptionServerType && w.Sub == index && w.ID > 0 &&
+					w.ID <= len(updated.Servers) && updated.Servers[w.ID-1].Disabled
+			}) {
+				membershipChanged = true
+				break
+			}
 		}
-		raw.Servers = filtered
-		// The removal shifted the server IDs of this subscription; remap the
-		// remaining connected entries by name so they keep pointing at the
-		// same nodes.
-		cssAfter := configure.GetConnectedServers().Get()
-		idToName := make(map[int]string, len(cssAfter))
-		for _, cs := range cssAfter {
-			if cs.TYPE == configure.SubscriptionServerType && cs.Sub == subscription.ID-1 {
-				if name, ok := nameByOldID[cs.ID]; ok {
-					idToName[cs.ID] = name
+	}
+	if !membershipChanged {
+		return publishSubscriptionMembers(index, previous, &updated, nil, nil, reload)
+	}
+	var subs []configure.SubscriptionRaw
+	standalone := standaloneMembers{}
+	oldStates, nextStates := map[string]any{}, map[string]any{}
+	for _, group := range configure.GetOutbounds() {
+		old := configure.GetConnectedServersByOutbound(group)
+		rule := configure.GetOutboundSetting(group).MemberRule
+		remapped := make([]*configure.Which, 0, old.Len())
+		for _, w := range old.Get() {
+			if w.TYPE != configure.SubscriptionServerType || w.Sub != index {
+				remapped = append(remapped, w)
+				continue
+			}
+			if w.ID < 1 || w.ID >= len(newIDs) || newIDs[w.ID] == 0 {
+				continue
+			}
+			member := *w
+			member.ID = newIDs[w.ID]
+			remapped = append(remapped, &member)
+		}
+		if affectedRule(rule, updated.DatabaseID, index, old.Get()) {
+			if subs == nil {
+				var err error
+				subs, err = configure.ReadSubscriptions()
+				if err != nil {
+					return err
 				}
-			}
-		}
-		newIDByName := make(map[string]int, len(raw.Servers))
-		for i, srv := range raw.Servers {
-			if srv.ServerObj != nil {
-				newIDByName[srv.ServerObj.GetName()] = i + 1
-			}
-		}
-		for _, cs := range cssAfter {
-			if cs.TYPE == configure.SubscriptionServerType && cs.Sub == subscription.ID-1 {
-				if name, ok := idToName[cs.ID]; ok {
-					if id, exist := newIDByName[name]; exist {
-						cs.ID = id
-					}
+				if index >= len(subs) || subs[index].DatabaseID != updated.DatabaseID {
+					return fmt.Errorf("subscription changed during edit")
 				}
+				subs[index] = updated
 			}
+			matches, err := matchOutboundMembers(group, *rule, subs)
+			if err != nil {
+				return err
+			}
+			remapped = effectiveMembers(matches, remapped, subs, standalone)
 		}
-		if err := configure.OverwriteConnects(configure.NewWhiches(cssAfter)); err != nil {
-			log.Warn("ModifySubscriptionRemark: failed to update connections: %v", err)
-		}
-	}
-	// Re-apply node flags (disabled/favorite) to the stored servers when the
-	// corresponding tag lists change.
-	for i := range raw.Servers {
-		applyServerFlags(&raw.Servers[i], raw.Extra)
-	}
-	if err := configure.SetSubscription(subscription.ID-1, raw); err != nil {
-		return err
-	}
-	if dnsChanged && v2ray.ProcessManager.Running() {
-		if err := v2ray.UpdateV2RayConfig(); err != nil {
-			return restoreSubscriptionConfig(subscription.ID-1, &oldRaw, oldConnections, err)
+		if !sameMembers(old.Get(), remapped) {
+			oldStates[memberKey(group)] = old
+			nextStates[memberKey(group)] = configure.NewWhiches(remapped)
+			reload = true
+		} else if memberEndpointsChanged(remapped, index, previous.Servers, updated.Servers) {
+			reload = true
 		}
 	}
-	return nil
-}
-
-// Called only after a failed reload of a previously running core.
-func restoreSubscriptionConfig(index int, raw *configure.SubscriptionRaw, connections *configure.Whiches, cause error) error {
-	err := errors.Join(cause, configure.SetSubscription(index, raw), configure.OverwriteConnects(connections))
-	if !v2ray.ProcessManager.Running() {
-		if restoreErr := v2ray.UpdateV2RayConfig(); restoreErr != nil {
-			err = errors.Join(err, fmt.Errorf("restoring previous core failed: %w", restoreErr))
-		}
-	}
-	return err
+	return publishSubscriptionMembers(index, previous, &updated, oldStates, nextStates, reload)
 }
 
 func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error) {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
+	if configure.GetOutboundSetting("proxy").MemberRule != nil {
+		return nil
+	}
 	var subscriptionServer configure.Which
 	subscriptionServer.TYPE = "subscriptionServer"
 	subscriptionServer.Sub = index // Subscription IDs start with 0
 	subscriptionServer.Outbound = "proxy"
 
-	for i := 1; i < configure.GetLenSubscriptionServers(index)+1; i++ {
-		subscriptionServer.ID = i // Server IDs start with 1
-		sub := configure.GetSubscription(index)
-		if sub == nil {
-			return fmt.Errorf("SelectServersFromSubscription: subscription at index %d not found", index)
-		}
-		serverRaw := sub.Servers[i-1]
+	sub := configure.GetSubscription(index)
+	if sub == nil {
+		return fmt.Errorf("SelectServersFromSubscription: subscription at index %d not found", index)
+	}
+	for i, serverRaw := range sub.Servers {
+		subscriptionServer.ID = i + 1
 		if serverRaw.Disabled {
 			log.Info("[AutoSelect] Skipping disabled server %v", serverRaw.ServerObj.GetName())
 			continue
@@ -745,7 +809,7 @@ func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error)
 		}
 
 		if shouldDisconnect {
-			err := Disconnect(subscriptionServer, true)
+			err := disconnect(subscriptionServer, true)
 			if err == nil {
 				log.Info("[AutoSelect] Disconnected from server: %v", serverName)
 			} else {
@@ -753,7 +817,7 @@ func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error)
 				return err
 			}
 		} else {
-			err := Connect(&subscriptionServer)
+			err := connect(&subscriptionServer)
 			if err == nil {
 				log.Info("[AutoSelect] Automatically selected server: %v", serverName)
 			} else {

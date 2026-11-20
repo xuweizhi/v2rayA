@@ -26,6 +26,11 @@ v2rayA mainly provides the following methods of installation:
 
 See [**v2rayA - Docs**](https://github.com/v2rayA/v2rayA/wiki)
 
+### Importing subscriptions and grouping nodes
+
+Open **Import** to paste a node list, Clash YAML or SIP008 profile, or select a local file. The result shows how many nodes were imported and why entries were skipped. Paste a Karing, Clash or sing-box subscription installation link to review its URL, label and node DNS before downloading it. For an AGE-encrypted subscription, enter its private key or passphrase in the same dialog.
+
+To keep an outbound group in sync with subscriptions, open its settings and enable automatic membership. Select one or more subscriptions, enter a keyword or regular expression for node names, and preview the additions and removals. Once saved, the group updates when a subscription refreshes or you enable or disable a node. If the rule matches no nodes, the group keeps only its previous members that are still enabled. Disabling the last member leaves the group empty.
 
 ## Screenshot
 

@@ -39,3 +39,30 @@ func TestPreProxyRejectsUnsupportedProtocol(t *testing.T) {
 		t.Fatal("unsupported protocol silently bypassed pre-proxy")
 	}
 }
+
+func TestPreProxyBlocksChainWithEmptyAutomaticGroup(t *testing.T) {
+	sd := &ServerData{
+		ServerInfos: []serverInfo{{Info: dnsNode(t, "landing.example"), OutboundName: "landing"}},
+		OutboundName2Setting: map[string]configure.OutboundSetting{
+			"landing": {PreProxy: "front"},
+			"front":   {MemberRule: &configure.OutboundMemberRule{Mode: "keyword", Pattern: "HK"}},
+		},
+	}
+	tmpl := &Template{
+		Outbounds:     []coreObj.OutboundObject{{Tag: "landing", Protocol: "socks"}},
+		OutboundTags:  []string{"landing"},
+		serverInfoMap: map[string]*serverInfo{},
+	}
+	if err := tmpl.applyPreProxies(sd); err != nil {
+		t.Fatal(err)
+	}
+	if len(tmpl.internalRoutes) != 1 || tmpl.internalRoutes[0].OutboundTag != "front" {
+		t.Fatalf("missing route to empty pre-proxy: %+v", tmpl.internalRoutes)
+	}
+	for _, out := range tmpl.Outbounds {
+		if out.Tag == "front" && out.Protocol == "blackhole" {
+			return
+		}
+	}
+	t.Fatal("empty pre-proxy must block its dependent routes")
+}

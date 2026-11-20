@@ -165,20 +165,35 @@ func GetServers() []ServerRaw {
 	return r
 }
 
+// ReadSubscriptions refuses partial lists. Group members address nodes by
+// position, so skipping a damaged subscription could select a different node.
+func ReadSubscriptions() ([]SubscriptionRaw, error) {
+	return readSubscriptions(false)
+}
+
 func GetSubscriptions() []SubscriptionRaw {
-	r := make([]SubscriptionRaw, 0)
-	raw, err := db.ListGetAll("touch", "subscriptions")
-	if err == nil {
-		for _, b := range raw {
-			t, e := Bytes2SubscriptionRaw(b)
-			if e != nil {
-				log.Warn("%v", e)
-				continue
-			}
-			r = append(r, *t)
-		}
+	subs, _ := readSubscriptions(true)
+	return subs
+}
+
+func readSubscriptions(skipInvalid bool) ([]SubscriptionRaw, error) {
+	subs := make([]SubscriptionRaw, 0)
+	rows, err := db.ListGetAll("touch", "subscriptions")
+	if err != nil {
+		return subs, err
 	}
-	return r
+	for index, row := range rows {
+		sub, err := Bytes2SubscriptionRaw(row)
+		if err != nil {
+			if !skipInvalid {
+				return nil, fmt.Errorf("cannot read subscription %d: %w", index+1, err)
+			}
+			log.Warn("%v", err)
+			continue
+		}
+		subs = append(subs, *sub)
+	}
+	return subs, nil
 }
 func GetSubscription(index int) *SubscriptionRaw {
 	b, err := db.ListGet("touch", "subscriptions", index)
@@ -308,6 +323,10 @@ func GetConnectedServersByOutbound(outbound string) *Whiches {
 	bucket := fmt.Sprintf("outbound.%v", outbound)
 	if err := db.Get(bucket, "connectedServers", r); err != nil {
 		return nil
+	}
+	// Older selections can omit the group in each touch. The bucket is authoritative.
+	for _, member := range r.Get() {
+		member.Outbound = outbound
 	}
 	return r
 }
@@ -450,6 +469,13 @@ func AddOutbound(outbound string) (err error) {
 }
 
 func SetOutboundSetting(outbound string, setting OutboundSetting) (err error) {
+	if err := ValidateOutboundSetting(outbound, setting); err != nil {
+		return err
+	}
+	return db.Set(fmt.Sprintf("outbound.%v", outbound), "setting", setting)
+}
+
+func ValidateOutboundSetting(outbound string, setting OutboundSetting) error {
 	settings := map[string]OutboundSetting{}
 	for _, name := range GetOutbounds() {
 		settings[name] = GetOutboundSetting(name)
@@ -464,7 +490,7 @@ func SetOutboundSetting(outbound string, setting OutboundSetting) (err error) {
 	if _, err := time.ParseDuration(setting.ProbeInterval); err != nil {
 		return err
 	}
-	return db.Set(fmt.Sprintf("outbound.%v", outbound), "setting", setting)
+	return nil
 }
 
 func GetOutboundSetting(outbound string) (setting OutboundSetting) {

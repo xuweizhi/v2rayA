@@ -610,6 +610,9 @@ export default {
           outbound: outbound,
         },
         events: {
+          saved() {
+            if (that.$refs.nodeRef) that.$refs.nodeRef.syncLatestNodeOverview();
+          },
           delete() {
             that.handleDeleteOutbound(outbound);
           },

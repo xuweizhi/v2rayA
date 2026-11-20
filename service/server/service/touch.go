@@ -5,6 +5,8 @@ import (
 )
 
 func DeleteWhich(ws []*configure.Which) (err error) {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
 	var data *configure.Whiches
 	// Deduplicate touches to delete
 	data = configure.NewWhiches(ws)
@@ -28,7 +30,7 @@ func DeleteWhich(ws []*configure.Which) (err error) {
 				cs := css[i]
 				if cs != nil && cs.TYPE == configure.SubscriptionServerType {
 					if ind == cs.Sub {
-						err = Disconnect(*cs, false)
+						err = disconnect(*cs, false)
 						if err != nil {
 							return
 						}
@@ -47,7 +49,7 @@ func DeleteWhich(ws []*configure.Which) (err error) {
 				cs := css[i]
 				if cs != nil && cs.TYPE == configure.ServerType {
 					if v.ID == cs.ID {
-						err = Disconnect(*cs, false)
+						err = disconnect(*cs, false)
 						if err != nil {
 							return
 						}

@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/db/configure"
-	"github.com/v2rayA/v2rayA/kernel/v2ray"
+
 	"github.com/v2rayA/v2rayA/server/service"
 )
 
@@ -34,9 +34,15 @@ func PostOutbound(ctx *gin.Context) {
 }
 
 func GetOutbound(ctx *gin.Context) {
+	sources, err := service.SubscriptionSources()
+	if err != nil {
+		common.ResponseError(ctx, logError(err))
+		return
+	}
 	setting := configure.GetOutboundSetting(ctx.Query("outbound"))
 	common.ResponseSuccess(ctx, gin.H{
-		"setting": setting,
+		"setting":             setting,
+		"subscriptionSources": sources,
 	})
 }
 
@@ -59,25 +65,28 @@ func PutOutbound(ctx *gin.Context) {
 		common.ResponseError(ctx, logError("bad request"))
 		return
 	}
-	old := configure.GetOutboundSetting(data.Outbound)
-	if err := configure.SetOutboundSetting(data.Outbound, data.Setting); err != nil {
+	if err := service.ApplyOutboundSetting(data.Outbound, data.Setting); err != nil {
 		common.ResponseError(ctx, logError(err))
 		return
 	}
-	if v2ray.ProcessManager.Running() && configure.GetConnectedServers().Len() > 0 {
-		err := v2ray.UpdateV2RayConfig()
-		if err != nil {
-			_ = configure.SetOutboundSetting(data.Outbound, old)
-			if !v2ray.ProcessManager.Running() {
-				if restoreErr := v2ray.UpdateV2RayConfig(); restoreErr != nil {
-					err = fmt.Errorf("%w; restoring previous core failed: %v", err, restoreErr)
-				}
-			}
-			common.ResponseError(ctx, fmt.Errorf("invalid config (previous settings restored): %w", err))
-			return
-		}
-	}
 	common.ResponseSuccess(ctx, nil)
+}
+
+func PostOutboundMemberPreview(ctx *gin.Context) {
+	var data struct {
+		Outbound string                       `json:"outbound"`
+		Rule     configure.OutboundMemberRule `json:"memberRule"`
+	}
+	if err := ctx.ShouldBindJSON(&data); err != nil {
+		common.ResponseError(ctx, err)
+		return
+	}
+	preview, err := service.PreviewOutboundMembers(data.Outbound, data.Rule)
+	if err != nil {
+		common.ResponseError(ctx, err)
+		return
+	}
+	common.ResponseSuccess(ctx, preview)
 }
 
 func DeleteOutbound(ctx *gin.Context) {
@@ -126,13 +135,7 @@ func DeleteOutbound(ctx *gin.Context) {
 		return
 	}
 
-	if w := configure.GetConnectedServersByOutbound(data.Outbound); w != nil {
-		if err := service.Disconnect(configure.Which{Outbound: data.Outbound}, true); err != nil {
-			common.ResponseError(ctx, logError(err))
-			return
-		}
-	}
-	if err := configure.RemoveOutbound(data.Outbound); err != nil {
+	if err := service.DeleteOutbound(data.Outbound); err != nil {
 		common.ResponseError(ctx, logError(err))
 		return
 	}

@@ -371,8 +371,14 @@ func UpdateV2RayConfig() (err error) {
 	tmpl, err := NewTemplateFromConnectedServers(nil)
 	if err != nil {
 		if errors.Is(err, NoConnectedServerErr) {
-			//no servers are selected, which means to stop the v2ray-core
-			ProcessManager.Stop(true)
+			// An empty selection revokes the last active route. The API
+			// must not report success while its old SOCKS listener is live.
+			stopped := ProcessManager.stopCurrent(true)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := stopped.WaitUntilExit(ctx); err != nil {
+				return fmt.Errorf("waiting for the previous core to exit: %w", err)
+			}
 			return nil
 		}
 		return err

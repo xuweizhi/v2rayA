@@ -25,6 +25,13 @@
           :placeholder="$t('import.passwordPlaceholder')"
         />
       </b-field>
+      <b-field :label="$t('subscription.ageCredential')">
+        <AgeCredential v-model="ageCredential"
+          :disabled="clearAgeCredential" :placeholder="form.hasAgePassword ? $t('subscription.credentialSaved') : ''" />
+      </b-field>
+      <b-field v-if="form.hasAgePassword">
+        <b-checkbox v-model="clearAgeCredential">{{ $t('subscription.clearAgeCredential') }}</b-checkbox>
+      </b-field>
       <b-field :label="$t('subscription.userAgent')">
         <b-input
           v-model="extra.userAgent"
@@ -97,8 +104,10 @@
 
 <script>
 import { handleResponse } from "@/assets/js/utils";
+import AgeCredential from "./AgeCredential.vue";
 export default {
   name: "ModalSubscription",
+  components: { AgeCredential },
   props: {
     which: {
       type: Object,
@@ -111,6 +120,8 @@ export default {
     const source = this.which || {};
     return {
       protocols: ['vmess', 'vless', 'trojan', 'shadowsocks', 'shadowsocksr', 'hysteria2', 'tuic', 'anytls', 'mieru', 'wireguard', 'shadowtls', 'juicity', 'socks5', 'http'],
+      ageCredential: "",
+      clearAgeCredential: false,
       previewLoading: false,
       previewText: '',
       nodeDNSText: ((source.extra || {}).nodeDNS || []).join('\n'),
@@ -135,7 +146,7 @@ export default {
     },
     handleClickSubmit() {
       this.form.extra.nodeDNS = this.nodeDNSText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-      this.$emit("submit", this.form);
+      this.$emit("submit", { ...this.form, agePassword: this.clearAgeCredential ? "" : (this.ageCredential || undefined) });
     },
   },
 };

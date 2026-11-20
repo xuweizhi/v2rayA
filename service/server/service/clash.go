@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/kernel/serverObj"
-	"github.com/v2rayA/v2rayA/pkg/util/log"
 )
 
 // isClashYAML reports whether the raw subscription content looks like a Clash
@@ -24,26 +24,46 @@ func isClashYAML(raw string) bool {
 
 // resolveClashYAML parses a Clash subscription YAML and converts each proxy
 // under "proxies:" into a serverObj. Unsupported proxy types are skipped.
-func resolveClashYAML(raw string) (infos []serverObj.ServerObj, status string, err error) {
+func resolveClashYAML(raw string, report *ImportResult) ([]serverObj.ServerObj, error) {
 	var cfg struct {
-		Proxies []map[string]interface{} `yaml:"proxies"`
+		Proxies []yaml.Node `yaml:"proxies"`
 	}
-	if err = yaml.Unmarshal([]byte(raw), &cfg); err != nil {
-		return nil, "", fmt.Errorf("failed to parse clash yaml: %w", err)
+	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
+		return nil, errors.New("invalid Clash YAML")
 	}
-	infos = make([]serverObj.ServerObj, 0, len(cfg.Proxies))
-	for _, p := range cfg.Proxies {
-		obj, err := clashProxyToServerObj(p)
-		if err != nil {
-			log.Warn("resolveClashYAML: skip proxy %q: %v", getString(p, "name"), err)
+	infos := make([]serverObj.ServerObj, 0, len(cfg.Proxies))
+	for i, row := range cfg.Proxies {
+		var proxy map[string]interface{}
+		if err := row.Decode(&proxy); err != nil {
+			report.skip(fmt.Sprintf("Clash proxy %d: expected a proxy mapping", i+1))
 			continue
 		}
-		if obj != nil {
-			infos = append(infos, obj)
+		obj, err := clashProxyToServerObj(proxy)
+		if err != nil || obj == nil {
+			reason := "invalid node settings"
+			var invalidFields clashFieldError
+			if errors.As(err, &invalidFields) {
+				reason = invalidFields.Error()
+			} else if errors.Is(err, errUnsupportedClashType) {
+				reason = "unsupported proxy type"
+			} else if errors.Is(err, errUnsupportedSocksTLS) {
+				reason = "TLS for SOCKS5 is not supported"
+			}
+			report.skip(fmt.Sprintf("Clash proxy %d: %s", i+1, reason))
+			continue
 		}
+		infos = append(infos, obj)
 	}
-	return infos, "", nil
+	return infos, nil
 }
+
+// clashFieldError carries static field diagnostics suitable for import reports.
+type clashFieldError string
+
+func (e clashFieldError) Error() string { return string(e) }
+
+var errUnsupportedClashType = errors.New("unsupported Clash proxy type")
+var errUnsupportedSocksTLS = errors.New("unsupported TLS for SOCKS5")
 
 // ---- yaml helpers ----
 
@@ -136,6 +156,16 @@ func getStringList(m map[string]interface{}, key string) []string {
 func clashProxyToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {
 	typ := strings.ToLower(getString(p, "type"))
 	switch typ {
+	case "socks5":
+		server, port := getString(p, "server"), getInt(p, "port")
+		if server == "" || port < 1 || port > 65535 {
+			return nil, clashFieldError("socks5: invalid server or port")
+		}
+		if getBool(p, "tls") {
+			return nil, errUnsupportedSocksTLS
+		}
+		return &serverObj.SOCKS{Name: getString(p, "name"), Server: server, Port: port,
+			Username: getString(p, "username"), Password: getString(p, "password"), Protocol: "socks5"}, nil
 	case "mieru":
 		return clashMieruToServerObj(p)
 	case "shadowtls":
@@ -151,15 +181,15 @@ func clashProxyToServerObj(p map[string]interface{}) (serverObj.ServerObj, error
 	case "hysteria2", "hy2":
 		return clashHysteria2ToServerObj(p)
 	default:
-		return nil, fmt.Errorf("unsupported clash proxy type %q", typ)
+		return nil, errUnsupportedClashType
 	}
 }
 
 func clashMieruToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {
 	server := getString(p, "server")
 	port := getInt(p, "port")
-	if server == "" || port <= 0 {
-		return nil, fmt.Errorf("mieru: missing server or port")
+	if server == "" || port < 1 || port > 65535 {
+		return nil, clashFieldError("mieru: missing server or invalid port")
 	}
 	transport := getString(p, "transport")
 	if transport == "" {
@@ -193,8 +223,8 @@ func mieruLink(p map[string]interface{}) string {
 func clashShadowTLSToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {
 	server := getString(p, "server")
 	port := getInt(p, "port")
-	if server == "" || port <= 0 || getString(p, "password") == "" {
-		return nil, fmt.Errorf("shadowtls: missing server, port or password")
+	if server == "" || port < 1 || port > 65535 || getString(p, "password") == "" {
+		return nil, clashFieldError("shadowtls: missing server/password or invalid port")
 	}
 	version := getInt(p, "version")
 	if version == 0 {
@@ -225,8 +255,8 @@ func clashShadowTLSToServerObj(p map[string]interface{}) (serverObj.ServerObj, e
 func clashVlessToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {
 	server := getString(p, "server")
 	port := getInt(p, "port")
-	if server == "" || port <= 0 || getString(p, "uuid") == "" {
-		return nil, fmt.Errorf("vless: missing server, port or uuid")
+	if server == "" || port < 1 || port > 65535 || getString(p, "uuid") == "" {
+		return nil, clashFieldError("vless: missing server/UUID or invalid port")
 	}
 	obj := &serverObj.V2Ray{
 		Ps:       getString(p, "name"),
@@ -294,8 +324,8 @@ func clashVlessToServerObj(p map[string]interface{}) (serverObj.ServerObj, error
 func clashVmessToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {
 	server := getString(p, "server")
 	port := getInt(p, "port")
-	if server == "" || port <= 0 || getString(p, "uuid") == "" {
-		return nil, fmt.Errorf("vmess: missing server, port or uuid")
+	if server == "" || port < 1 || port > 65535 || getString(p, "uuid") == "" {
+		return nil, clashFieldError("vmess: missing server/UUID or invalid port")
 	}
 	obj := &serverObj.V2Ray{
 		Ps:       getString(p, "name"),
@@ -357,8 +387,8 @@ func clashVmessToServerObj(p map[string]interface{}) (serverObj.ServerObj, error
 func clashSSToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {
 	server := getString(p, "server")
 	port := getInt(p, "port")
-	if server == "" || port <= 0 || getString(p, "password") == "" {
-		return nil, fmt.Errorf("ss: missing server, port or password")
+	if server == "" || port < 1 || port > 65535 || getString(p, "password") == "" {
+		return nil, clashFieldError("ss: missing server/password or invalid port")
 	}
 	userinfo := base64.RawURLEncoding.EncodeToString([]byte(getString(p, "cipher") + ":" + getString(p, "password")))
 	u := url.URL{
@@ -380,8 +410,8 @@ func clashSSToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {
 func clashTrojanToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {
 	server := getString(p, "server")
 	port := getInt(p, "port")
-	if server == "" || port <= 0 || getString(p, "password") == "" {
-		return nil, fmt.Errorf("trojan: missing server, port or password")
+	if server == "" || port < 1 || port > 65535 || getString(p, "password") == "" {
+		return nil, clashFieldError("trojan: missing server/password or invalid port")
 	}
 	u := url.URL{
 		Scheme:   "trojan",
@@ -421,8 +451,8 @@ func clashTrojanToServerObj(p map[string]interface{}) (serverObj.ServerObj, erro
 func clashHysteria2ToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {
 	server := getString(p, "server")
 	port := getInt(p, "port")
-	if server == "" || port <= 0 || getString(p, "password") == "" {
-		return nil, fmt.Errorf("hysteria2: missing server, port or password")
+	if server == "" || port < 1 || port > 65535 || getString(p, "password") == "" {
+		return nil, clashFieldError("hysteria2: missing server/password or invalid port")
 	}
 	u := url.URL{
 		Scheme:   "hysteria2",

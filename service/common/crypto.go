@@ -47,6 +47,9 @@ func DecryptSubscriptionBody(body []byte, password string) (string, error) {
 	}
 	iv := raw[:16]
 	ciphertext := raw[16:]
+	if len(ciphertext)%aes.BlockSize != 0 {
+		return "", errors.New("encrypted subscription body has invalid block length")
+	}
 	key := md5.Sum([]byte(password)) // #nosec G401 -- scheme defined by the subscription-encryption convention
 	block, err := aes.NewCipher(key[:])
 	if err != nil {

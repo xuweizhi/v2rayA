@@ -12,11 +12,18 @@ const (
 	LeastPing ObservatoryType = "leastping"
 )
 
+type OutboundMemberRule struct {
+	SubscriptionIDs []int64 `json:"subscriptionIDs"`
+	Mode            string  `json:"mode"`
+	Pattern         string  `json:"pattern"`
+}
+
 type OutboundSetting struct {
-	PreProxy      string          `json:"preProxy,omitempty"`
-	ProbeURL      string          `json:"probeURL"`
-	ProbeInterval string          `json:"probeInterval"`
-	Type          ObservatoryType `json:"type"`
+	MemberRule    *OutboundMemberRule `json:"memberRule,omitempty"`
+	PreProxy      string              `json:"preProxy,omitempty"`
+	ProbeURL      string              `json:"probeURL"`
+	ProbeInterval string              `json:"probeInterval"`
+	Type          ObservatoryType     `json:"type"`
 }
 
 // ValidatePreProxies checks the full graph, including currently inactive groups.

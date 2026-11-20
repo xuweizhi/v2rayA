@@ -187,10 +187,17 @@ func (m *CoreProcessManager) afterStop(p *Process) {
 }
 
 func (m *CoreProcessManager) Stop(saveRunning bool) {
+	m.stopCurrent(saveRunning)
+}
+
+// Return the exact child that received the stop request so a caller can
+// await its exit after releasing the manager lock.
+func (m *CoreProcessManager) stopCurrent(saveRunning bool) *Process {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.p == nil {
-		return
+	p := m.p
+	if p == nil {
+		return nil
 	}
 	if saveRunning {
 		// User explicitly stopped the core via API (StopV2ray).
@@ -201,6 +208,7 @@ func (m *CoreProcessManager) Stop(saveRunning bool) {
 		defer func() { _ = configure.SetLastKernelExitStatus(configure.LastKernelExitRunning) }()
 	}
 	m.stop(saveRunning)
+	return p
 }
 
 func (m *CoreProcessManager) stop(saveRunning bool) {

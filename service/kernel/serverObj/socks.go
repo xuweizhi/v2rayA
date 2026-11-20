@@ -34,7 +34,7 @@ func ParseSocksURL(u string) (data *SOCKS, err error) {
 		return nil, ErrInvalidParameter
 	}
 	port, err := strconv.Atoi(t.Port())
-	if err != nil {
+	if err != nil || t.Hostname() == "" || port < 0 || port > 65535 {
 		return nil, ErrInvalidParameter
 	}
 	data = &SOCKS{
@@ -83,7 +83,7 @@ func (h *SOCKS) Configuration(info PriorInfo) (c Configuration, err error) {
 
 func (h *SOCKS) ExportToURL() string {
 	var user *url.Userinfo
-	if h.Username != "" && h.Password != "" {
+	if h.Username != "" {
 		user = url.UserPassword(h.Username, h.Password)
 	}
 	u := &url.URL{

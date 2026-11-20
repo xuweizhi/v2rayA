@@ -268,6 +268,7 @@ func Run() error {
 	)
 	{
 		auth.POST("import", controller.PostImport)
+		auth.POST("importLink", controller.PostImportLink)
 		auth.GET("touch", controller.GetTouch)
 		auth.DELETE("touch", controller.DeleteTouch)
 		auth.POST("connection", controller.PostConnection)
@@ -312,6 +313,7 @@ func Run() error {
 		auth.GET("outbound", controller.GetOutbound)
 		auth.POST("outbound", controller.PostOutbound)
 		auth.PUT("outbound", controller.PutOutbound)
+		auth.POST("outboundMemberPreview", controller.PostOutboundMemberPreview)
 		auth.PUT("outboundConnections", controller.PutOutboundConnections)
 		auth.DELETE("outbound", controller.DeleteOutbound)
 		auth.GET("message", controller.WsMessage)

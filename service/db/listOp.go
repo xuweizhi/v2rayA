@@ -12,6 +12,7 @@ import (
 // subRowJSON is the JSON shape of a subscription row reconstructed from the
 // subscriptions table columns.
 type subRowJSON struct {
+	DatabaseID      int64               `json:"databaseID"`
 	Remarks         string              `json:"remarks,omitempty"`
 	Address         string              `json:"address"`
 	Status          string              `json:"status"`
@@ -56,15 +57,21 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 		return nil
 
 	case "touch/subscriptions":
-		b, err := jsoniter.Marshal(val)
-		if err != nil {
-			return err
-		}
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
+		return SetSubscriptionAndState(index, val, nil)
+
+	default:
+		return fmt.Errorf("ListSet: unsupported bucket/key: %s/%s", bucket, key)
+	}
+}
+
+// SetSubscriptionAndState publishes the new rows and every affected outbound
+// membership in one transaction. Membership IDs refer to positions in those rows.
+func SetSubscriptionAndState(index int, val any, state map[string]any) error {
+	b, err := jsoniter.Marshal(val)
+	if err != nil {
+		return err
+	}
+	return ReadModifyWrite(func(tx *sql.Tx) error {
 		parsed := gjson.ParseBytes(b)
 		var subID int64
 		if err := tx.QueryRow("SELECT id FROM subscriptions WHERE sort = ?", index).Scan(&subID); err != nil {
@@ -72,6 +79,9 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 				return fmt.Errorf("ListSet: subscription at index %d not found", index)
 			}
 			return err
+		}
+		if expected := parsed.Get("databaseID").Int(); expected != 0 && expected != subID {
+			return fmt.Errorf("subscription at index %d changed", index)
 		}
 		address := parsed.Get("address").String()
 		remarks := parsed.Get("remarks").String()
@@ -117,11 +127,25 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 		if _, err := tx.Exec("DELETE FROM servers WHERE type = 'subscription_server' AND sub_id = ? AND sort >= ?", subID, len(servers)); err != nil {
 			return err
 		}
-		return tx.Commit()
+		return putState(tx, state)
+	})
+}
 
-	default:
-		return fmt.Errorf("ListSet: unsupported bucket/key: %s/%s", bucket, key)
+func putState(tx *sql.Tx, values map[string]any) error {
+	for key, val := range values {
+		b, err := jsoniter.Marshal(val)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec("INSERT OR REPLACE INTO system_config (key,value) VALUES (?,?)", key, string(b)); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+func SetState(values map[string]any) error {
+	return ReadModifyWrite(func(tx *sql.Tx) error { return putState(tx, values) })
 }
 
 // ListGet retrieves an element at a specific index from a list.
@@ -181,6 +205,7 @@ func ListGet(bucket string, key string, index int) (b []byte, err error) {
 			extraJSON = "{}"
 		}
 		result := subRowJSON{
+			DatabaseID:      subID,
 			Remarks:         remarks,
 			Address:         address,
 			Status:          status,
@@ -207,84 +232,49 @@ func ListAppend(bucket string, key string, val interface{}) (err error) {
 
 	switch bucket + "/" + key {
 	case "touch/servers":
-		// Marshal the value to JSON first, then parse as array
 		b, err := jsoniter.Marshal(val)
 		if err != nil {
 			return err
 		}
-		parsed := gjson.ParseBytes(b)
-		if parsed.IsArray() {
-			for _, item := range parsed.Array() {
-				var maxSort int
-				db.QueryRow("SELECT COALESCE(MAX(sort), -1) FROM servers WHERE type = 'server'").Scan(&maxSort)
-
-				_, err = db.Exec(
-					"INSERT INTO servers (type, config_json, sort) VALUES ('server', ?, ?)",
-					item.Raw, maxSort+1,
-				)
-				if err != nil {
-					return err
-				}
-			}
-		} else {
-			var maxSort int
-			db.QueryRow("SELECT COALESCE(MAX(sort), -1) FROM servers WHERE type = 'server'").Scan(&maxSort)
-			_, err = db.Exec(
-				"INSERT INTO servers (type, config_json, sort) VALUES ('server', ?, ?)",
-				string(b), maxSort+1,
-			)
-			if err != nil {
-				return err
-			}
+		if !gjson.ParseBytes(b).IsArray() {
+			b = append(append([]byte{'['}, b...), ']')
 		}
-		return nil
+		// One write statement allocates contiguous positions and either appends
+		// the entire batch or leaves the node list untouched.
+		_, err = db.Exec(`INSERT INTO servers(type, config_json, sort)
+			SELECT 'server', value, (SELECT COALESCE(MAX(sort), -1) + 1 FROM servers WHERE type='server') + CAST(key AS INTEGER)
+			FROM json_each(?)`, string(b))
+		return err
 
 	case "touch/subscriptions":
 		b, err := jsoniter.Marshal(val)
 		if err != nil {
 			return err
 		}
-		parsed := gjson.ParseBytes(b)
-		if parsed.IsArray() {
-			for _, item := range parsed.Array() {
-				address := item.Get("address").String()
-				remarks := item.Get("remarks").String()
-				status := item.Get("status").String()
-				info := item.Get("info").String()
-				autoSelect := 0
-				if item.Get("autoSelect").Bool() {
-					autoSelect = 1
-				}
-				decryptPassword := item.Get("decryptPassword").String()
-				extraJSON := subExtraFromJSON([]byte(item.Raw))
-
-				var maxSort int
-				db.QueryRow("SELECT COALESCE(MAX(sort), -1) FROM subscriptions").Scan(&maxSort)
-				newSort := maxSort + 1
-
-				res, err := db.Exec(
-					"INSERT INTO subscriptions (address, remarks, status, info, auto_select, decrypt_password, extra_json, sort) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-					address, remarks, status, info, autoSelect, decryptPassword, extraJSON, newSort,
-				)
+		return ReadModifyWrite(func(tx *sql.Tx) error {
+			for _, item := range gjson.ParseBytes(b).Array() {
+				res, err := tx.Exec(`INSERT INTO subscriptions
+					(address, remarks, status, info, auto_select, decrypt_password, extra_json, sort)
+					VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort), -1) + 1 FROM subscriptions))`,
+					item.Get("address").String(), item.Get("remarks").String(), item.Get("status").String(),
+					item.Get("info").String(), item.Get("autoSelect").Bool(), item.Get("decryptPassword").String(),
+					subExtraFromJSON([]byte(item.Raw)))
 				if err != nil {
 					return err
 				}
-
-				subID, _ := res.LastInsertId()
-
-				servers := item.Get("servers").Array()
-				for j, s := range servers {
-					_, err := db.Exec(
-						"INSERT INTO servers (type, sub_id, config_json, sort) VALUES ('subscription_server', ?, ?, ?)",
-						subID, s.Raw, j,
-					)
-					if err != nil {
+				subID, err := res.LastInsertId()
+				if err != nil {
+					return err
+				}
+				for j, server := range item.Get("servers").Array() {
+					if _, err := tx.Exec("INSERT INTO servers(type, sub_id, config_json, sort) VALUES ('subscription_server', ?, ?, ?)",
+						subID, server.Raw, j); err != nil {
 						return fmt.Errorf("ListAppend: failed to insert subscription server: %w", err)
 					}
 				}
 			}
-		}
-		return nil
+			return nil
+		})
 
 	default:
 		b, err := jsoniter.Marshal(val)
@@ -358,6 +348,7 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 				extraJSON = "{}"
 			}
 			result := subRowJSON{
+				DatabaseID:      id,
 				Remarks:         remarks,
 				Address:         address,
 				Status:          status,

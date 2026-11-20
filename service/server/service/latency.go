@@ -95,6 +95,11 @@ func addHosts(tmpl *v2ray.Template, vms []serverObj.ServerObj) {
 }
 
 func TestHttpLatency(which []*configure.Which, timeout time.Duration, maxParallel int, showLog bool, customTestUrl string) ([]*configure.Which, error) {
+	// The probe temporarily replaces the running core and writes latencies by
+	// node position. Keep subscription rows and member selections stable until
+	// the original configuration and probe results have been restored.
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
 	var whiches = configure.NewWhiches(which)
 	for i := len(which) - 1; i >= 0; i-- {
 		if which[i].TYPE == configure.SubscriptionType { // remove subscriptionType

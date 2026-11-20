@@ -64,9 +64,20 @@ func NewServerData(serverInfos []serverInfo) (serverData *ServerData) {
 		}
 	}
 
-	OutboundName2Setting := make(map[string]configure.OutboundSetting)
+	settings := make(map[string]configure.OutboundSetting)
 	for outbound := range outboundName2ServerObjs {
-		OutboundName2Setting[outbound] = configure.GetOutboundSetting(outbound)
+		settings[outbound] = configure.GetOutboundSetting(outbound)
+	}
+	for outbound := range outboundName2ServerObjs {
+		pre := settings[outbound].PreProxy
+		if _, exists := settings[pre]; pre == "" || exists {
+			continue
+		}
+		if rule := configure.GetOutboundSetting(pre).MemberRule; rule != nil {
+			// An empty automatic group is still a configured destination. Its
+			// chain ends here until it has an upstream node to dial again.
+			settings[pre] = configure.OutboundSetting{MemberRule: rule}
+		}
 	}
 
 	return &ServerData{
@@ -75,7 +86,7 @@ func NewServerData(serverInfos []serverInfo) (serverData *ServerData) {
 		Link2ServerInfos:        link2ServerInfosAfter,
 		Link2ServerObj:          link2ServerObj,
 		OutboundName2ServerObjs: outboundName2ServerObjs,
-		OutboundName2Setting:    OutboundName2Setting,
+		OutboundName2Setting:    settings,
 	}
 }
 
