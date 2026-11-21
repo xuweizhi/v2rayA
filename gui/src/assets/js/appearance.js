@@ -31,44 +31,55 @@ export const LAYOUT_WIDTH_PRESETS = [
   { id: "full", labelKey: "appearance.widths.full", value: "100%" },
 ];
 
-const SYSTEM_SANS =
-  'BlinkMacSystemFont, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", Roboto, Helvetica, Arial, sans-serif';
+export const DEFAULT_FONT_FAMILY =
+  'system-ui, "Microsoft YaHei UI", "Source Han Sans CN", "Twemoji Mozilla", sans-serif';
 
 export const FONT_PRESETS = [
   {
     id: "system",
     labelKey: "appearance.fonts.system",
-    stack: SYSTEM_SANS,
+    stack: DEFAULT_FONT_FAMILY,
   },
   {
-    id: "inter",
-    labelKey: "appearance.fonts.inter",
-    stack: `"sarasa inter regular", "PingFang SC", "Microsoft YaHei", ${SYSTEM_SANS}`,
-  },
-  {
-    id: "sans-cn",
-    labelKey: "appearance.fonts.sansCn",
+    id: "modern",
+    labelKey: "appearance.fonts.modern",
     stack:
-      '"PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif',
+      '"Inter", "SF Pro Text", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", "Segoe UI", sans-serif',
+  },
+  {
+    id: "rounded",
+    labelKey: "appearance.fonts.rounded",
+    stack:
+      '"SF Pro Rounded", "Quicksand", "Hiragino Maru Gothic ProN", "YouYuan", "PingFang SC", "Noto Sans SC", ui-rounded, sans-serif',
   },
   {
     id: "serif",
     labelKey: "appearance.fonts.serif",
     stack:
-      '"Songti SC", "Noto Serif SC", "Source Han Serif SC", "STSong", Georgia, "Times New Roman", serif',
+      '"Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", Georgia, "Times New Roman", serif',
   },
   {
     id: "mono",
     labelKey: "appearance.fonts.mono",
     stack:
-      '"JetBrains Mono", "Cascadia Code", "Fira Code", "SFMono-Regular", Consolas, Menlo, Monaco, monospace',
+      '"JetBrains Mono", "Fira Code", "Cascadia Code", "Sarasa Mono SC", "SF Mono", Consolas, ui-monospace, monospace',
   },
   {
     id: "custom",
     labelKey: "appearance.fonts.custom",
-    stack: SYSTEM_SANS,
+    stack: DEFAULT_FONT_FAMILY,
   },
 ];
+
+const LEGACY_FONT_PRESET_MAP = {
+  inter: "modern",
+  "sans-cn": "modern",
+};
+
+function normalizeFontPreset(preset) {
+  const mapped = LEGACY_FONT_PRESET_MAP[preset] || preset;
+  return FONT_PRESETS.some((p) => p.id === mapped) ? mapped : "system";
+}
 
 export const FONT_SIZE_MIN = 12;
 export const FONT_SIZE_MAX = 22;
@@ -84,7 +95,7 @@ export function getAppearanceSettings() {
       fontSize = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, parsed));
     }
   }
-  const validPreset = FONT_PRESETS.some((p) => p.id === preset) ? preset : "system";
+  const validPreset = normalizeFontPreset(preset);
   const rawWidth = localStorage.getItem(STORAGE_LAYOUT_WIDTH) || "wide";
   const layoutWidth = LAYOUT_WIDTH_PRESETS.some((w) => w.id === rawWidth) ? rawWidth : "wide";
   const rawStyle = localStorage.getItem(STORAGE_UI_STYLE) || "precision";
@@ -99,15 +110,16 @@ export function getAppearanceSettings() {
 }
 
 export function resolveFontFamily(fontPreset, customFont) {
-  if (fontPreset === "custom") {
+  const normalized = normalizeFontPreset(fontPreset);
+  if (normalized === "custom") {
     const trimmed = (customFont || "").trim();
     if (trimmed) {
-      return `${trimmed}, ${SYSTEM_SANS}`;
+      return `${trimmed}, ${DEFAULT_FONT_FAMILY}`;
     }
-    return SYSTEM_SANS;
+    return DEFAULT_FONT_FAMILY;
   }
-  const found = FONT_PRESETS.find((p) => p.id === fontPreset);
-  return found ? found.stack : SYSTEM_SANS;
+  const found = FONT_PRESETS.find((p) => p.id === normalized);
+  return found ? found.stack : DEFAULT_FONT_FAMILY;
 }
 
 export function applyAppearanceSettings(settings = getAppearanceSettings()) {
@@ -144,7 +156,7 @@ export function saveAppearanceSettings(settings) {
     uiStyle: UI_STYLE_PRESETS.some((s) => s.id === settings.uiStyle)
       ? settings.uiStyle
       : "precision",
-    fontPreset: settings.fontPreset || "system",
+    fontPreset: normalizeFontPreset(settings.fontPreset),
     customFont: settings.customFont || "",
     fontSize: settings.fontSize ?? null,
     layoutWidth: settings.layoutWidth || "wide",

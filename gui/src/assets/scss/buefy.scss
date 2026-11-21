@@ -50,6 +50,7 @@ $colors: (
   "lightblue": ($lightblue, $lightblue-invert),
 );
 
+$family-primary: var(--va-font-family, system-ui, "Microsoft YaHei UI", "Source Han Sans CN", "Twemoji Mozilla", sans-serif);
 $radius: 6px;
 $radius-large: 10px;
 $control-border-width: 1px;

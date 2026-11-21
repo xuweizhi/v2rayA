@@ -123,10 +123,18 @@
           :aria-checked="String(fontPreset === preset.id)"
           @click="selectFontPreset(preset.id)"
         >
-          <span class="appearance-font-card__sample" :style="{ fontFamily: preset.stack }">
+          <span
+            class="appearance-font-card__sample"
+            :style="{ fontFamily: presetSampleFont(preset) }"
+          >
             Aa 节点
           </span>
-          <span class="appearance-font-card__name">{{ $t(preset.labelKey) }}</span>
+          <span
+            class="appearance-font-card__name"
+            :style="preset.id === 'custom' ? null : { fontFamily: preset.stack }"
+          >
+            {{ $t(preset.labelKey) }}
+          </span>
         </button>
       </div>
 
@@ -204,6 +212,7 @@ import {
   UI_STYLE_PRESETS,
   getAppearanceSettings,
   resetAppearanceSettings,
+  resolveFontFamily,
   saveAppearanceSettings,
 } from "@/assets/js/appearance";
 
@@ -300,6 +309,12 @@ export default {
     selectFontPreset(id) {
       this.fontPreset = id;
       this.persist();
+    },
+    presetSampleFont(preset) {
+      if (preset.id === "custom") {
+        return resolveFontFamily("custom", this.customFont);
+      }
+      return preset.stack;
     },
     selectLayoutWidth(id) {
       this.layoutWidth = id;

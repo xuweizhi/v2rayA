@@ -103,7 +103,7 @@ html,
 body {
   background-color: var(--va-bg);
   color: var(--va-text);
-  font-family: var(--va-font-family, BlinkMacSystemFont, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif);
+  font-family: var(--va-font-family, system-ui, "Microsoft YaHei UI", "Source Han Sans CN", "Twemoji Mozilla", sans-serif);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
