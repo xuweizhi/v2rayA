@@ -112,15 +112,14 @@
 
     <div class="appearance-section">
       <label class="label">{{ $t("appearance.fontFamily") }}</label>
-      <div class="appearance-font-grid" role="radiogroup" :aria-label="$t('appearance.fontFamily')">
+      <div class="appearance-font-grid" role="group" :aria-label="$t('appearance.fontFamily')">
         <button
-          v-for="preset in fontPresets"
+          v-for="preset in builtinFontPresets"
           :key="preset.id"
           type="button"
           class="appearance-font-card"
           :class="{ 'is-selected': fontPreset === preset.id }"
-          role="radio"
-          :aria-checked="String(fontPreset === preset.id)"
+          :aria-pressed="String(fontPreset === preset.id)"
           @click="selectFontPreset(preset.id)"
         >
           <span
@@ -131,25 +130,197 @@
           </span>
           <span
             class="appearance-font-card__name"
-            :style="preset.id === 'custom' ? null : { fontFamily: preset.stack }"
+            :style="{ fontFamily: preset.stack }"
           >
             {{ $t(preset.labelKey) }}
           </span>
         </button>
+
+        <div
+          v-for="preset in customFontPresets"
+          :key="preset.id"
+          class="appearance-font-card-wrap"
+          :class="{ 'is-selected': fontPreset === presetKey(preset.id) }"
+        >
+          <button
+            type="button"
+            class="appearance-font-card appearance-font-card--custom-preset"
+            :class="{ 'is-selected': fontPreset === presetKey(preset.id) }"
+            :aria-pressed="String(fontPreset === presetKey(preset.id))"
+            :title="presetCardTitle(preset)"
+            @click="selectFontPreset(presetKey(preset.id))"
+          >
+            <span
+              class="appearance-font-card__sample"
+              :style="{ fontFamily: customPresetSampleFont(preset) }"
+            >
+              Aa 节点
+            </span>
+            <span class="appearance-font-card__name-row">
+              <span
+                class="appearance-font-card__name"
+                :style="{ fontFamily: customPresetSampleFont(preset) }"
+              >
+                {{ preset.label }}
+              </span>
+              <span
+                v-if="preset.stylesheetUrl"
+                class="appearance-font-card__web-dot"
+                :title="$t('appearance.webFontTag')"
+                aria-hidden="true"
+              ></span>
+            </span>
+          </button>
+          <button
+            type="button"
+            class="appearance-font-card__remove"
+            :aria-label="$t('appearance.deletePresetAria', { name: preset.label })"
+            :title="$t('appearance.deletePresetAria', { name: preset.label })"
+            @click="removeCustomPreset(preset)"
+          >
+            ×
+          </button>
+        </div>
+
+        <button
+          v-if="customFontOption"
+          type="button"
+          class="appearance-font-card"
+          :class="{ 'is-selected': fontPreset === 'custom' }"
+          :aria-pressed="String(fontPreset === 'custom')"
+          @click="selectFontPreset('custom')"
+        >
+          <span
+            class="appearance-font-card__sample"
+            :style="{ fontFamily: presetSampleFont(customFontOption) }"
+          >
+            Aa 节点
+          </span>
+          <span class="appearance-font-card__name">
+            {{ $t(customFontOption.labelKey) }}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          class="appearance-font-card appearance-font-card--add"
+          :class="{ 'is-selected': creatorOpen }"
+          :aria-expanded="String(creatorOpen)"
+          :disabled="atPresetLimit && !creatorOpen"
+          :title="
+            atPresetLimit
+              ? $t('appearance.addPresetLimitTitle', { max: maxCustomFontPresets })
+              : $t('appearance.addPresetTitle')
+          "
+          @click="toggleCreator"
+        >
+          <span class="appearance-font-card__sample" aria-hidden="true">＋</span>
+          <span class="appearance-font-card__name">{{ $t("appearance.addPreset") }}</span>
+        </button>
       </div>
 
-      <b-field
-        v-if="fontPreset === 'custom'"
-        :label="$t('appearance.customFontLabel')"
-        :message="$t('appearance.customFontHelp')"
-        style="margin-top: 0.85rem"
+      <div v-if="fontPreset === 'custom'" class="appearance-custom-font">
+        <label class="appearance-custom-font__label" for="va-custom-font-input">
+          {{ $t("appearance.customFontLabel") }}
+        </label>
+        <div class="appearance-custom-font__row">
+          <input
+            id="va-custom-font-input"
+            v-model="customFont"
+            type="text"
+            class="input is-small"
+            :aria-label="$t('appearance.customFontLabel')"
+            :placeholder="$t('appearance.customFontPlaceholder')"
+            @input="persist"
+          />
+          <button
+            v-if="!atPresetLimit && customFont.trim()"
+            type="button"
+            class="button is-small is-primary is-outlined"
+            @click="openCreator(customFont.trim())"
+          >
+            {{ $t("appearance.saveAsPreset") }}
+          </button>
+          <button
+            type="button"
+            class="button is-small"
+            @click="resetFontToDefault"
+          >
+            {{ $t("appearance.resetFont") }}
+          </button>
+        </div>
+        <p class="appearance-custom-font__help">{{ $t("appearance.customFontHelp") }}</p>
+      </div>
+
+      <form
+        v-if="creatorOpen"
+        class="appearance-font-creator"
+        @submit.prevent="submitPreset"
       >
-        <b-input
-          v-model="customFont"
-          :placeholder="$t('appearance.customFontPlaceholder')"
-          @input="persist"
-        />
-      </b-field>
+        <div class="appearance-font-creator__head">
+          <strong>{{ $t("appearance.presetCreatorTitle") }}</strong>
+          <small>{{ $t("appearance.presetCreatorHint") }}</small>
+        </div>
+        <div class="appearance-font-creator__fields">
+          <label class="appearance-font-creator__field">
+            <span>{{ $t("appearance.presetNameLabel") }}</span>
+            <input
+              v-model="draftLabel"
+              type="text"
+              class="input is-small"
+              maxlength="32"
+              :aria-label="$t('appearance.presetNameAria')"
+              :placeholder="$t('appearance.presetNamePlaceholder')"
+              @input="draftError = ''"
+            />
+          </label>
+          <label class="appearance-font-creator__field">
+            <span>{{ $t("appearance.presetFamilyLabel") }}</span>
+            <input
+              v-model="draftFamily"
+              type="text"
+              class="input is-small"
+              maxlength="240"
+              :aria-label="$t('appearance.presetFamilyAria')"
+              :placeholder="$t('appearance.presetFamilyPlaceholder')"
+              @input="draftError = ''"
+            />
+          </label>
+          <label class="appearance-font-creator__field">
+            <span>{{ $t("appearance.presetUrlLabel") }}</span>
+            <input
+              v-model="draftUrl"
+              type="text"
+              class="input is-small"
+              :aria-label="$t('appearance.presetUrlAria')"
+              :placeholder="$t('appearance.presetUrlPlaceholder')"
+              @input="draftError = ''"
+            />
+          </label>
+        </div>
+        <div
+          class="appearance-font-creator__preview"
+          :style="{ fontFamily: creatorPreviewFont }"
+        >
+          <span>{{ $t("appearance.previewTitle") }}</span>
+          <p>{{ $t("appearance.presetPreviewSample") }}</p>
+        </div>
+        <div
+          v-if="draftError"
+          class="appearance-font-creator__error"
+          role="alert"
+        >
+          {{ draftError }}
+        </div>
+        <div class="appearance-font-creator__actions">
+          <button type="button" class="button is-small" @click="closeCreator">
+            {{ $t("operations.cancel") }}
+          </button>
+          <button type="submit" class="button is-small is-primary">
+            {{ $t("appearance.presetSaveApply") }}
+          </button>
+        </div>
+      </form>
     </div>
 
     <hr class="appearance-divider" />
@@ -209,11 +380,17 @@ import {
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   LAYOUT_WIDTH_PRESETS,
+  MAX_CUSTOM_FONT_PRESETS,
   UI_STYLE_PRESETS,
+  createCustomFontPresetId,
+  customFontPresetKey,
+  formatFontFamilyWithFallback,
   getAppearanceSettings,
+  normalizeFontStylesheetUrl,
   resetAppearanceSettings,
   resolveFontFamily,
   saveAppearanceSettings,
+  suggestFontPresetLabel,
 } from "@/assets/js/appearance";
 
 export default {
@@ -232,11 +409,18 @@ export default {
       colorMode: storedTheme === "dark" || storedTheme === "light" ? storedTheme : "auto",
       fontPreset: initial.fontPreset,
       customFont: initial.customFont,
+      customFontPresets: initial.customFontPresets,
       fontSize: initial.fontSize,
       layoutWidth: initial.layoutWidth,
+      creatorOpen: false,
+      draftLabel: "",
+      draftFamily: "",
+      draftUrl: "",
+      draftError: "",
       uiStylePresets: UI_STYLE_PRESETS,
       fontPresets: FONT_PRESETS,
       layoutWidthPresets: LAYOUT_WIDTH_PRESETS,
+      maxCustomFontPresets: MAX_CUSTOM_FONT_PRESETS,
       minSize: FONT_SIZE_MIN,
       maxSize: FONT_SIZE_MAX,
       colorModes: [
@@ -257,6 +441,21 @@ export default {
     sliderValue() {
       return this.fontSize === null ? 16 : this.fontSize;
     },
+    builtinFontPresets() {
+      return this.fontPresets.filter((preset) => preset.id !== "custom");
+    },
+    customFontOption() {
+      return this.fontPresets.find((preset) => preset.id === "custom") || null;
+    },
+    atPresetLimit() {
+      return this.customFontPresets.length >= this.maxCustomFontPresets;
+    },
+    creatorPreviewFont() {
+      if (this.draftFamily.trim()) {
+        return formatFontFamilyWithFallback(this.draftFamily);
+      }
+      return resolveFontFamily(this.fontPreset, this.customFont, this.customFontPresets);
+    },
   },
   mounted() {
     this._onExternalAppearance = (e) => {
@@ -264,6 +463,9 @@ export default {
       this.uiStyle = next.uiStyle;
       this.fontPreset = next.fontPreset;
       this.customFont = next.customFont;
+      this.customFontPresets = Array.isArray(next.customFontPresets)
+        ? next.customFontPresets
+        : [];
       this.fontSize = next.fontSize;
       this.layoutWidth = next.layoutWidth;
     };
@@ -290,6 +492,7 @@ export default {
         uiStyle: this.uiStyle,
         fontPreset: this.fontPreset,
         customFont: this.customFont,
+        customFontPresets: this.customFontPresets,
         fontSize: this.fontSize,
         layoutWidth: this.layoutWidth,
       });
@@ -310,11 +513,100 @@ export default {
       this.fontPreset = id;
       this.persist();
     },
+    presetKey(id) {
+      return customFontPresetKey(id);
+    },
+    presetCardTitle(preset) {
+      if (preset.stylesheetUrl) {
+        return `${preset.fontFamily} · ${this.$t("appearance.webFontTag")}`;
+      }
+      return preset.fontFamily;
+    },
+    customPresetSampleFont(preset) {
+      return formatFontFamilyWithFallback(preset.fontFamily);
+    },
     presetSampleFont(preset) {
       if (preset.id === "custom") {
-        return resolveFontFamily("custom", this.customFont);
+        return resolveFontFamily("custom", this.customFont, this.customFontPresets);
       }
       return preset.stack;
+    },
+    openCreator(seedFamily = "") {
+      this.draftError = "";
+      this.draftFamily = seedFamily;
+      this.draftLabel = seedFamily ? suggestFontPresetLabel(seedFamily) : "";
+      this.draftUrl = "";
+      this.creatorOpen = true;
+    },
+    closeCreator() {
+      this.creatorOpen = false;
+      this.draftError = "";
+    },
+    toggleCreator() {
+      if (this.creatorOpen) {
+        this.closeCreator();
+      } else {
+        this.openCreator();
+      }
+    },
+    submitPreset() {
+      const label = this.draftLabel.trim().slice(0, 32);
+      const fontFamily = this.draftFamily.trim().slice(0, 240);
+      const rawUrl = this.draftUrl.trim();
+
+      if (!label) {
+        this.draftError = this.$t("appearance.presetErrors.emptyName");
+        return;
+      }
+      if (!fontFamily) {
+        this.draftError = this.$t("appearance.presetErrors.emptyFamily");
+        return;
+      }
+      if (this.atPresetLimit) {
+        this.draftError = this.$t("appearance.presetErrors.limitReached", {
+          max: this.maxCustomFontPresets,
+        });
+        return;
+      }
+      const duplicate =
+        this.builtinFontPresets.some((opt) => opt.stack === fontFamily) ||
+        this.customFontPresets.some((opt) => opt.fontFamily === fontFamily);
+      if (duplicate) {
+        this.draftError = this.$t("appearance.presetErrors.duplicate");
+        return;
+      }
+      const stylesheetUrl = rawUrl ? normalizeFontStylesheetUrl(rawUrl) : undefined;
+      if (rawUrl && !stylesheetUrl) {
+        this.draftError = this.$t("appearance.presetErrors.invalidUrl");
+        return;
+      }
+
+      const id = createCustomFontPresetId(this.customFontPresets);
+      const nextPreset = stylesheetUrl
+        ? { id, label, fontFamily, stylesheetUrl }
+        : { id, label, fontFamily };
+
+      this.customFontPresets = [...this.customFontPresets, nextPreset];
+      this.fontPreset = customFontPresetKey(nextPreset.id);
+      this.persist();
+
+      this.draftLabel = "";
+      this.draftFamily = "";
+      this.draftUrl = "";
+      this.draftError = "";
+      this.creatorOpen = false;
+    },
+    removeCustomPreset(preset) {
+      this.customFontPresets = this.customFontPresets.filter((item) => item.id !== preset.id);
+      if (this.fontPreset === customFontPresetKey(preset.id)) {
+        this.fontPreset = "system";
+      }
+      this.persist();
+    },
+    resetFontToDefault() {
+      this.fontPreset = "system";
+      this.customFont = "";
+      this.persist();
     },
     selectLayoutWidth(id) {
       this.layoutWidth = id;
@@ -325,8 +617,10 @@ export default {
       this.uiStyle = defaults.uiStyle;
       this.fontPreset = defaults.fontPreset;
       this.customFont = defaults.customFont;
+      this.customFontPresets = defaults.customFontPresets;
       this.fontSize = defaults.fontSize;
       this.layoutWidth = defaults.layoutWidth;
+      this.closeCreator();
       this.$buefy.toast.open({
         message: this.$t("appearance.resetSuccess"),
         type: "is-success",
@@ -641,12 +935,20 @@ export default {
   gap: 0.55rem;
 }
 
+.appearance-font-card-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
 .appearance-font-card {
   appearance: none;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0.22rem;
+  width: 100%;
+  min-width: 0;
   padding: 0.62rem 0.72rem;
   border-radius: var(--va-radius-sm);
   border: 1px solid var(--va-border);
@@ -655,9 +957,9 @@ export default {
   font: inherit;
   cursor: pointer;
   text-align: left;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 
-  &:hover {
+  &:hover:not(:disabled) {
     border-color: var(--va-primary);
     background: var(--va-primary-soft);
   }
@@ -667,17 +969,207 @@ export default {
     background: var(--va-primary-soft);
     box-shadow: inset 0 0 0 1px var(--va-primary);
   }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+}
+
+.appearance-font-card--custom-preset {
+  padding-right: 1.85rem;
+}
+
+.appearance-font-card--add {
+  border-style: dashed;
+  border-color: var(--va-border-strong);
+
+  .appearance-font-card__sample,
+  .appearance-font-card__name {
+    color: var(--va-primary);
+  }
 }
 
 .appearance-font-card__sample {
   font-size: 1.02rem;
   font-weight: 600;
   color: var(--va-text);
+  line-height: 1.3;
+}
+
+.appearance-font-card__name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .appearance-font-card__name {
   font-size: 0.75rem;
   color: var(--va-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.appearance-font-card__web-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--va-primary);
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.appearance-font-card__remove {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--va-text-subtle);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.14s ease, color 0.14s ease;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--va-danger-soft);
+    color: var(--va-danger-text);
+  }
+}
+
+.appearance-custom-font {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+.appearance-custom-font__label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--va-text);
+}
+
+.appearance-custom-font__row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+
+  .input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .button {
+    flex-shrink: 0;
+  }
+}
+
+.appearance-custom-font__help {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--va-text-muted);
+}
+
+.appearance-font-creator {
+  margin-top: 0.85rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: var(--va-radius-md);
+  border: 1px solid var(--va-border);
+  background: var(--va-surface-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 0.72rem;
+}
+
+.appearance-font-creator__head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.16rem;
+
+  strong {
+    font-size: 0.86rem;
+    color: var(--va-text);
+  }
+
+  small {
+    font-size: 0.74rem;
+    color: var(--va-text-muted);
+  }
+}
+
+.appearance-font-creator__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.58rem;
+}
+
+.appearance-font-creator__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+
+  > span {
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--va-text-muted);
+  }
+
+  .input {
+    background-color: var(--va-surface);
+  }
+}
+
+.appearance-font-creator__preview {
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--va-radius-sm);
+  border: 1px dashed var(--va-border-strong);
+  background: var(--va-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+
+  span {
+    font-family: var(--va-font-family);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: var(--va-text-subtle);
+  }
+
+  p {
+    margin: 0;
+    font-size: 0.92rem;
+    color: var(--va-text);
+    overflow-wrap: anywhere;
+  }
+}
+
+.appearance-font-creator__error {
+  padding: 0.48rem 0.68rem;
+  border-radius: var(--va-radius-sm);
+  border: 1px solid var(--va-danger);
+  background: var(--va-danger-soft);
+  color: var(--va-danger-text);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.appearance-font-creator__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }
 
 .appearance-preview {
@@ -786,6 +1278,10 @@ export default {
 
   .appearance-font-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .appearance-custom-font__row {
+    flex-wrap: wrap;
   }
 }
 </style>
