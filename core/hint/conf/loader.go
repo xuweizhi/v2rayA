@@ -1,8 +1,7 @@
 // Package conf provides a v2raya-core JSON configuration loader.
 // It extends xray-core's JSON loader with support for multiObservatory,
 // and automatically injects the v2ray-compatible observatory gRPC service.
-// It also pre-processes custom protocols (anytls, juicity, tuic) from the JSON
-// config, strips them before xray parses, then appends the built handlers.
+// It builds native and custom outbound handlers in configuration order.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -33,6 +32,7 @@ import (
 	xray_cfgdur "github.com/xtls/xray-core/infra/conf/cfgcommon/duration"
 	conf_serial "github.com/xtls/xray-core/infra/conf/serial"
 	"github.com/xtls/xray-core/main/confloader"
+	"google.golang.org/protobuf/proto"
 )
 
 // multiObsEntryJSON represents one observer group in the JSON config.
@@ -80,133 +80,44 @@ type extendedJSON struct {
 	BurstObservatory *burstObsJSON `json:"burstObservatory"`
 }
 
-// customOutboundJSON is the raw JSON form of an anytls or juicity outbound.
-type customOutboundJSON struct {
-	Protocol string          `json:"protocol"`
-	Tag      string          `json:"tag"`
-	Settings json.RawMessage `json:"settings"`
-}
-
-// customProtocols is the set of outbound protocols handled by hint/proxy.
-var customProtocols = map[string]bool{
-	"anytls":    true,
-	"juicity":   true,
-	"mieru":     true,
-	"shadowtls": true,
-	"tuic":      true,
-}
-
-// stripCustomOutbounds parses raw JSON, removes custom-protocol outbound entries,
-// and returns the modified JSON along with the stripped outbound descriptors.
-// If the JSON is not valid or has no outbounds, raw is returned unchanged with
-// nil custom list (safe to pass to xray unmodified).
-func stripCustomOutbounds(raw []byte) ([]byte, []customOutboundJSON, error) {
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return raw, nil, nil
+// buildOutbound handles the protocols supplied by this core alongside Xray's
+// native protocols. The first configured handler is the default outbound.
+func buildOutbound(c *xray_conf.OutboundDetourConfig) (*xray_core.OutboundHandlerConfig, error) {
+	var settings proto.Message
+	switch c.Protocol {
+	case "anytls":
+		settings = new(hint_anytls.ClientConfig)
+	case "juicity":
+		settings = new(hint_juicity.ClientConfig)
+	case "mieru":
+		settings = new(hint_mieru.ClientConfig)
+	case "shadowtls":
+		settings = new(hint_shadowtls.ClientConfig)
+	case "tuic":
+		settings = new(hint_tuic.ClientConfig)
+	default:
+		return c.Build()
 	}
-	outboundsRaw, ok := doc["outbounds"]
-	if !ok {
-		return raw, nil, nil
-	}
-	var outbounds []json.RawMessage
-	if err := json.Unmarshal(outboundsRaw, &outbounds); err != nil {
-		return raw, nil, nil
-	}
-
-	var remaining []json.RawMessage
-	var custom []customOutboundJSON
-	for _, ob := range outbounds {
-		var probe struct {
-			Protocol string `json:"protocol"`
-		}
-		if err := json.Unmarshal(ob, &probe); err != nil {
-			remaining = append(remaining, ob)
-			continue
-		}
-		if customProtocols[probe.Protocol] {
-			var c customOutboundJSON
-			if err := json.Unmarshal(ob, &c); err == nil {
-				custom = append(custom, c)
-			}
-		} else {
-			remaining = append(remaining, ob)
+	if c.Settings != nil {
+		if err := json.Unmarshal(*c.Settings, settings); err != nil {
+			return nil, errors.New("invalid ", c.Protocol, " settings for tag ", c.Tag).Base(err)
 		}
 	}
-
-	if len(custom) == 0 {
-		return raw, nil, nil
-	}
-
-	newOutbounds, err := json.Marshal(remaining)
-	if err != nil {
-		return raw, nil, err
-	}
-	doc["outbounds"] = newOutbounds
-	modified, err := json.Marshal(doc)
-	if err != nil {
-		return raw, nil, err
-	}
-	return modified, custom, nil
-}
-
-// buildCustomOutbounds converts stripped custom outbound JSON descriptors into
-// xray OutboundHandlerConfig proto messages ready to append to coreConfig.Outbound.
-func buildCustomOutbounds(customs []customOutboundJSON) ([]*xray_core.OutboundHandlerConfig, error) {
-	result := make([]*xray_core.OutboundHandlerConfig, 0, len(customs))
-	for _, c := range customs {
-		var proxySettings *serial.TypedMessage
-		switch c.Protocol {
-		case "anytls":
-			var cfg hint_anytls.ClientConfig
-			if c.Settings != nil {
-				if err := json.Unmarshal(c.Settings, &cfg); err != nil {
-					return nil, errors.New("invalid anytls settings for tag ", c.Tag).Base(err)
-				}
-			}
-			proxySettings = serial.ToTypedMessage(&cfg)
-		case "juicity":
-			var cfg hint_juicity.ClientConfig
-			if c.Settings != nil {
-				if err := json.Unmarshal(c.Settings, &cfg); err != nil {
-					return nil, errors.New("invalid juicity settings for tag ", c.Tag).Base(err)
-				}
-			}
-			proxySettings = serial.ToTypedMessage(&cfg)
-		case "shadowtls":
-			var cfg hint_shadowtls.ClientConfig
-			if c.Settings != nil {
-				if err := json.Unmarshal(c.Settings, &cfg); err != nil {
-					return nil, errors.New("invalid shadowtls settings for tag ", c.Tag).Base(err)
-				}
-			}
-			proxySettings = serial.ToTypedMessage(&cfg)
-		case "mieru":
-			var cfg hint_mieru.ClientConfig
-			if c.Settings != nil {
-				if err := json.Unmarshal(c.Settings, &cfg); err != nil {
-					return nil, errors.New("invalid mieru settings for tag ", c.Tag).Base(err)
-				}
-			}
-			proxySettings = serial.ToTypedMessage(&cfg)
-		case "tuic":
-			var cfg hint_tuic.ClientConfig
-			if c.Settings != nil {
-				if err := json.Unmarshal(c.Settings, &cfg); err != nil {
-					return nil, errors.New("invalid tuic settings for tag ", c.Tag).Base(err)
-				}
-			}
-			proxySettings = serial.ToTypedMessage(&cfg)
-		default:
-			continue
+	// Preserve the transport settings used to reach the proxy server.
+	// Transparent mode marks the socket so it bypasses local redirection.
+	sender := &xray_proxyman.SenderConfig{}
+	if c.StreamSetting != nil {
+		stream, err := c.StreamSetting.Build()
+		if err != nil {
+			return nil, err
 		}
-		result = append(result, &xray_core.OutboundHandlerConfig{
-			Tag:            c.Tag,
-			SenderSettings: serial.ToTypedMessage(&xray_proxyman.SenderConfig{}),
-			ProxySettings:  proxySettings,
-		})
+		sender.StreamSettings = stream
 	}
-	return result, nil
+	return &xray_core.OutboundHandlerConfig{
+		Tag:            c.Tag,
+		SenderSettings: serial.ToTypedMessage(sender),
+		ProxySettings:  serial.ToTypedMessage(settings),
+	}, nil
 }
 
 // injectMultiObservatory appends the multiobservatory.Config TypedMessage to coreConfig.App.
@@ -354,79 +265,35 @@ func injectCompatService(coreConfig *xray_core.Config) {
 	}
 }
 
-// loadAndExtend reads a config file, decodes it as xray conf.Config, and
-// also extracts the extendedJSON fields (e.g. multiObservatory).
-// Custom-protocol outbounds (anytls, juicity) are stripped from the JSON
-// before xray processes it, and returned separately.
-func loadAndExtend(arg string) (*xray_conf.Config, *extendedJSON, []customOutboundJSON, error) {
-	r, err := confloader.LoadConfig(arg)
-	if err != nil {
-		return nil, nil, nil, errors.New("failed to read config: ", arg).Base(err)
-	}
+func decodeConfig(r io.Reader) (*xray_conf.Config, *extendedJSON, error) {
 	raw, err := io.ReadAll(r)
 	if err != nil {
-		return nil, nil, nil, errors.New("failed to read config bytes: ", arg).Base(err)
+		return nil, nil, err
 	}
-	modified, customs, err := stripCustomOutbounds(raw)
+	config, err := conf_serial.DecodeJSONConfig(bytes.NewReader(raw))
 	if err != nil {
-		return nil, nil, nil, errors.New("failed to strip custom outbounds: ", arg).Base(err)
+		return nil, nil, err
 	}
-	c, err := conf_serial.DecodeJSONConfig(bytes.NewReader(modified))
-	if err != nil {
-		return nil, nil, nil, errors.New("failed to decode config: ", arg).Base(err)
-	}
-	ext := &extendedJSON{}
-	// Ignore JSON errors here — unknown fields in extendedJSON are fine.
-	_ = json.Unmarshal(raw, ext)
-	return c, ext, customs, nil
+	var ext extendedJSON
+	_ = json.Unmarshal(raw, &ext)
+	return config, &ext, nil
 }
 
-// buildConfigFromFiles is our replacement for xray's serial.BuildConfig.
-// It strips anytls/juicity outbounds before xray's infra/conf processes them,
-// then appends them as manually-built OutboundHandlerConfig entries.
-func buildConfigFromFiles(files []*xray_core.ConfigSource) (*xray_core.Config, error) {
-	cf := &xray_conf.Config{}
-	var ext *extendedJSON
-	var allCustoms []customOutboundJSON
-
-	for i, file := range files {
-		errors.LogInfo(context.Background(), "v2raya-core: reading config: ", file)
-		r, err := confloader.LoadConfig(file.Name)
-		if err != nil {
-			return nil, errors.New("failed to read config: ", file).Base(err)
-		}
-		raw, err := io.ReadAll(r)
-		if err != nil {
-			return nil, errors.New("failed to read config bytes: ", file).Base(err)
-		}
-
-		// Strip custom outbounds before passing to xray.
-		modified, customs, err := stripCustomOutbounds(raw)
-		if err != nil {
-			return nil, errors.New("failed to strip custom outbounds: ", file).Base(err)
-		}
-		allCustoms = append(allCustoms, customs...)
-
-		c, err := conf_serial.DecodeJSONConfig(bytes.NewReader(modified))
-		if err != nil {
-			return nil, errors.New("failed to decode config: ", file).Base(err)
-		}
-		if i == 0 {
-			*cf = *c
-		} else {
-			cf.Override(c, file.Name)
-		}
-
-		e := &extendedJSON{}
-		_ = json.Unmarshal(raw, e)
-		if e.MultiObservatory != nil || e.BurstObservatory != nil {
-			ext = e
-		}
-	}
-
-	coreConfig, err := cf.Build()
+func buildExtendedConfig(config xray_conf.Config, ext *extendedJSON) (*xray_core.Config, error) {
+	// Build the ordered outbounds ourselves because Xray's JSON builder only
+	// recognizes its native protocols. Config.Override has already merged tags.
+	outbounds := config.OutboundConfigs
+	config.OutboundConfigs = nil
+	coreConfig, err := config.Build()
 	if err != nil {
 		return nil, err
+	}
+	for i := range outbounds {
+		handler, err := buildOutbound(&outbounds[i])
+		if err != nil {
+			return nil, errors.New("failed to build outbound ", outbounds[i].Tag).Base(err)
+		}
+		coreConfig.Outbound = append(coreConfig.Outbound, handler)
 	}
 	if ext != nil && ext.MultiObservatory != nil {
 		injectMultiObservatory(coreConfig, ext.MultiObservatory)
@@ -435,104 +302,55 @@ func buildConfigFromFiles(files []*xray_core.ConfigSource) (*xray_core.Config, e
 	}
 	injectCompatService(coreConfig)
 	reorderAppsForAPIReadiness(coreConfig)
-	if len(allCustoms) > 0 {
-		customOutbounds, err := buildCustomOutbounds(allCustoms)
-		if err != nil {
-			return nil, err
-		}
-		coreConfig.Outbound = append(coreConfig.Outbound, customOutbounds...)
-	}
 	return coreConfig, nil
 }
 
-func init() {
-	// Override ConfigBuilderForFiles so that when core.LoadConfig is called with cmdarg.Arg,
-	// custom protocols (anytls, juicity) are stripped before xray's infra/conf processes them,
-	// then appended as fully built OutboundHandlerConfig entries.
-	xray_core.ConfigBuilderForFiles = buildConfigFromFiles
+func loadConfigFiles(names []string) (*xray_core.Config, error) {
+	var config xray_conf.Config
+	var ext *extendedJSON
+	for i, name := range names {
+		errors.LogInfo(context.Background(), "v2raya-core: reading config: ", name)
+		r, err := confloader.LoadConfig(name)
+		if err != nil {
+			return nil, errors.New("failed to read config: ", name).Base(err)
+		}
+		fileConfig, fileExt, err := decodeConfig(r)
+		if err != nil {
+			return nil, errors.New("failed to decode config: ", name).Base(err)
+		}
+		if i == 0 {
+			config = *fileConfig
+		} else {
+			config.Override(fileConfig, name)
+		}
+		if fileExt.MultiObservatory != nil || fileExt.BurstObservatory != nil {
+			ext = fileExt
+		}
+	}
+	return buildExtendedConfig(config, ext)
+}
 
+func init() {
+	xray_core.ConfigBuilderForFiles = func(files []*xray_core.ConfigSource) (*xray_core.Config, error) {
+		names := make([]string, len(files))
+		for i, file := range files {
+			names[i] = file.Name
+		}
+		return loadConfigFiles(names)
+	}
 	common.Must(xray_core.RegisterConfigLoader(&xray_core.ConfigFormat{
 		Name:      "JSON",
 		Extension: []string{"json"},
 		Loader: func(input interface{}) (*xray_core.Config, error) {
-			var ext *extendedJSON
-			var allCustoms []customOutboundJSON
-
 			switch v := input.(type) {
 			case cmdarg.Arg:
-				cf := &xray_conf.Config{}
-				for i, arg := range v {
-					errors.LogInfo(context.Background(), "v2raya-core: reading config: ", arg)
-					c, e, customs, err := loadAndExtend(arg)
-					if err != nil {
-						return nil, err
-					}
-					if i == 0 {
-						*cf = *c
-					} else {
-						cf.Override(c, arg)
-					}
-					// Use extensions from the last file that defines them.
-					if e != nil && (e.MultiObservatory != nil || e.BurstObservatory != nil) {
-						ext = e
-					}
-					allCustoms = append(allCustoms, customs...)
-				}
-				coreConfig, err := cf.Build()
-				if err != nil {
-					return nil, err
-				}
-				if ext != nil && ext.MultiObservatory != nil {
-					injectMultiObservatory(coreConfig, ext.MultiObservatory)
-				} else if ext != nil && ext.BurstObservatory != nil {
-					injectBurstObservatoryAsMulti(coreConfig, ext.BurstObservatory)
-				}
-				injectCompatService(coreConfig)
-				reorderAppsForAPIReadiness(coreConfig)
-				if len(allCustoms) > 0 {
-					customOutbounds, err := buildCustomOutbounds(allCustoms)
-					if err != nil {
-						return nil, err
-					}
-					coreConfig.Outbound = append(coreConfig.Outbound, customOutbounds...)
-				}
-				return coreConfig, nil
-
+				return loadConfigFiles(v)
 			case io.Reader:
-				raw, err := io.ReadAll(v)
-				if err != nil {
-					return nil, errors.New("failed to read config reader").Base(err)
-				}
-				modified, customs, err := stripCustomOutbounds(raw)
-				if err != nil {
-					return nil, errors.New("failed to strip custom outbounds").Base(err)
-				}
-				c, err := conf_serial.DecodeJSONConfig(bytes.NewReader(modified))
-				if err != nil {
-					return nil, errors.New("failed to decode JSON config").Base(err)
-				}
-				e := &extendedJSON{}
-				_ = json.Unmarshal(raw, e)
-				coreConfig, err := c.Build()
+				config, ext, err := decodeConfig(v)
 				if err != nil {
 					return nil, err
 				}
-				if e.MultiObservatory != nil {
-					injectMultiObservatory(coreConfig, e.MultiObservatory)
-				} else if e.BurstObservatory != nil {
-					injectBurstObservatoryAsMulti(coreConfig, e.BurstObservatory)
-				}
-				injectCompatService(coreConfig)
-				reorderAppsForAPIReadiness(coreConfig)
-				if len(customs) > 0 {
-					customOutbounds, err := buildCustomOutbounds(customs)
-					if err != nil {
-						return nil, err
-					}
-					coreConfig.Outbound = append(coreConfig.Outbound, customOutbounds...)
-				}
-				return coreConfig, nil
-
+				return buildExtendedConfig(*config, ext)
 			default:
 				return nil, errors.New("unknown config input type")
 			}

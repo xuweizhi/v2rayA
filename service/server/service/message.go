@@ -1,10 +1,11 @@
 package service
 
 import (
-	"github.com/gorilla/websocket"
-	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/v2rayA/v2rayA/kernel/v2ray"
 )
 
 const (
@@ -12,8 +13,9 @@ const (
 )
 
 type MessageHandler struct {
-	conn  *websocket.Conn
-	boxes map[string]*v2ray.Box
+	writeMu sync.Mutex
+	conn    *websocket.Conn
+	boxes   map[string]*v2ray.Box
 }
 type Message struct {
 	ProduceTime int64       `json:"produce_time"`
@@ -60,16 +62,27 @@ func (h *MessageHandler) Write() {
 		go func(box *v2ray.Box) {
 			defer wg.Done()
 			for msg := range box.Messages {
-				_ = h.conn.SetWriteDeadline(time.Now().Add(writeWait))
-				if err := h.conn.WriteJSON(Message{
-					ProduceTime: msg.ProduceTime,
-					Type:        msg.Product,
-					Body:        msg.Body,
-				}); err != nil {
+				if err := h.writeMessage(msg); err != nil {
+					// Wake the reader so it cancels every subscription.
+					h.conn.Close()
 					return
 				}
 			}
 		}(box)
 	}
 	wg.Wait()
+}
+
+// Each subscription has a producer, but the connection permits one writer.
+func (h *MessageHandler) writeMessage(msg v2ray.Message) error {
+	h.writeMu.Lock()
+	defer h.writeMu.Unlock()
+	if err := h.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+		return err
+	}
+	return h.conn.WriteJSON(Message{
+		ProduceTime: msg.ProduceTime,
+		Type:        msg.Product,
+		Body:        msg.Body,
+	})
 }

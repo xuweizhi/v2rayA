@@ -1,13 +1,14 @@
 package mieru
 
 import (
-	"io"
+	"context"
 	"net"
+	"net/http"
 	"os"
 	"testing"
 	"time"
 
-	xray_net "github.com/xtls/xray-core/common/net"
+	"github.com/enfein/mieru/v3/apis/model"
 )
 
 // TestE2E dials a real mieru server and fetches a page through it.
@@ -21,39 +22,30 @@ func TestE2E(t *testing.T) {
 	username := "4107543b-64de-1ee5-5081-2020537a1359"
 	password := username
 
-	d := net.Dialer{Timeout: 10 * time.Second}
-	raw, err := d.Dial("tcp", server)
+	c, err := NewClient(t.Context(), &ClientConfig{Address: server, Username: username, Password: password})
 	if err != nil {
-		t.Skipf("server unreachable: %v", err)
+		t.Fatal(err)
 	}
-	defer raw.Close()
-
-	mc, err := newMieruConn(raw, username, password)
+	defer c.Close()
+	sdk, err := c.start(&net.Dialer{Timeout: 10 * time.Second})
 	if err != nil {
-		t.Fatalf("newMieruConn: %v", err)
+		t.Fatal(err)
 	}
-	target := xray_net.Destination{
-		Network: xray_net.Network_TCP,
-		Address: xray_net.ParseAddress("www.gstatic.com"),
-		Port:    80,
-	}
-	if err := mc.openSession(t.Context(), target); err != nil {
-		t.Fatalf("openSession: %v", err)
-	}
-	t.Log("session opened, fetching http://www.gstatic.com/generate_204")
-
-	req := "GET /generate_204 HTTP/1.1\r\nHost: www.gstatic.com\r\nConnection: close\r\n\r\n"
-	if _, err := mc.Write([]byte(req)); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	_ = raw.SetReadDeadline(time.Now().Add(15 * time.Second))
-	resp, err := io.ReadAll(mc)
+	tr := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		target := model.NetAddrSpec{Net: "tcp"}
+		if err := target.AddrSpec.From(address); err != nil {
+			return nil, err
+		}
+		return sdk.DialContext(ctx, target)
+	}}
+	defer tr.CloseIdleConnections()
+	httpClient := http.Client{Transport: tr, Timeout: 15 * time.Second}
+	resp, err := httpClient.Get("https://www.gstatic.com/generate_204")
 	if err != nil {
-		t.Fatalf("read: %v", err)
+		t.Fatal(err)
 	}
-	t.Logf("response (%d bytes): %.200s", len(resp), resp)
-	if len(resp) == 0 {
-		t.Fatalf("empty response")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	mc.closeSession()
 }

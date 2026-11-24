@@ -69,6 +69,21 @@ func TestSwitchActiveOutbound(t *testing.T) {
 	if !pinned || !front || !whitelist || !direct {
 		t.Fatalf("incorrect routes: pinned=%t front=%t whitelist=%t direct=%t", pinned, front, whitelist, direct)
 	}
+	// A least-ping group used as a pre-proxy must stop when selection fails.
+	require(configure.AddConnect(configure.Which{TYPE: configure.ServerType, ID: 2, Outbound: "proxy"}))
+	frontSettings := configure.DefaultOutboundSetting()
+	frontSettings.Type = configure.LeastPing
+	require(configure.SetOutboundSetting("proxy", frontSettings))
+	chained, err := v2ray.NewTemplateFromConnectedServers(settings)
+	require(err)
+	defer chained.Close()
+	fallbacks := map[string]string{}
+	for _, balancer := range chained.Routing.Balancers {
+		fallbacks[balancer.Tag] = balancer.FallbackTag
+	}
+	if fallbacks["proxy"] != "block" || fallbacks[exit] != "" {
+		t.Fatalf("unexpected fallback for chained groups: %v", fallbacks)
+	}
 	require(configure.ClearConnects(exit))
 	tmpl, err = v2ray.NewTemplateFromConnectedServers(settings)
 	require(err)
