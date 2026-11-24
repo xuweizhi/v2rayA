@@ -299,6 +299,7 @@ func (m *CoreProcessManager) Start(t *Template) (err error) {
 		resolv.CheckResolvConf()
 	}
 	if (t.Setting.Transparent == configure.TransparentGfwlist || t.Setting.RulePortMode == configure.GfwlistMode) && !asset.DoesV2rayAssetExist("LoyalsoldierSite.dat") {
+		_ = t.Close()
 		return fmt.Errorf("cannot find GFWList files. update GFWList and try again")
 	}
 

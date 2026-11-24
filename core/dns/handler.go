@@ -72,6 +72,7 @@ func buildCacheKey(query *DnsQuery, upstream *UpstreamInstance) CacheKey {
 		}
 	}
 	return CacheKey{
+		ClientSubnet: upstreamClientSubnet(query.ClientIP),
 		UpstreamAddr: upstreamAddr,
 		ProxyTag:     proxyTag,
 		Name:         query.Name,

@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -154,5 +155,57 @@ func TestModuleStopLetsActiveHandlerReadState(t *testing.T) {
 	}
 	if err := module.Stop(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type textRecordHandler struct{}
+
+func (textRecordHandler) HandleQuery(_ context.Context, q *DnsQuery) (*DnsResponse, error) {
+	m := new(dns.Msg).SetReply(upstreamQuestion(q))
+	m.Answer = []dns.RR{&dns.TXT{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 60}, Txt: []string{strings.Repeat("a", 220), strings.Repeat("b", 220), strings.Repeat("c", 220)}}}
+	return &DnsResponse{RawMsg: m}, nil
+}
+
+func TestListenerRespectsClientUDPSize(t *testing.T) {
+	l := NewDnsListener(&DnsListenerConfig{ListenAddr: "127.0.0.1:0", Timeout: 2}, textRecordHandler{})
+	if err := l.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer l.Stop()
+	addr := l.servers[0].udp.PacketConn.LocalAddr().String()
+	for _, tc := range []struct {
+		network   string
+		size      uint16
+		truncated bool
+	}{{"udp", 0, true}, {"udp", 600, true}, {"udp", 1232, false}, {"tcp", 0, false}} {
+		q := new(dns.Msg).SetQuestion("records.example.", dns.TypeTXT)
+		if tc.size != 0 {
+			q.SetEdns0(tc.size, false)
+		}
+		msg, _, err := (&dns.Client{Net: tc.network, UDPSize: 4096}).Exchange(q, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if msg.Truncated != tc.truncated || (!tc.truncated && len(msg.Answer) != 1) {
+			t.Errorf("%s size %d: TC=%t, answers=%d", tc.network, tc.size, msg.Truncated, len(msg.Answer))
+		}
+	}
+}
+
+func TestCachePartitionsByAdvertisedSubnet(t *testing.T) {
+	key := func(ip string) CacheKey {
+		return buildCacheKey(&DnsQuery{Name: "cdn.example.", QType: TypeA, ClientIP: net.ParseIP(ip)}, nil)
+	}
+	for _, tc := range []struct {
+		a, b string
+		same bool
+	}{
+		{"198.51.100.1", "198.51.100.254", true}, {"198.51.100.1", "203.0.113.1", false},
+		{"2001:db8:1::1", "2001:db8:1:ffff::1", true}, {"2001:db8:1::1", "2001:db8:2::1", false},
+		{"10.0.0.1", "192.168.0.1", true}, {"10.0.0.1", "198.51.100.1", false},
+	} {
+		if (key(tc.a) == key(tc.b)) != tc.same {
+			t.Errorf("wrong cache partition for %s and %s", tc.a, tc.b)
+		}
 	}
 }

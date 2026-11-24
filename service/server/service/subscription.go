@@ -386,12 +386,33 @@ func getDataUsageStatus(bytesUsed, bytesRemaining uint64) (status string) {
 	return
 }
 
-func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
+func UpdateSubscription(index int, disconnectIfNecessary bool) error {
+	return updateSubscription(index, disconnectIfNecessary, 0)
+}
+
+func UpdateScheduledSubscription(index int, sourceID int64) error {
+	if sourceID <= 0 {
+		return errors.New("missing scheduled subscription ID")
+	}
+	return updateSubscription(index, false, sourceID)
+}
+
+func updateSubscription(index int, disconnectIfNecessary bool, scheduledID int64) (err error) {
 	membershipMu.Lock()
 	source := configure.GetSubscription(index)
 	membershipMu.Unlock()
 	if source == nil {
 		return fmt.Errorf("subscription not found")
+	}
+	if scheduledID != 0 {
+		if source.DatabaseID != scheduledID {
+			return errors.New("scheduled subscription moved or was removed")
+		}
+		extra := source.Extra
+		if extra.UpdateIntervalHour > 0 && extra.LastUpdateTime > 0 &&
+			time.Now().Unix()-extra.LastUpdateTime < int64(extra.UpdateIntervalHour)*3600 {
+			return nil
+		}
 	}
 	addr := source.Address
 	password := source.DecryptPassword
@@ -431,10 +452,15 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	infoServerRaws := make([]configure.ServerRaw, len(subscriptionInfos))
 	groups := configure.GetOutbounds()
 	previous := make(map[string]*configure.Whiches, len(groups))
+	autoSelect := scheduledID != 0 && oldRaw.AutoSelect && configure.GetOutboundSetting("proxy").MemberRule == nil
 	var connections []*configure.Which
 	for _, group := range groups {
 		previous[group] = configure.GetConnectedServersByOutbound(group)
 		for _, w := range previous[group].Get() {
+			if autoSelect && group == "proxy" && w.TYPE == configure.SubscriptionServerType && w.Sub == index {
+				// These positions are replaced from the freshly downloaded source.
+				continue
+			}
 			copy := *w
 			connections = append(connections, &copy)
 		}
@@ -600,6 +626,10 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 			grouped[group] = configure.NewWhiches(nodes)
 		}
 	}
+	startIfStopped := false
+	if autoSelect {
+		grouped["proxy"], startIfStopped = subscriptionSelection(index, previous["proxy"], infoServerRaws[:len(subscriptionInfos)], extra)
+	}
 	nextStates := map[string]any{}
 	oldStates := map[string]any{}
 	for group, members := range grouped {
@@ -610,7 +640,7 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 			connectedServerChanged = true
 		}
 		// A provider can replace a node at the very same list position.
-		if _, managed := ruleMembers[group]; managed && memberEndpointsChanged(members.Get(), index, oldRaw.Servers, infoServerRaws) {
+		if _, managed := ruleMembers[group]; (managed || (autoSelect && group == "proxy")) && memberEndpointsChanged(members.Get(), index, oldRaw.Servers, infoServerRaws) {
 			connectedServerChanged = true
 		}
 	}
@@ -624,7 +654,7 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	subscriptions[index].Extra.Download = result.traffic.Download
 	subscriptions[index].Extra.Total = result.traffic.Total
 	subscriptions[index].Extra.Expire = result.traffic.Expire.Unix()
-	return publishSubscriptionMembers(index, &oldRaw, &subscriptions[index], oldStates, nextStates, connectedServerChanged || dnsChanged)
+	return publishSubscriptionMembers(index, &oldRaw, &subscriptions[index], oldStates, nextStates, connectedServerChanged || dnsChanged, startIfStopped)
 }
 
 func memberEndpointsChanged(members []*configure.Which, index int, before, after []configure.ServerRaw) bool {
@@ -643,14 +673,15 @@ func memberEndpointsChanged(members []*configure.Which, index int, before, after
 
 // Positional node references and the provider rows they address must be
 // published and rolled back in the same transaction.
-func publishSubscriptionMembers(index int, old, updated *configure.SubscriptionRaw, oldStates, nextStates map[string]any, reload bool) error {
+func publishSubscriptionMembers(index int, old, updated *configure.SubscriptionRaw, oldStates, nextStates map[string]any, reload, startIfStopped bool) error {
 	if err := db.SetSubscriptionAndState(index, updated, nextStates); err != nil {
 		return err
 	}
-	if reload && v2ray.ProcessManager.Running() {
+	wasRunning := v2ray.ProcessManager.Process() != nil
+	if (reload && wasRunning) || (startIfStopped && !wasRunning) {
 		if err := v2ray.UpdateV2RayConfig(); err != nil {
 			err = errors.Join(err, db.SetSubscriptionAndState(index, old, oldStates))
-			if !v2ray.ProcessManager.Running() {
+			if wasRunning && v2ray.ProcessManager.Process() == nil {
 				err = errors.Join(err, v2ray.UpdateV2RayConfig())
 			}
 			return err
@@ -723,7 +754,7 @@ func ModifySubscriptionRemark(subscription touch.Subscription) error {
 		}
 	}
 	if !membershipChanged {
-		return publishSubscriptionMembers(index, previous, &updated, nil, nil, reload)
+		return publishSubscriptionMembers(index, previous, &updated, nil, nil, reload, false)
 	}
 	var subs []configure.SubscriptionRaw
 	standalone := standaloneMembers{}
@@ -770,87 +801,73 @@ func ModifySubscriptionRemark(subscription touch.Subscription) error {
 			reload = true
 		}
 	}
-	return publishSubscriptionMembers(index, previous, &updated, oldStates, nextStates, reload)
+	return publishSubscriptionMembers(index, previous, &updated, oldStates, nextStates, reload, false)
 }
 
-func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error) {
+// Replace only this subscription's slice of the group. Keep the position of
+// its first member and the ordering of all unrelated members.
+func subscriptionSelection(index int, previous *configure.Whiches, servers []configure.ServerRaw, extra configure.SubscriptionExtra) (*configure.Whiches, bool) {
+	var selected []*configure.Which
+	for i, node := range servers {
+		if node.Retained || !enabledNode(&node, &extra) {
+			continue
+		}
+		if err := v2ray.ValidateNodeOutbound(node.ServerObj); err != nil {
+			log.Warn("[AutoSelect] skipping unsupported node %d of subscription %d", i+1, index)
+			continue
+		}
+		selected = append(selected, &configure.Which{TYPE: configure.SubscriptionServerType, Sub: index, ID: i + 1, Outbound: "proxy"})
+	}
+	next := configure.NewWhiches(nil)
+	hasSelection := len(selected) > 0
+	for _, w := range previous.Get() {
+		if w.TYPE == configure.SubscriptionServerType && w.Sub == index {
+			next.Touches = append(next.Touches, selected...)
+			selected = nil
+			continue
+		}
+		next.Add(*w)
+	}
+	next.Touches = append(next.Touches, selected...)
+	return next, hasSelection
+}
+
+func SelectServersFromSubscription(index int, shouldDisconnect bool) error {
 	membershipMu.Lock()
 	defer membershipMu.Unlock()
 	if configure.GetOutboundSetting("proxy").MemberRule != nil {
 		return nil
 	}
-	var subscriptionServer configure.Which
-	subscriptionServer.TYPE = "subscriptionServer"
-	subscriptionServer.Sub = index // Subscription IDs start with 0
-	subscriptionServer.Outbound = "proxy"
-
 	sub := configure.GetSubscription(index)
 	if sub == nil {
-		return fmt.Errorf("SelectServersFromSubscription: subscription at index %d not found", index)
+		return fmt.Errorf("subscription %d not found", index)
 	}
-	for i, serverRaw := range sub.Servers {
-		subscriptionServer.ID = i + 1
-		if serverRaw.Disabled {
-			log.Info("[AutoSelect] Skipping disabled server %v", serverRaw.ServerObj.GetName())
-			continue
+	servers := sub.Servers
+	if shouldDisconnect {
+		servers = nil
+	}
+	previous := configure.GetConnectedServersByOutbound("proxy")
+	members, start := subscriptionSelection(index, previous, servers, sub.Extra)
+	wasRunning := v2ray.ProcessManager.Process() != nil
+	if !sameMembers(previous.Get(), members.Get()) {
+		key := memberKey("proxy")
+		if err := applyOutboundState(map[string]any{key: members}, map[string]any{key: previous}); err != nil {
+			return err
 		}
-		serverObj := serverRaw.ServerObj // ServerObj IDs start with 0
-		if serverObj == nil {
-			log.Warn("[AutoSelect] Skipping server %d in subscription %d: nil ServerObj", i, index)
-			continue
-		}
-		serverName := serverObj.GetName()
-
-		// Workaround for partial SS support in v2fly and xray
-		isSupported, _ := IsSupported(subscriptionServer)
-		if !isSupported {
-			log.Info("[AutoSelect] Skipping unsupported server %v", serverName)
-			continue
-		}
-
-		if shouldDisconnect {
-			err := disconnect(subscriptionServer, true)
-			if err == nil {
-				log.Info("[AutoSelect] Disconnected from server: %v", serverName)
-			} else {
-				log.Error("[AutoSelect] Failed to disconnect from server: %v", serverName)
-				return err
-			}
-		} else {
-			err := connect(&subscriptionServer)
-			if err == nil {
-				log.Info("[AutoSelect] Automatically selected server: %v", serverName)
-			} else {
-				log.Error("[AutoSelect] Failed to connect to server: %v", serverName)
-				return err
-			}
+	}
+	if start && !wasRunning {
+		if err := v2ray.UpdateV2RayConfig(); err != nil {
+			return errors.Join(err, restoreOutboundConnections("proxy", previous))
 		}
 	}
 	return nil
 }
 
-func AutoSelectServersFromSubscriptions(shouldDisconnect bool) (err error) {
-	for i := 0; i < configure.GetLenSubscriptions(); i++ {
-		subscription := configure.GetSubscription(i)
-		if subscription == nil {
-			log.Warn("[AutoSelect] Failed to read subscription at index %d, skipping", i)
-			continue
-		}
-		if subscription.AutoSelect {
-			if shouldDisconnect {
-				log.Info("[AutoSelect] Automatically disconnecting servers from subscription: %v", subscription.Address)
-				err := SelectServersFromSubscription(i, true)
-				if err != nil {
-					log.Error("[AutoSelect] Failed to disconnect servers from subscription: %v", subscription.Address)
-					return err
-				}
-			} else {
-				log.Info("[AutoSelect] Automatically selecting servers from subscription: %v", subscription.Address)
-				err := SelectServersFromSubscription(i, false)
-				if err != nil {
-					log.Error("[AutoSelect] Failed to select servers from subscription: %v", subscription.Address)
-					return err
-				}
+func AutoSelectServersFromSubscriptions(shouldDisconnect bool) error {
+	for i, sub := range configure.GetSubscriptions() {
+		if sub.AutoSelect {
+			if err := SelectServersFromSubscription(i, shouldDisconnect); err != nil {
+				return err
 			}
 		}
 	}

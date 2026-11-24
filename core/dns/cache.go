@@ -2,14 +2,16 @@ package dns
 
 import (
 	"container/list"
+	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/miekg/dns"
 )
 
-// CacheKey 缓存键 - 四元组确保隔离
+// CacheKey partitions answers by upstream policy, question and advertised client subnet.
 type CacheKey struct {
+	ClientSubnet netip.Prefix
 	UpstreamAddr string    // 上游地址
 	ProxyTag     string    // 代理渠道标签
 	Name         string    // 查询域名（小写）

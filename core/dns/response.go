@@ -3,6 +3,7 @@ package dns
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/miekg/dns"
@@ -148,33 +149,41 @@ func (b *ResponseBuilder) AddEDNS0(m *dns.Msg, udpPayloadSize uint16, options ..
 // AddECSSubnet adds an EDNS0 Client Subnet (ECS) option to the message.
 // ECS allows the upstream to return location-specific responses.
 func (b *ResponseBuilder) AddECSSubnet(m *dns.Msg, clientIP net.IP) {
-	if clientIP == nil {
+	b.addECS(m, ecsPrefix(clientIP))
+}
+
+func ecsPrefix(ip net.IP) netip.Prefix {
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return netip.Prefix{}
+	}
+	addr = addr.Unmap()
+	bits := 48
+	if addr.Is4() {
+		bits = 24
+	}
+	return netip.PrefixFrom(addr, bits).Masked()
+}
+
+func upstreamClientSubnet(ip net.IP) netip.Prefix {
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return netip.Prefix{}
+	}
+	return ecsPrefix(ip)
+}
+
+func (b *ResponseBuilder) addECS(m *dns.Msg, prefix netip.Prefix) {
+	if !prefix.IsValid() {
 		return
 	}
-
-	var family uint16
-	var mask uint8
-	var ip net.IP
-
-	if ipv4 := clientIP.To4(); ipv4 != nil {
-		family = 1 // IPv4
-		mask = 24
-		ip = ipv4
-	} else {
-		family = 2 // IPv6
-		mask = 48
-		ip = clientIP.To16()
+	family := uint16(2)
+	if prefix.Addr().Is4() {
+		family = 1
 	}
-
-	subnet := &dns.EDNS0_SUBNET{
-		Code:          dns.EDNS0SUBNET,
-		Family:        family,
-		SourceNetmask: mask,
-		SourceScope:   0,
-		Address:       ip,
-	}
-
-	b.AddEDNS0(m, 4096, subnet)
+	b.AddEDNS0(m, 4096, &dns.EDNS0_SUBNET{
+		Code: dns.EDNS0SUBNET, Family: family,
+		SourceNetmask: uint8(prefix.Bits()), Address: prefix.Addr().AsSlice(),
+	})
 }
 
 // SetDNSSEC sets the DNSSEC OK (DO) bit on the message.

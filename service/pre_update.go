@@ -13,46 +13,20 @@ import (
 
 func updateSubscriptions() {
 	subs := configure.GetSubscriptions()
-	lenSubs := len(subs)
-	control := make(chan struct{}, 2) // concurrency limit: update 2 subscriptions at a time
-	// Disconnect from subscriptions before auto-selecting servers from them
-	// to limit the number of connected servers and avoid hitting the limit
-	shouldDisconnect := true
-	err := service.AutoSelectServersFromSubscriptions(shouldDisconnect)
-	if err != nil {
-		log.Error("[AutoSelect] Failed to disconnect servers from subscriptions -- err: %v", err)
-	}
-	wg := new(sync.WaitGroup)
-	for i := 0; i < lenSubs; i++ {
-		// Per-subscription update interval: subscriptions with an explicit
-		// interval are skipped until their LastUpdateTime is due.
-		if sub := subs[i]; sub.Extra.UpdateIntervalHour > 0 && sub.Extra.LastUpdateTime > 0 {
-			due := time.Now().Unix()-sub.Extra.LastUpdateTime >= int64(sub.Extra.UpdateIntervalHour)*3600
-			if !due {
-				log.Trace("[AutoUpdate] Subscriptions: skipping not-yet-due subscription -- ID: %d, Address: %s", i, sub.Address)
-				continue
-			}
-		}
+	control := make(chan struct{}, 2)
+	var wg sync.WaitGroup
+	for i, sub := range subs {
 		wg.Add(1)
-		go func(i int) {
+		go func() {
+			defer wg.Done()
 			control <- struct{}{}
-			err := service.UpdateSubscription(i, false)
-			if err != nil {
-				log.Info("[AutoUpdate] Subscriptions: Failed to update subscription -- ID: %d, err: %v", i, err)
-			} else {
-				log.Info("[AutoUpdate] Subscriptions: Complete updating subscription -- ID: %d, Address: %s", i, subs[i].Address)
+			defer func() { <-control }()
+			if err := service.UpdateScheduledSubscription(i, sub.DatabaseID); err != nil {
+				log.Warn("[AutoUpdate] subscription #%d: %v", sub.DatabaseID, err)
 			}
-			wg.Done()
-			<-control
-		}(i)
+		}()
 	}
 	wg.Wait()
-	shouldDisconnect = false
-	err2 := service.AutoSelectServersFromSubscriptions(shouldDisconnect)
-	if err2 != nil {
-		log.Error("[AutoSelect] Failed to auto-select servers from subscriptions -- err: %v", err2)
-	}
-
 }
 
 func initUpdatingTicker() {

@@ -74,6 +74,11 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 	tmplJson.Variant, tmplJson.CoreVersion, _ = where.GetV2rayServiceVersion()
 	t = &tmplJson
 	defer t.releaseProbeReservations()
+	defer func(tmpl *Template) {
+		if err != nil {
+			_ = tmpl.Close()
+		}
+	}(t)
 	t.Setting = setting
 	// log
 	logLevel := setting.LogLevel

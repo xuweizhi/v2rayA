@@ -87,6 +87,12 @@ func (s *Mieru) Configuration(info PriorInfo) (c Configuration, err error) {
 	if transport == "" {
 		transport = "TCP"
 	}
+	if !strings.EqualFold(transport, "tcp") {
+		return c, fmt.Errorf("mieru: only TCP transport is supported")
+	}
+	if s.Server == "" || s.Port <= 0 || s.Port > 65535 {
+		return c, fmt.Errorf("mieru: invalid server address or port")
+	}
 	settingsJSON, err := json.Marshal(mieruSettings{
 		Address:   net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
 		Username:  s.Username,

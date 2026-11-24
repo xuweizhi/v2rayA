@@ -81,7 +81,7 @@ func TestSwitchActiveOutbound(t *testing.T) {
 	for _, balancer := range chained.Routing.Balancers {
 		fallbacks[balancer.Tag] = balancer.FallbackTag
 	}
-	if fallbacks["proxy"] != "block" || fallbacks[exit] != "" {
+	if fallbacks["proxy"] != "block" || fallbacks[exit] != "block" {
 		t.Fatalf("unexpected fallback for chained groups: %v", fallbacks)
 	}
 	require(configure.ClearConnects(exit))

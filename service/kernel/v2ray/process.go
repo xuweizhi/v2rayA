@@ -42,16 +42,16 @@ type Process struct {
 func NewProcess(tmpl *Template,
 	prestart func() error, poststart func() error,
 	postUnexpectedStop func(p *Process),
-) (*Process, error) {
+) (_ *Process, err error) {
 	process := &Process{
 		template: tmpl,
 		done:     make(chan struct{}),
 	}
-	var err error
 	var rollbackStage int
 	defer func() {
 		if err != nil {
 			process.rollback(rollbackStage)
+			_ = tmpl.Close()
 		}
 	}()
 
@@ -82,11 +82,6 @@ func NewProcess(tmpl *Template,
 			cancel()
 		}
 	}()
-	defer func() {
-		if err != nil {
-			_ = tmpl.Close()
-		}
-	}()
 	if tmpl.API == nil {
 		log.Fatal("unexpected tmpl.API == nil")
 	}
@@ -103,7 +98,7 @@ func NewProcess(tmpl *Template,
 		return nil, err
 	}
 	process.proc = proc
-	var unexpectedExiting bool
+	var unexpectedExiting atomic.Bool
 	go func() {
 		defer close(process.done)
 		p, e := proc.Wait()
@@ -123,7 +118,7 @@ func NewProcess(tmpl *Template,
 			t = append(t, e.Error())
 		}
 		log.Warn("v2ray-core: %v", strings.Join(t, ": "))
-		unexpectedExiting = true
+		unexpectedExiting.Store(true)
 	}()
 	// ports to check
 	portList := []string{strconv.Itoa(tmpl.ApiPort)}
@@ -137,7 +132,7 @@ func NewProcess(tmpl *Template,
 			i++
 			continue
 		}
-		if unexpectedExiting {
+		if unexpectedExiting.Load() {
 			if log.Log.GetLevel() > log.ParseLevel("info") {
 				log.Error("some critical information may lost due to your log level")
 			}

@@ -36,14 +36,6 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 	// observatory
 	if serverData != nil {
 		outbounds := t.outNames()
-		// A pre-proxy must never fall back to the default outbound, which can
-		// itself depend on this group.
-		preProxyFallbacks := make(map[string]string)
-		for _, setting := range serverData.OutboundName2Setting {
-			if setting.PreProxy != "" && serverData.OutboundName2Setting[setting.PreProxy].Type == configure.LeastPing {
-				preProxyFallbacks[setting.PreProxy] = "block"
-			}
-		}
 		for outbound, isGroup := range outbounds {
 			if !isGroup {
 				continue
@@ -64,8 +56,14 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 				}
 			}
 
+			// An empty least-ping result otherwise selects Xray's first outbound,
+			// which can belong to a different group.
+			fallback := ""
+			if strategy == configure.LeastPing {
+				fallback = "block"
+			}
 			t.Routing.Balancers = append(t.Routing.Balancers, coreObj.Balancer{
-				FallbackTag: preProxyFallbacks[outbound],
+				FallbackTag: fallback,
 				Tag:         outbound,
 				Selector:    selector,
 				Strategy: coreObj.BalancerStrategy{

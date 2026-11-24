@@ -128,9 +128,7 @@ func upstreamQuestion(query *DnsQuery) *dns.Msg {
 	msg := new(dns.Msg).SetQuestion(dns.Fqdn(query.Name), uint16(query.QType))
 	msg.SetEdns0(4096, true)
 	markOutgoing(msg)
-	if ip := query.ClientIP; ip.IsGlobalUnicast() && !ip.IsPrivate() {
-		NewResponseBuilder().AddECSSubnet(msg, ip)
-	}
+	NewResponseBuilder().addECS(msg, upstreamClientSubnet(query.ClientIP))
 	return msg
 }
 

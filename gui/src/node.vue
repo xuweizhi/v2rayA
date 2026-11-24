@@ -2244,23 +2244,17 @@ export default {
           });
           return;
         }
+        this.runningState.connectedServer = res.data.data.touch.connectedServer;
         // Start v2ray-core if it is not yet running so batch connect takes effect immediately
         if (!res.data.data.running && nextMembers.length > 0) {
           const startRes = await this.$axios({
             url: apiRoot + "/v2ray",
             method: "post",
           });
-          if (startRes.data && startRes.data.code === "SUCCESS") {
-            res = startRes;
-          } else {
-            this.$buefy.toast.open({
-              message: startRes.data?.message || this.$t("common.fail"),
-              type: "is-warning",
-              position: "is-top",
-              duration: 5000,
-              queue: false,
-            });
+          if (startRes.data?.code !== "SUCCESS") {
+            throw new Error(startRes.data?.message || this.$t("common.fail"));
           }
+          res = startRes;
         }
         Object.assign(this.runningState, {
           status: this.getRunningStatusKey(res.data.data.running, res.data.data.networkPaused),
@@ -2272,10 +2266,9 @@ export default {
         this.$nextTick(() => {
           this.updateConnectView();
         });
-        this.syncLatestNodeOverview();
         this.$buefy.toast.open({
           message: this.$t("nodeFilter.batchConnectSuccess", {
-            count: selected.length,
+            count: addedCount || selected.length,
             group: group.toUpperCase(),
           }),
           type: "is-success",
@@ -2292,6 +2285,7 @@ export default {
           queue: false,
         });
       } finally {
+        this.syncLatestNodeOverview();
         loading.close();
       }
     },

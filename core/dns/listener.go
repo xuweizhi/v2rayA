@@ -297,6 +297,13 @@ func (l *DnsListener) handlePacket(w dns.ResponseWriter, msg *dns.Msg) {
 		}
 	}
 
+	if _, udp := clientAddr.(*net.UDPAddr); udp {
+		limit := dns.MinMsgSize
+		if opt := msg.IsEdns0(); opt != nil {
+			limit = int(opt.UDPSize())
+		}
+		m.Truncate(limit)
+	}
 	if err := w.WriteMsg(m); err != nil {
 		log.Printf("[dns] error writing response to %s: %v", clientAddr, err)
 	}

@@ -67,7 +67,7 @@ func addHosts(tmpl *v2ray.Template, vms []serverObj.ServerObj) {
 	var limit = make(chan struct{}, concurrency)
 	var wg = sync.WaitGroup{}
 	for _, v := range vms {
-		if net.ParseIP(v.GetHostname()) == nil {
+		if v != nil && net.ParseIP(v.GetHostname()) == nil {
 			wg.Add(1)
 			go func(addr string) {
 				limit <- struct{}{}
@@ -100,14 +100,17 @@ func TestHttpLatency(which []*configure.Which, timeout time.Duration, maxParalle
 	// the original configuration and probe results have been restored.
 	membershipMu.Lock()
 	defer membershipMu.Unlock()
-	var whiches = configure.NewWhiches(which)
-	for i := len(which) - 1; i >= 0; i-- {
-		if which[i].TYPE == configure.SubscriptionType { // remove subscriptionType
-			which = append(which[:i], which[i+1:]...)
+	nodes := make([]*configure.Which, 0, len(which))
+	for _, w := range which {
+		if w != nil && w.TYPE != configure.SubscriptionType {
+			nodes = append(nodes, w)
 		}
 	}
-	which = whiches.Get()
-	v2rayRunning := v2ray.ProcessManager.Running()
+	which = nodes
+	if len(which) == 0 {
+		return which, nil
+	}
+	v2rayRunning := v2ray.ProcessManager.Process() != nil
 	wg := new(sync.WaitGroup)
 	vms := make([]serverObj.ServerObj, len(which))
 	//init vmessInfos
@@ -116,6 +119,10 @@ func TestHttpLatency(which []*configure.Which, timeout time.Duration, maxParalle
 		sr, err := which[i].LocateServerRaw()
 		if err != nil {
 			which[i].Latency = err.Error()
+			continue
+		}
+		if sr.ServerObj == nil {
+			which[i].Latency = "missing server configuration"
 			continue
 		}
 		vms[i] = sr.ServerObj
@@ -142,6 +149,13 @@ func TestHttpLatency(which []*configure.Which, timeout time.Duration, maxParalle
 		})
 		tmpl.SetAPI(nil)
 	}
+	// Start takes ownership of the template (including its collectors).
+	handedToManager := false
+	defer func() {
+		if !handedToManager {
+			_ = tmpl.Close()
+		}
+	}()
 	inboundPortMap := make([]string, len(vms))
 	pluginPortMap := make(map[int]int)
 	var toClose []io.Closer
@@ -213,8 +227,14 @@ func TestHttpLatency(which []*configure.Which, timeout time.Duration, maxParalle
 	addHosts(tmpl, vms)
 	tmpl.SetOutboundSockopt()
 	v2ray.ProcessManager.SetLatencyTesting(true)
+	handedToManager = true
 	if err := v2ray.ProcessManager.Start(tmpl); err != nil {
 		v2ray.ProcessManager.SetLatencyTesting(false)
+		if v2rayRunning && v2ray.ProcessManager.Process() == nil {
+			if restoreErr := v2ray.UpdateV2RayConfig(); restoreErr != nil {
+				return nil, errors.Join(err, fmt.Errorf("restoring proxy after failed latency test: %w", restoreErr))
+			}
+		}
 		return nil, err
 	}
 	//limit the concurrency
@@ -304,24 +324,10 @@ func httpLatency(which *configure.Which, port string, timeout time.Duration, cus
 }
 
 func IsSupported(which configure.Which) (bool, error) {
-	var (
-		tmpl *v2ray.Template
-		err  error
-	)
-
-	tmpl = v2ray.NewEmptyTemplate(&configure.Setting{
-		RulePortMode: configure.WhitelistMode,
-		TcpFastOpen:  configure.Default,
-		MuxOn:        configure.No,
-		Transparent:  configure.TransparentClose,
-	})
-	tmpl.SetAPI(nil)
-	serverRaw, _ := which.LocateServerRaw()
-	err = tmpl.InsertMappingOutbound(serverRaw.ServerObj, "0", false, 0, "socks")
+	server, err := which.LocateServerRaw()
 	if err != nil {
-		if strings.Contains(err.Error(), "unsupported") {
-			return false, err
-		}
+		return false, err
 	}
-	return true, nil
+	err = v2ray.ValidateNodeOutbound(server.ServerObj)
+	return err == nil, err
 }

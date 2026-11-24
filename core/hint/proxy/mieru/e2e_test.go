@@ -18,9 +18,12 @@ func TestE2E(t *testing.T) {
 	if os.Getenv("V2RAYA_MIERU_E2E") != "1" {
 		t.Skip("set V2RAYA_MIERU_E2E=1 to run the mieru e2e test")
 	}
-	server := "91.243.81.186:2401"
-	username := "4107543b-64de-1ee5-5081-2020537a1359"
-	password := username
+	server := os.Getenv("V2RAYA_MIERU_SERVER")
+	username := os.Getenv("V2RAYA_MIERU_USERNAME")
+	password := os.Getenv("V2RAYA_MIERU_PASSWORD")
+	if server == "" || username == "" || password == "" {
+		t.Fatal("set V2RAYA_MIERU_SERVER, V2RAYA_MIERU_USERNAME and V2RAYA_MIERU_PASSWORD for the live test")
+	}
 
 	c, err := NewClient(t.Context(), &ClientConfig{Address: server, Username: username, Password: password})
 	if err != nil {

@@ -357,6 +357,20 @@ func (t *Template) checkAndSetMark(o *coreObj.OutboundObject, mark int) {
 	o.StreamSettings.Sockopt.Mark = &mark
 }
 
+// ValidateNodeOutbound checks the same protocol/backend configuration as a live
+// outbound without allocating an inbound, starting a process or gathering stats.
+func ValidateNodeOutbound(obj serverObj.ServerObj) error {
+	if obj == nil {
+		return fmt.Errorf("missing server configuration")
+	}
+	variant, version, _ := where.GetV2rayServiceVersion()
+	_, err := obj.Configuration(serverObj.PriorInfo{
+		Variant: variant, CoreVersion: version, Tag: "validation",
+		PluginPort: 1, Backend: resolveEffectiveBackend(obj, configure.GetSettingNotNil()),
+	})
+	return err
+}
+
 func (t *Template) InsertMappingOutbound(o serverObj.ServerObj, inboundPort string, udpSupport bool, pluginPort int, protocol string) (err error) {
 	if t.CoreVersion == "" {
 		t.Variant, t.CoreVersion, _ = where.GetV2rayServiceVersion()
