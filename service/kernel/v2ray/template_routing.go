@@ -31,43 +31,8 @@ func (t *Template) outNames() map[string]bool {
 	return tags
 }
 
-func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGroup bool) bool) (outboundName string, isGroup bool) {
-	if filter == nil {
-		filter = func(outboundName string, isGroup bool) bool {
-			return true
-		}
-	}
-	// deduplicate
-	m := make(map[string]struct{})
-
-	for _, o := range t.Outbounds {
-		switch o.Tag {
-		case "direct", "block", "dns-out":
-			continue
-		}
-		if len(o.Balancers) > 0 {
-			for _, v := range o.Balancers {
-				if _, ok := m[v]; !ok {
-					if filter(v, true) {
-						return v, true
-					}
-					m[v] = struct{}{}
-				}
-			}
-		} else {
-			if filter(o.Tag, false) {
-				return o.Tag, false
-			}
-		}
-	}
-	return
-}
-
-// dnsRuleToLines converts a configure.DnsRule to the "server -> outbound" line format
-// and the domain list used for the DNS server object.
 // Returns (serverLine, []domains). serverLine is empty if server is empty.
 func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds []string) (err error) {
-	firstOutboundTag, _ := t.FirstProxyOutboundName(nil)
 	// apple pushing. #495 #479
 	t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{
 		Type:        "field",
@@ -82,7 +47,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: firstOutboundTag,
+					OutboundTag: t.defaultProxyTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"ext:LoyalsoldierSite.dat:geolocation-!cn"},
 				})
@@ -90,7 +55,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: firstOutboundTag,
+					OutboundTag: t.defaultProxyTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"geosite:geolocation-!cn"},
 				})
@@ -98,7 +63,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 		t.Routing.Rules = append(t.Routing.Rules,
 			coreObj.RoutingRule{
 				Type:        "field",
-				OutboundTag: "proxy",
+				OutboundTag: t.defaultProxyTag,
 				InboundTag:  deepcopy.Copy(inbounds).([]string),
 				// https://github.com/v2rayA/v2rayA/issues/285
 				Domain: []string{"geosite:google"},
@@ -111,7 +76,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			},
 			coreObj.RoutingRule{
 				Type:        "field",
-				OutboundTag: "proxy",
+				OutboundTag: t.defaultProxyTag,
 				InboundTag:  deepcopy.Copy(inbounds).([]string),
 				IP:          []string{"geoip:hk", "geoip:mo"},
 			},
@@ -127,13 +92,13 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: firstOutboundTag,
+					OutboundTag: t.defaultProxyTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"ext:LoyalsoldierSite.dat:gfw"},
 				},
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: firstOutboundTag,
+					OutboundTag: t.defaultProxyTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"ext:LoyalsoldierSite.dat:greatfire"},
 				})
@@ -141,7 +106,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: firstOutboundTag,
+					OutboundTag: t.defaultProxyTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"geosite:geolocation-!cn"},
 				})
@@ -150,7 +115,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 		t.Routing.Rules = append(t.Routing.Rules,
 			coreObj.RoutingRule{
 				Type:        "field",
-				OutboundTag: firstOutboundTag,
+				OutboundTag: t.defaultProxyTag,
 				InboundTag:  deepcopy.Copy(inbounds).([]string),
 				// From: https://github.com/Loyalsoldier/geoip/blob/release/text/telegram.txt
 				IP: []string{"91.105.192.0/23", "91.108.4.0/22", "91.108.8.0/21", "91.108.16.0/21", "91.108.56.0/22",
@@ -250,7 +215,7 @@ func parseRoutingA(t *Template, routingInboundTags []string) error {
 		log.Warn("parseRoutingA: %v", err)
 		return err
 	}
-	defaultOutbound, _ := t.FirstProxyOutboundName(nil)
+	defaultOutbound := t.defaultProxyTag
 	for _, rule := range rules {
 		switch rule := rule.(type) {
 		case RoutingA.Define:
@@ -518,14 +483,13 @@ func parseRoutingARules(rulesText string, inboundTag string) (rules []coreObj.Ro
 }
 
 func (t *Template) setTransparentRouting() (err error) {
-	defaultOutbound, _ := t.FirstProxyOutboundName(nil)
 	switch t.Setting.Transparent {
 	case configure.TransparentProxy:
 		// Global transparent: route all transparent inbound to default outbound
 		t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{
 			Type:        "field",
 			InboundTag:  []string{"transparent"},
-			OutboundTag: defaultOutbound,
+			OutboundTag: t.defaultProxyTag,
 		})
 	case configure.TransparentWhitelist:
 		return t.AppendRoutingRuleByMode(configure.WhitelistMode, []string{"transparent"})

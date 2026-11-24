@@ -417,6 +417,29 @@ func RemoveConnect(wt Which) (err error) {
 	return fmt.Errorf("given server cannot be found in database")
 }
 
+// An empty preference preserves the first connected group for older installations.
+func GetPreferredOutbound() string {
+	var name string
+	_ = db.Get("system", "activeOutbound", &name)
+	return name
+}
+
+func GetActiveOutbound() string {
+	if group := GetPreferredOutbound(); group != "" {
+		return group
+	}
+	for _, group := range GetOutbounds() {
+		if GetConnectedServersByOutbound(group).Len() > 0 {
+			return group
+		}
+		if group == DefaultOutboundName && GetOutboundSetting(group).MemberRule != nil {
+			// An empty automatic default group is waiting for a matching node.
+			return group
+		}
+	}
+	return DefaultOutboundName
+}
+
 func GetOutbounds() (outbounds []string) {
 	// keep order
 	members, _ := db.StringSetGetAll("outbounds", "names")
@@ -599,6 +622,9 @@ func GetLastKernelExitStatus() string {
 }
 
 func CheckOutboundDependencies(outbound string) error {
+	if outbound == GetPreferredOutbound() {
+		return fmt.Errorf("switch the active proxy group before deleting %q", outbound)
+	}
 	for _, group := range GetOutbounds() {
 		if GetOutboundSetting(group).PreProxy == outbound {
 			return fmt.Errorf("group %q uses %q as its pre-proxy; remove that dependency first", group, outbound)

@@ -558,6 +558,7 @@ export default {
       '确定要<b>删除</b>出站 "{outboundName}" 吗？注意，该操作是不可逆的。',
   },
   proxyGroup: {
+    activate: "切换到此组",
     pickTitle: "添加到代理分组",
     pickMessage: "选择要加入的代理分组。",
     group: "代理分组",

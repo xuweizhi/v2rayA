@@ -39,13 +39,14 @@
         <b-navbar-item tag="div">
           <OutboundGroupPanel
             :outbounds="outbounds"
-            :current-outbound="outboundName"
+            :current-outbound="activeOutbound"
             :is-mobile="isMobile"
             @select="outboundName = $event"
             @settings="handleClickOutboundSetting(null, $event)"
             @add-outbound="handleAddOutbound"
             @changed="handleGroupChanged"
-            @group-deleted="handleGroupDeleted"
+            @groups-updated="updateOutboundGroups"
+            @refresh-groups="refreshOutboundGroups"
           />
         </b-navbar-item>
       </template>
@@ -199,7 +200,7 @@
         ref="dashboardSummary"
         :traffic="traffic"
         :running-state="runningState"
-        :outbound="outboundName"
+        :outbound="activeOutbound"
         :novice-mode="noviceMode"
         :connected-count="connectedNodeCount"
         @traffic="handleClickTraffic"
@@ -270,6 +271,7 @@ export default {
         { code: "ru_RU", label: "Русский", flag: "ru" },
         { code: "pt_BR", label: "Português-Brasil", flag: "pt" },
       ],
+      activeOutbound: "proxy",
       outboundName: "proxy",
       outbounds: ["proxy"],
       outboundDropdownHover: {},
@@ -320,7 +322,7 @@ export default {
     connectedNodeCount() {
       const list = this.runningState.connectedServer;
       if (!Array.isArray(list)) return 0;
-      return list.filter((s) => (s.outbound || "proxy") === this.outboundName).length;
+      return list.filter((s) => (s.outbound || "proxy") === this.activeOutbound).length;
     },
     currentLangLabel() {
       const lang = this.langs.find((l) => l.flag === this.currentLocale);
@@ -338,6 +340,7 @@ export default {
     },
   },
   mounted() {
+    this._groupsRequest = 0;
     console.log("app created");
     this.initTheme();
     applyAppearanceSettings();
@@ -425,15 +428,7 @@ export default {
         localStorage["coreVersionErr"] = res.data.data.coreVersionErr || "";
       }
     });
-    this.$axios({
-      url: apiRoot + "/outbounds",
-    }).then((res) => {
-      if (res.data.code === "SUCCESS") {
-        this.outbounds = this.normalizeOutbounds(res.data.data.outbounds);
-      }
-    }).catch(() => {
-      // 静默处理认证错误（如 token 过期），避免触发 axios 401 拦截器弹出登录框
-    });
+    this.refreshOutboundGroups();
     this.connectWsMessage();
     this.loadUnreadNotices();
   },
@@ -509,6 +504,7 @@ export default {
         // not replayed, so if the connection was broken while Tun was setting up
         // routes the frontend might miss the running_state message and stay
         // stuck on "检测中" (Checking) forever.
+        this.refreshOutboundGroups();
         this.$nextTick(() => {
           if (this.$refs.nodeRef) {
             this.$refs.nodeRef.syncLatestNodeOverview();
@@ -550,6 +546,7 @@ export default {
           this.recordTraffic({ up: 0, down: 0 });
           this.$refs.nodeRef && this.$refs.nodeRef.notifyStopped(!!msg.body.networkPaused);
         } else {
+          this.refreshOutboundGroups();
           this.$refs.nodeRef && this.$refs.nodeRef.notifyRunning(!!msg.body.networkPaused);
         }
       }
@@ -576,7 +573,7 @@ export default {
       }
     },
     handleClickDiagnose() {
-      this.$buefy.modal.open({ parent: this, component: ModalDiagnose, hasModalCard: true, props: { initialOutbound: this.outboundName } });
+      this.$buefy.modal.open({ parent: this, component: ModalDiagnose, hasModalCard: true, props: { initialOutbound: this.activeOutbound } });
     },
     handleClickTraffic() {
       this.$buefy.modal.open({
@@ -596,6 +593,7 @@ export default {
       }
     },
     handleGroupChanged() {
+      this.refreshOutboundGroups();
       // Refresh node.vue's data after group membership change from the panel
       if (this.$refs.nodeRef && this.$refs.nodeRef.created) {
         this.$refs.nodeRef.$axios({ url: apiRoot + "/touch" }).then((res) => {
@@ -606,12 +604,25 @@ export default {
         }).catch(() => {});
       }
     },
-    handleGroupDeleted(newOutbounds) {
-      this.outbounds = this.normalizeOutbounds(newOutbounds);
-      // If deleted group was selected, fall back to proxy
-      if (!this.outbounds.includes(this.outboundName)) {
-        this.outboundName = "proxy";
+    async refreshOutboundGroups() {
+      const request = ++this._groupsRequest;
+      try {
+        const res = await this.$axios({ url: apiRoot + "/outbounds" });
+        if (request === this._groupsRequest && res.data.code === "SUCCESS") {
+          this.updateOutboundGroups(res.data.data);
+        }
+      } catch (err) {
+        console.debug("Unable to refresh proxy groups", err);
       }
+    },
+    updateOutboundGroups(data) {
+      ++this._groupsRequest;
+      const active = data.activeOutbound || "proxy";
+      this.outbounds = this.normalizeOutbounds(data.outbounds);
+      if (this.outboundName === this.activeOutbound || !this.outbounds.includes(this.outboundName)) {
+        this.outboundName = active;
+      }
+      this.activeOutbound = active;
     },
     normalizeOutbounds(outbounds) {
       const seen = new Set();
@@ -675,7 +686,7 @@ export default {
                   position: "is-top",
                   queue: false,
                 });
-                this.outbounds = this.normalizeOutbounds(res.data.data.outbounds);
+                this.updateOutboundGroups(res.data.data);
               } else {
                 this.$buefy.toast.open({
                   message: res.data.message,
@@ -713,7 +724,7 @@ export default {
               position: "is-top",
               queue: false,
             });
-            this.outbounds = this.normalizeOutbounds(res.data.data.outbounds);
+            this.updateOutboundGroups(res.data.data);
             if (this.outboundName === outbound) {
               this.outboundName = "proxy";
             }

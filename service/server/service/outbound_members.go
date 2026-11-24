@@ -253,13 +253,18 @@ func ApplyOutboundSetting(group string, setting configure.OutboundSetting) error
 			old[memberKey(group)] = previous
 		}
 	}
+	return applyOutboundState(next, old)
+}
+
+// The caller holds membershipMu across persistence, reload and recovery.
+func applyOutboundState(next, old map[string]any) error {
 	if err := db.SetState(next); err != nil {
 		return err
 	}
-	if v2ray.ProcessManager.Running() {
+	if v2ray.ProcessManager.Process() != nil {
 		if err := v2ray.UpdateV2RayConfig(); err != nil {
 			err = errors.Join(err, db.SetState(old))
-			if !v2ray.ProcessManager.Running() {
+			if v2ray.ProcessManager.Process() == nil {
 				err = errors.Join(err, v2ray.UpdateV2RayConfig())
 			}
 			return fmt.Errorf("reloading outbound settings: %w", err)

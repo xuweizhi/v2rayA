@@ -60,6 +60,15 @@
           <!-- Expanded: nodes in this group -->
           <div v-if="expandedGroup === outbound" class="ogp-nodes-inline" @click.stop>
             <div class="ogp-nodes-actions">
+              <b-button
+                v-if="outbound !== currentOutbound"
+                size="is-small"
+                type="is-primary"
+                icon-left="swap-horizontal"
+                :loading="switchingGroup === outbound"
+                :disabled="!!switchingGroup || !getGroupCount(outbound)"
+                @click.stop="activateGroup(outbound)"
+              >{{ $t("proxyGroup.activate") }}</b-button>
               <b-button size="is-small" icon-left="cog-outline" @click.stop="$emit('settings', outbound)">{{ $t('common.setting') }}</b-button>
               <b-button
                 size="is-small"
@@ -216,6 +225,7 @@ export default {
     return {
       menuOpen: false,
       expandedGroup: null,
+      switchingGroup: null,
       touchData: null,
       isCoreRunning: false,
       showPicker: false,
@@ -393,6 +403,7 @@ export default {
     toggleMenu() {
       this.menuOpen = !this.menuOpen;
       if (this.menuOpen) {
+        this.$emit("refresh-groups");
         this.fetchTouchData();
         this.expandedGroup = this.currentOutbound;
       }
@@ -405,6 +416,27 @@ export default {
     handleClickGroup(outbound) {
       this.$emit("select", outbound);
       this.expandedGroup = this.expandedGroup === outbound ? null : outbound;
+    },
+    async activateGroup(outbound) {
+      if (this.switchingGroup) return;
+      this.switchingGroup = outbound;
+      try {
+        const res = await this.requestSuccess({
+          url: apiRoot + "/activeOutbound",
+          method: "put",
+          data: { outbound },
+        }, this.$t("common.fail"));
+        this.$emit("groups-updated", res.data.data);
+        this.menuOpen = false;
+      } catch (err) {
+        this.$buefy.toast.open({
+          message: err?.response?.data?.message || err.message || this.$t("common.fail"),
+          type: "is-warning",
+        });
+        this.$emit("refresh-groups");
+      } finally {
+        this.switchingGroup = null;
+      }
     },
     openNodePicker(outbound) {
       this.pickerGroup = outbound;
@@ -547,7 +579,7 @@ export default {
           if (this.expandedGroup === outbound) {
             this.expandedGroup = null;
           }
-          this.$emit("group-deleted", res.data.data.outbounds);
+          this.$emit("groups-updated", res.data.data);
           this.$buefy.toast.open({
             message: this.$t("common.success"),
             type: "is-success",
@@ -686,6 +718,7 @@ export default {
 
 .ogp-nodes-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
   padding: 6px 10px;

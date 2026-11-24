@@ -566,6 +566,7 @@ export default {
       'Be sure to <b>DELETE</b> the outbound "{outboundName}"? It is not reversible.',
   },
   proxyGroup: {
+    activate: "Use this group",
     pickTitle: "Add to Proxy Group",
     pickMessage: "Choose the proxy group this node should join.",
     group: "Proxy Group",

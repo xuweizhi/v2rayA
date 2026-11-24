@@ -52,10 +52,34 @@ func Disconnect(which configure.Which, clearOutbound bool) (err error) {
 	return disconnect(which, clearOutbound)
 }
 
+// ActiveOutbound waits for any in-progress switch (including rollback).
+func ActiveOutbound() string {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
+	return configure.GetActiveOutbound()
+}
+
+func SwitchActiveOutbound(group string) error {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
+	if !outboundExists(group) || configure.GetConnectedServersByOutbound(group).Len() == 0 {
+		return fmt.Errorf("select at least one node in group %q before switching to it", group)
+	}
+	previous := configure.GetPreferredOutbound()
+	if previous == group {
+		return nil
+	}
+	const key = "system:activeOutbound"
+	return applyOutboundState(map[string]any{key: group}, map[string]any{key: previous})
+}
+
 // DeleteOutbound serializes removal with timer-driven membership refreshes.
 func DeleteOutbound(group string) error {
 	membershipMu.Lock()
 	defer membershipMu.Unlock()
+	if err := configure.CheckOutboundDependencies(group); err != nil {
+		return err
+	}
 	if configure.GetConnectedServersByOutbound(group).Len() > 0 {
 		if err := disconnect(configure.Which{Outbound: group}, true); err != nil {
 			return err

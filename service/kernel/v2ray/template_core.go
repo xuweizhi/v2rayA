@@ -43,6 +43,7 @@ type Template struct {
 	Setting           *configure.Setting `json:"-"`
 	ProbePorts        map[string]int     `json:"-"`
 	ProbePaths        map[string]string  `json:"-"`
+	defaultProxyTag   string
 	internalRoutes    []coreObj.RoutingRule
 	probeReservations []net.Listener
 	serverInfoMap     map[string]*serverInfo `json:"-"` // outbound tag -> server info
@@ -107,6 +108,11 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 		return nil, err
 	}
 	t.OutboundTags = outboundTags
+	t.defaultProxyTag = configure.GetActiveOutbound()
+	if len(serverData.OutboundName2ServerObjs[t.defaultProxyTag]) == 0 {
+		// A refresh can empty the selected group. Never send its traffic via another exit.
+		t.defaultProxyTag = "block"
+	}
 	if err = t.applyPreProxies(serverData); err != nil {
 		return nil, err
 	}
@@ -173,7 +179,7 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 	t.updatePrivateRouting()
 
 	// add spare tire outbound routing. Fix: https://github.com/v2rayA/v2rayA/issues/447
-	t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{Type: "field", Port: "0-65535", OutboundTag: "proxy"})
+	t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{Type: "field", Port: "0-65535", OutboundTag: t.defaultProxyTag})
 
 	// Internal routes must precede user rules and node-address direct rules.
 	t.Routing.Rules = append(t.internalRoutes, t.Routing.Rules...)

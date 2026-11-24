@@ -14,7 +14,8 @@ import (
 func GetOutbounds(ctx *gin.Context) {
 	outbounds := configure.GetOutbounds()
 	common.ResponseSuccess(ctx, gin.H{
-		"outbounds": outbounds,
+		"outbounds":      outbounds,
+		"activeOutbound": service.ActiveOutbound(),
 	})
 }
 
@@ -70,6 +71,31 @@ func PutOutbound(ctx *gin.Context) {
 		return
 	}
 	common.ResponseSuccess(ctx, nil)
+}
+
+func PutActiveOutbound(ctx *gin.Context) {
+	updatingMu.Lock()
+	if updating {
+		updatingMu.Unlock()
+		common.ResponseError(ctx, processingErr)
+		return
+	}
+	updating = true
+	updatingMu.Unlock()
+	defer func() { updatingMu.Lock(); updating = false; updatingMu.Unlock() }()
+
+	var data struct {
+		Outbound string `json:"outbound" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&data); err != nil {
+		common.ResponseError(ctx, logError("bad request"))
+		return
+	}
+	if err := service.SwitchActiveOutbound(data.Outbound); err != nil {
+		common.ResponseError(ctx, logError(err))
+		return
+	}
+	GetOutbounds(ctx)
 }
 
 func PostOutboundMemberPreview(ctx *gin.Context) {
