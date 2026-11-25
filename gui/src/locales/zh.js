@@ -90,6 +90,7 @@ export default {
     timeLastUpdate: "上次更新时间",
     numberServers: "节点数",
     subscription: "订阅",
+    autoSelect: "订阅自动更新后自动连接至订阅中的新服务器",
     decryptPassword: "AES 解密密码",
     credentialSaved: "已保存，留空即可保留。",
     clearAgeCredential: "清除已保存的 AGE 凭据",
@@ -137,6 +138,7 @@ export default {
     time: "时间",
     restore: "恢复",
     restoreConfirm: "将用此备份替换数据库并重启服务，当前数据库会保留为安全副本。是否继续？",
+    restartRequired: "备份已准备好，请重启 v2rayA 服务以应用恢复。",
     restoring: "正在恢复…服务即将重启",
     webdavUrl: "WebDAV 地址",
     webdavUsername: "用户名",
@@ -168,6 +170,7 @@ export default {
     openLink: "打开链接",
   },
   routingRules: {
+    ips: "IP 地址和网段（每行一个）",
     title: "路由规则",
     note: "自定义规则优先于自动生成的规则。出站可选 直连/拦截/代理 或任意已连接节点/分组。",
     domains: "域名（每行一个）",
@@ -202,6 +205,7 @@ export default {
     note: "统计 v2rayA core 处理的流量，每秒更新一次。",
   },
   operations: {
+    qrTooLong: "链接过长，无法生成二维码。请使用复制链接。",
     tproxyWhiteIpGroups: "直通白名单IP组",
     name: "操作",
     update: "更新",
@@ -414,6 +418,8 @@ export default {
     domainsPlaceholder: "每行一个，如 geosite:cn\n留空表示兜底 DNS",
     addRule: "添加规则",
     resetDefault: "恢复默认",
+    missingServer: "请填写每条规则的 DNS 服务器。",
+    autoSetupPreview: "已选出最快的服务器，保存后生效。",
     errNoRules: "至少需要一条 DNS 规则",
     autoSetup: "一键测速择优",
     autoSetupResult: "择优完成",
@@ -436,6 +442,8 @@ export default {
     ],
   },
   configureServer: {
+    nodeLink: "节点链接",
+    unsupportedLink: "节点编辑器暂不支持此链接。",
     title: "配置节点 | 节点",
     servername: "节点名称",
     port: "端口号",
@@ -622,6 +630,7 @@ export default {
     formPlaceholder: "courier.push.apple.com\nMijia Cloud\ndlg.io.mi.com"
   },
   gfwList: {
+    confirmRemoval: "确认删除本地 GFWList？",
     title: "更新GFWList",
     messages: [
       "如果当前环境访问Github困难，你可以从此处（https://github.com/v2rayA/dist-v2ray-rules-dat）手动下载最新GFWList（geosite.dat），上传到你的服务器，然后填写你的服务器链接进行下载",

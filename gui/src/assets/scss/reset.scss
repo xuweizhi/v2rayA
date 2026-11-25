@@ -99,9 +99,16 @@
   --node-highlight-disconnected: rgba(239, 68, 68, 0.16);
 }
 
-html,
-body {
+html {
   background-color: var(--va-bg);
+  color: var(--va-text);
+  font-family: var(--va-font-family, system-ui, "Microsoft YaHei UI", "Source Han Sans CN", "Twemoji Mozilla", sans-serif);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: transparent;
   color: var(--va-text);
   font-family: var(--va-font-family, system-ui, "Microsoft YaHei UI", "Source Han Sans CN", "Twemoji Mozilla", sans-serif);
   -webkit-font-smoothing: antialiased;

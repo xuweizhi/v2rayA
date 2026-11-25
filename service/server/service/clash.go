@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -139,6 +140,8 @@ func getStringList(m map[string]interface{}, key string) []string {
 	}
 	var out []string
 	switch t := v.(type) {
+	case []string:
+		return append([]string(nil), t...)
 	case []interface{}:
 		for _, e := range t {
 			if s, ok := e.(string); ok {
@@ -146,9 +149,90 @@ func getStringList(m map[string]interface{}, key string) []string {
 			}
 		}
 	case string:
-		out = strings.Split(t, ",")
+		if t != "" {
+			out = strings.Split(t, ",")
+		}
 	}
 	return out
+}
+
+func firstNonEmptyString(m map[string]interface{}, key string) string {
+	if s := getString(m, key); s != "" {
+		return s
+	}
+	for _, s := range getStringList(m, key) {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func applyClashTransportOpts(obj *serverObj.V2Ray, p map[string]interface{}) {
+	switch obj.Net {
+	case "ws":
+		if ws := getMap(p, "ws-opts"); ws != nil {
+			obj.Path = getString(ws, "path")
+			if headers := getMap(ws, "headers"); headers != nil {
+				obj.Host = getString(headers, "Host")
+				if obj.Host == "" {
+					obj.Host = getString(headers, "host")
+				}
+			}
+		}
+	case "grpc":
+		if grpc := getMap(p, "grpc-opts"); grpc != nil {
+			obj.Path = getString(grpc, "grpc-service-name")
+		}
+	case "h2":
+		if h2 := getMap(p, "h2-opts"); h2 != nil {
+			obj.Path = firstNonEmptyString(h2, "path")
+			if hosts := getStringList(h2, "host"); len(hosts) > 0 {
+				obj.Host = strings.Join(hosts, ",")
+			}
+		}
+	case "http":
+		obj.Net = "h2"
+		if httpOpts := getMap(p, "http-opts"); httpOpts != nil {
+			obj.Path = firstNonEmptyString(httpOpts, "path")
+			if headers := getMap(httpOpts, "headers"); headers != nil {
+				if hosts := getStringList(headers, "Host"); len(hosts) > 0 {
+					obj.Host = strings.Join(hosts, ",")
+				} else if hosts := getStringList(headers, "host"); len(hosts) > 0 {
+					obj.Host = strings.Join(hosts, ",")
+				}
+			}
+			if obj.Host == "" {
+				if hosts := getStringList(httpOpts, "host"); len(hosts) > 0 {
+					obj.Host = strings.Join(hosts, ",")
+				}
+			}
+		}
+	}
+}
+
+func formatClashSSPluginOpts(p map[string]interface{}) string {
+	if optsMap := getMap(p, "plugin-opts"); len(optsMap) > 0 {
+		keys := make([]string, 0, len(optsMap))
+		for k := range optsMap {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			if k == "tls" {
+				if getBool(optsMap, k) {
+					parts = append(parts, "tls")
+				}
+				continue
+			}
+			if val := getString(optsMap, k); val != "" {
+				parts = append(parts, k+"="+val)
+			}
+		}
+		return strings.Join(parts, ";")
+	}
+	return getString(p, "plugin-opts")
 }
 
 // ---- proxy converters ----
@@ -294,30 +378,7 @@ func clashVlessToServerObj(p map[string]interface{}) (serverObj.ServerObj, error
 	if alpn := getStringList(p, "alpn"); len(alpn) > 0 {
 		obj.Alpn = strings.Join(alpn, ",")
 	}
-	switch obj.Net {
-	case "ws":
-		if ws := getMap(p, "ws-opts"); ws != nil {
-			obj.Path = getString(ws, "path")
-			if headers := getMap(ws, "headers"); headers != nil {
-				obj.Host = getString(headers, "Host")
-			}
-		}
-	case "grpc":
-		if grpc := getMap(p, "grpc-opts"); grpc != nil {
-			obj.Path = getString(grpc, "grpc-service-name")
-		}
-	case "h2":
-		if h2 := getMap(p, "h2-opts"); h2 != nil {
-			obj.Path = getString(h2, "path")
-			obj.Host = getString(h2, "host")
-		}
-	case "http":
-		obj.Net = "h2"
-		if http := getMap(p, "http-opts"); http != nil {
-			obj.Path = getString(http, "path")
-			obj.Host = getString(http, "host")
-		}
-	}
+	applyClashTransportOpts(obj, p)
 	return obj, nil
 }
 
@@ -357,30 +418,7 @@ func clashVmessToServerObj(p map[string]interface{}) (serverObj.ServerObj, error
 	if alpn := getStringList(p, "alpn"); len(alpn) > 0 {
 		obj.Alpn = strings.Join(alpn, ",")
 	}
-	switch obj.Net {
-	case "ws":
-		if ws := getMap(p, "ws-opts"); ws != nil {
-			obj.Path = getString(ws, "path")
-			if headers := getMap(ws, "headers"); headers != nil {
-				obj.Host = getString(headers, "Host")
-			}
-		}
-	case "grpc":
-		if grpc := getMap(p, "grpc-opts"); grpc != nil {
-			obj.Path = getString(grpc, "grpc-service-name")
-		}
-	case "h2":
-		if h2 := getMap(p, "h2-opts"); h2 != nil {
-			obj.Path = getString(h2, "path")
-			obj.Host = getString(h2, "host")
-		}
-	case "http":
-		obj.Net = "h2"
-		if http := getMap(p, "http-opts"); http != nil {
-			obj.Path = getString(http, "path")
-			obj.Host = getString(http, "host")
-		}
-	}
+	applyClashTransportOpts(obj, p)
 	return obj, nil
 }
 
@@ -399,8 +437,10 @@ func clashSSToServerObj(p map[string]interface{}) (serverObj.ServerObj, error) {
 	}
 	if plugin := getString(p, "plugin"); plugin != "" {
 		v := plugin
-		if opts := getString(p, "plugin-opts"); opts != "" {
+		if opts := formatClashSSPluginOpts(p); opts != "" {
 			v += ";" + opts
+		} else {
+			v += ";"
 		}
 		u.RawQuery = "plugin=" + url.QueryEscape(v)
 	}

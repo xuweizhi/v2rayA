@@ -1,6 +1,7 @@
 package v2ray
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -36,18 +37,94 @@ func (t *Template) checkDuplicatedTags() error {
 	return nil
 }
 
+type dnsModuleListenerSpec struct {
+	Listener struct {
+		ListenAddr       string   `json:"listen_addr"`
+		ExtraListenAddrs []string `json:"extra_listen_addrs"`
+	} `json:"listener"`
+}
+
+func parseListenSocketsConflict(hostA, hostB string) bool {
+	if hostA == "" {
+		hostA = "0.0.0.0"
+	}
+	if hostB == "" {
+		hostB = "0.0.0.0"
+	}
+	ipA := net.ParseIP(hostA)
+	ipB := net.ParseIP(hostB)
+	if ipA == nil || ipB == nil {
+		return strings.EqualFold(hostA, hostB)
+	}
+	if ipA.Equal(ipB) {
+		return true
+	}
+	isV4A := ipA.To4() != nil
+	isV4B := ipB.To4() != nil
+	isWildV4A := isV4A && ipA.IsUnspecified()
+	isWildV4B := isV4B && ipB.IsUnspecified()
+	isWildV6A := !isV4A && ipA.IsUnspecified()
+	isWildV6B := !isV4B && ipB.IsUnspecified()
+
+	// Dual-stack wildcard "::" conflicts with any IPv4 or IPv6 listener on the same port.
+	if isWildV6A || isWildV6B {
+		return true
+	}
+	// IPv4 wildcard "0.0.0.0" conflicts with any IPv4 listener on the same port.
+	if (isWildV4A && isV4B) || (isWildV4B && isV4A) {
+		return true
+	}
+	return false
+}
+
 func (t *Template) checkDuplicatedInboundSockets() error {
-	inboundSocketSet := make(map[string]interface{})
-	for _, in := range t.Inbounds {
-		if in.Listen == "" {
-			// https://www.v2fly.org/config/inbounds.html#inboundobject
-			in.Listen = "0.0.0.0"
+	byPort := make(map[int][]string)
+	addSocket := func(host string, port int) error {
+		if port <= 0 {
+			return nil
 		}
-		socket := net.JoinHostPort(in.Listen, strconv.Itoa(in.Port))
-		if _, exists := inboundSocketSet[socket]; exists {
-			return fmt.Errorf("duplicated inbound listening address: %v", socket)
-		} else {
-			inboundSocketSet[socket] = nil
+		if host == "" {
+			// https://www.v2fly.org/config/inbounds.html#inboundobject
+			host = "0.0.0.0"
+		}
+		for _, existing := range byPort[port] {
+			if parseListenSocketsConflict(existing, host) {
+				return fmt.Errorf("duplicated inbound listening address: %v (conflicts with %v)",
+					net.JoinHostPort(host, strconv.Itoa(port)),
+					net.JoinHostPort(existing, strconv.Itoa(port)))
+			}
+		}
+		byPort[port] = append(byPort[port], host)
+		return nil
+	}
+
+	for _, in := range t.Inbounds {
+		if err := addSocket(in.Listen, in.Port); err != nil {
+			return err
+		}
+	}
+
+	if len(t.DnsModuleConfig) > 0 {
+		var spec dnsModuleListenerSpec
+		if err := json.Unmarshal(t.DnsModuleConfig, &spec); err == nil {
+			var dnsAddrs []string
+			if spec.Listener.ListenAddr != "" {
+				dnsAddrs = append(dnsAddrs, spec.Listener.ListenAddr)
+			}
+			dnsAddrs = append(dnsAddrs, spec.Listener.ExtraListenAddrs...)
+			for _, addr := range dnsAddrs {
+				host, portStr, err := net.SplitHostPort(addr)
+				if err != nil {
+					continue
+				}
+				port, err := strconv.Atoi(portStr)
+				if err != nil || port <= 0 {
+					continue
+				}
+				if err := addSocket(host, port); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
@@ -114,6 +191,16 @@ func (t *Template) CheckInboundPortsOccupied() (err error) {
 			}
 		default:
 			st = append(st, strconv.Itoa(in.Port)+":tcp,udp")
+		}
+	}
+	if len(t.DnsModuleConfig) > 0 {
+		var spec dnsModuleListenerSpec
+		if err := json.Unmarshal(t.DnsModuleConfig, &spec); err == nil && spec.Listener.ListenAddr != "" {
+			if _, portStr, splitErr := net.SplitHostPort(spec.Listener.ListenAddr); splitErr == nil {
+				if port, convErr := strconv.Atoi(portStr); convErr == nil && port > 0 {
+					st = append(st, portStr+":tcp,udp")
+				}
+			}
 		}
 	}
 	return PortOccupied(st)

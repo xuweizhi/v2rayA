@@ -578,8 +578,10 @@ func updateSubscription(index int, disconnectIfNecessary bool, scheduledID int64
 		name2Index[info.GetName()] = i
 	}
 	oldNameCount := make(map[string]int)
-	for link := range connectedVmessInfo2CssIndex {
-		oldNameCount[link2Raw[link].ServerObj.GetName()]++
+	for _, server := range oldRaw.Servers {
+		if server.ServerObj != nil {
+			oldNameCount[server.ServerObj.GetName()]++
+		}
 	}
 	for link, cssIndexes := range connectedVmessInfo2CssIndex {
 		name := link2Raw[link].ServerObj.GetName()
@@ -653,7 +655,11 @@ func updateSubscription(index int, disconnectIfNecessary bool, scheduledID int64
 	subscriptions[index].Extra.Upload = result.traffic.Upload
 	subscriptions[index].Extra.Download = result.traffic.Download
 	subscriptions[index].Extra.Total = result.traffic.Total
-	subscriptions[index].Extra.Expire = result.traffic.Expire.Unix()
+	if !result.traffic.Expire.IsZero() {
+		subscriptions[index].Extra.Expire = result.traffic.Expire.Unix()
+	} else {
+		subscriptions[index].Extra.Expire = 0
+	}
 	return publishSubscriptionMembers(index, &oldRaw, &subscriptions[index], oldStates, nextStates, connectedServerChanged || dnsChanged, startIfStopped)
 }
 
@@ -696,6 +702,11 @@ func ModifySubscriptionRemark(subscription touch.Subscription) error {
 	if err := subscription.Extra.Validate(); err != nil {
 		return err
 	}
+	addr := strings.TrimSpace(subscription.Address)
+	u, err := url.Parse(addr)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return fmt.Errorf("subscription address must be a valid HTTP or HTTPS URL")
+	}
 	index := subscription.ID - 1
 	previous := configure.GetSubscription(index)
 	if previous == nil {
@@ -703,8 +714,13 @@ func ModifySubscriptionRemark(subscription touch.Subscription) error {
 	}
 	updated := *previous
 
-	// Provider data comes from the downloaded profile, never from the editor.
+	// Provider and telemetry data come from subscription downloads, never from the editor.
 	subscription.Extra.ProviderNodeDNS = previous.Extra.ProviderNodeDNS
+	subscription.Extra.LastUpdateTime = previous.Extra.LastUpdateTime
+	subscription.Extra.Upload = previous.Extra.Upload
+	subscription.Extra.Download = previous.Extra.Download
+	subscription.Extra.Total = previous.Extra.Total
+	subscription.Extra.Expire = previous.Extra.Expire
 	// The overview omits AGE identities. An ordinary metadata edit must keep
 	// the saved credential; an explicit empty value clears it.
 	subscription.Extra.AgePassword = previous.Extra.AgePassword
@@ -714,7 +730,7 @@ func ModifySubscriptionRemark(subscription touch.Subscription) error {
 	reload := !slices.Equal(previous.Extra.EffectiveNodeDNS(), subscription.Extra.EffectiveNodeDNS())
 	updated.Extra = subscription.Extra
 	updated.Remarks = subscription.Remarks
-	updated.Address = subscription.Address
+	updated.Address = addr
 	updated.AutoSelect = subscription.AutoSelect
 	updated.DecryptPassword = subscription.DecryptPassword
 
@@ -883,6 +899,9 @@ func PreviewSubscriptionFilter(id int, extra configure.SubscriptionExtra) (int, 
 		return 0, 0, fmt.Errorf("subscription not found")
 	}
 	raw := configure.GetSubscription(id - 1)
+	if raw == nil {
+		return 0, 0, fmt.Errorf("subscription not found")
+	}
 	var nodes []serverObj.ServerObj
 	for _, node := range raw.Servers {
 		if node.ServerObj != nil {

@@ -147,6 +147,7 @@ html[data-ui-style="soft"] {
 /* --------------------------------------------------------------------------
    STYLE B — Soft / Warm Minimalist (Dark)
    -------------------------------------------------------------------------- */
+html[data-ui-style="soft"].theme-dark,
 html[data-ui-style="soft"] body.theme-dark {
   --va-bg: #171614;
   --va-surface: #201e1b;
@@ -312,6 +313,7 @@ html[data-ui-style="cyber"] {
 /* --------------------------------------------------------------------------
    STYLE C — Cyber / Geek Neon (Dark — Obsidian Void + Neon Cyan / Emerald)
    -------------------------------------------------------------------------- */
+html[data-ui-style="cyber"].theme-dark,
 html[data-ui-style="cyber"] body.theme-dark {
   --va-bg: #070910;
   --va-surface: #0d1220;
@@ -403,10 +405,14 @@ html[data-ui-style="cyber"] body.theme-dark {
     rgba(251, 191, 36, 0.18) 0%,
     transparent 75%
   );
+}
 
-  background-image: radial-gradient(rgba(56, 189, 248, 0.11) 1px, transparent 1px);
-  background-size: 22px 22px;
-  background-position: -1px -1px;
+html[data-ui-style="cyber"].theme-dark {
+  body {
+    background-image: radial-gradient(rgba(56, 189, 248, 0.11) 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-position: -1px -1px;
+  }
 
   .app-navbar.navbar.is-light {
     border-bottom-color: rgba(56, 189, 248, 0.22);

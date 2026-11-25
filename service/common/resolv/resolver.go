@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/rand"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -24,8 +25,11 @@ var dnsServers = []struct {
 }
 
 func init() {
-	rand.Seed(time.Now().UnixNano())
 	dialer := net.Dialer{Timeout: 1000 * time.Millisecond}
+	fallbackDialer := net.Dialer{
+		Timeout: 1000 * time.Millisecond,
+		Control: fallbackSocketControl,
+	}
 	defaultResolver = &net.Resolver{
 		PreferGo:     true,
 		StrictErrors: false,
@@ -33,7 +37,7 @@ func init() {
 			server := dnsServers[rand.Intn(len(dnsServers))]
 			address = server.addr
 			network = server.network
-			return dialer.DialContext(ctx, network, address)
+			return fallbackDialer.DialContext(ctx, network, address)
 		},
 	}
 	systemResolver = &net.Resolver{
@@ -45,19 +49,28 @@ func init() {
 	}
 }
 
+func isLocalhostName(host string) bool {
+	h := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	return h == "localhost" || strings.HasSuffix(h, ".localhost")
+}
+
+func isPoisonedAnswer(host string, addrs []string) bool {
+	if isLocalhostName(host) {
+		return false
+	}
+	for _, addr := range addrs {
+		if ip := net.ParseIP(addr); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+			return true
+		}
+	}
+	return false
+}
+
 func LookupHost(host string) (addrs []string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	addrs, err = systemResolver.LookupHost(ctx, host)
-	lookupAgain := len(addrs) == 0 || err != nil
-	if !lookupAgain {
-		for _, addr := range addrs {
-			if ip := net.ParseIP(addr); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
-				lookupAgain = true
-				break
-			}
-		}
-	}
+	lookupAgain := len(addrs) == 0 || err != nil || isPoisonedAnswer(host, addrs)
 	if lookupAgain {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()

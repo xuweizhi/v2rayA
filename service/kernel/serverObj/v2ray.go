@@ -129,42 +129,55 @@ func NewV2Ray(link string) (ServerObj, error) {
 	return nil, ErrInvalidParameter
 }
 
+func v2rayNetwork(name string) string {
+	switch network := strings.ToLower(name); network {
+	case "", "raw":
+		return "tcp"
+	case "websocket":
+		return "ws"
+	case "splithttp":
+		return "xhttp"
+	case "mkcp":
+		return "kcp"
+	default:
+		return network
+	}
+}
+
 func ParseVlessURL(vless string) (data *V2Ray, err error) {
 	u, err := url.Parse(vless)
 	if err != nil {
 		return nil, err
 	}
 	data = &V2Ray{
-		Ps:          u.Fragment,
-		Add:         u.Hostname(),
-		Port:        u.Port(),
-		ID:          u.User.String(),
-		Aid:         u.Query().Get("aid"),
-		Net:         u.Query().Get("type"),
-		Type:        u.Query().Get("headerType"),
-		Host:        u.Query().Get("host"),
-		SNI:         u.Query().Get("sni"),
-		Path:        u.Query().Get("path"),
-		TLS:         u.Query().Get("security"),
-		Fingerprint: u.Query().Get("fp"),
-		PublicKey:   u.Query().Get("pbk"),
-		ShortId:     u.Query().Get("sid"),
-		SpiderX:     u.Query().Get("spx"),
-		Flow:        u.Query().Get("flow"),
-		Encryption:  u.Query().Get("encryption"),
-		Alpn:        u.Query().Get("alpn"),
-		Mux:         u.Query().Get("mux"),
-		BrutalUp:    u.Query().Get("brutalUp"),
-		BrutalDown:  u.Query().Get("brutalDown"),
-		TLSFragment: u.Query().Get("tlsfragment"),
-		TLSTricks:   u.Query().Get("tls-tricks"), PinnedPeerCertSha256: u.Query().Get("pinnedPeerCertSha256"),
+		Ps:                   u.Fragment,
+		Add:                  u.Hostname(),
+		Port:                 u.Port(),
+		ID:                   u.User.Username(),
+		Aid:                  u.Query().Get("aid"),
+		Net:                  v2rayNetwork(u.Query().Get("type")),
+		Type:                 u.Query().Get("headerType"),
+		Host:                 u.Query().Get("host"),
+		SNI:                  u.Query().Get("sni"),
+		Path:                 u.Query().Get("path"),
+		TLS:                  u.Query().Get("security"),
+		Fingerprint:          u.Query().Get("fp"),
+		PublicKey:            u.Query().Get("pbk"),
+		ShortId:              u.Query().Get("sid"),
+		SpiderX:              u.Query().Get("spx"),
+		Flow:                 u.Query().Get("flow"),
+		Encryption:           u.Query().Get("encryption"),
+		Alpn:                 u.Query().Get("alpn"),
+		Mux:                  u.Query().Get("mux"),
+		BrutalUp:             u.Query().Get("brutalUp"),
+		BrutalDown:           u.Query().Get("brutalDown"),
+		TLSFragment:          u.Query().Get("tlsfragment"),
+		TLSTricks:            u.Query().Get("tls-tricks"),
+		PinnedPeerCertSha256: u.Query().Get("pinnedPeerCertSha256"),
 		VerifyPeerCertByName: u.Query().Get("verifyPeerCertByName"),
 		Key:                  u.Query().Get("key"),
 		V:                    vless,
 		Protocol:             "vless",
-	}
-	if data.Net == "" {
-		data.Net = "tcp"
 	}
 	if data.Net == "grpc" {
 		data.Path = u.Query().Get("serviceName")
@@ -172,13 +185,10 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 	if data.Type == "" {
 		data.Type = "none"
 	}
-	if data.Host == "" {
-		data.Host = u.Query().Get("host")
-	}
 	if data.TLS == "" {
 		data.TLS = "none"
 	}
-	if data.Net == "mkcp" || data.Net == "kcp" {
+	if data.Net == "kcp" {
 		data.Path = u.Query().Get("seed")
 	}
 	if data.Net == "httpupgrade" {
@@ -188,11 +198,18 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 	// Parse the combined brutal=up,down form when the dedicated keys are absent.
 	if data.BrutalUp == "" && data.BrutalDown == "" {
 		if brutal := u.Query().Get("brutal"); brutal != "" {
-			parts := strings.FieldsFunc(brutal, func(r rune) bool { return r == ',' || r == ':' })
+			var parts []string
+			if strings.Contains(brutal, ",") {
+				parts = strings.SplitN(brutal, ",", 2)
+			} else if strings.Contains(brutal, ":") {
+				parts = strings.SplitN(brutal, ":", 2)
+			} else {
+				parts = []string{brutal}
+			}
 			if len(parts) >= 2 {
-				data.BrutalUp, data.BrutalDown = parts[0], parts[1]
+				data.BrutalUp, data.BrutalDown = strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 			} else if len(parts) == 1 {
-				data.BrutalUp = parts[0]
+				data.BrutalUp = strings.TrimSpace(parts[0])
 			}
 		}
 	}
@@ -201,6 +218,9 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 	}
 	if data.Net == "xhttp" {
 		data.XHTTPMode = u.Query().Get("xhttpMode")
+		if data.XHTTPMode == "" {
+			data.XHTTPMode = u.Query().Get("mode")
+		}
 		if data.XHTTPMode == "" {
 			data.XHTTPMode = "auto"
 		}
@@ -240,6 +260,9 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 }
 
 func ParseVmessURL(vmess string) (data *V2Ray, err error) {
+	if !strings.HasPrefix(vmess, "vmess://") {
+		return nil, ErrInvalidParameter
+	}
 	var info V2Ray
 	// perform base64 decoding and unmarshal to VmessInfo
 	raw, err := common.Base64StdDecode(vmess[8:])
@@ -253,8 +276,11 @@ func ParseVmessURL(vmess string) (data *V2Ray, err error) {
 		if err != nil {
 			return
 		}
-		re := regexp.MustCompile(`.*:(.+)@(.+):(\d+)`)
-		s := strings.Split(vmess[8:], "?")[0]
+		re := regexp.MustCompile(`^([^:]*):(.+)@(.+):(\d+)$`)
+		s := vmess[8:]
+		if idx := strings.IndexAny(s, "?#"); idx >= 0 {
+			s = s[:idx]
+		}
 		s, err = common.Base64StdDecode(s)
 		if err != nil {
 			s, _ = common.Base64URLDecode(s)
@@ -268,6 +294,9 @@ func ParseVmessURL(vmess string) (data *V2Ray, err error) {
 		ps := q.Get("remarks")
 		if ps == "" {
 			ps = q.Get("remark")
+		}
+		if ps == "" {
+			ps = u.Fragment
 		}
 		obfs := q.Get("obfs")
 		obfsParam := q.Get("obfsParam")
@@ -287,11 +316,15 @@ func ParseVmessURL(vmess string) (data *V2Ray, err error) {
 		if security == "" {
 			security = q.Get("security")
 		}
+		if security == "" {
+			security = subMatch[1]
+		}
 		sni := q.Get("sni")
+		add := strings.TrimPrefix(strings.TrimSuffix(subMatch[3], "]"), "[")
 		info = V2Ray{
-			ID:       subMatch[1],
-			Add:      subMatch[2],
-			Port:     subMatch[3],
+			ID:       subMatch[2],
+			Add:      add,
+			Port:     subMatch[4],
 			Ps:       ps,
 			Host:     obfsParam,
 			Path:     path,
@@ -300,9 +333,6 @@ func ParseVmessURL(vmess string) (data *V2Ray, err error) {
 			Aid:      aid,
 			Security: security,
 			TLS:      map[string]string{"1": "tls"}[q.Get("tls")],
-		}
-		if info.Net == "websocket" {
-			info.Net = "ws"
 		}
 	} else {
 		// fuzzily handle legacy allowInsecure (ignore for backward compatibility)
@@ -333,6 +363,7 @@ func ParseVmessURL(vmess string) (data *V2Ray, err error) {
 		info.Aid = "0"
 	}
 	info.Protocol = "vmess"
+	info.Net = v2rayNetwork(info.Net)
 	return &info, nil
 }
 
@@ -375,6 +406,22 @@ func normalizeVmessFields(m map[string]interface{}) {
 	coerceStringField("permitWithoutStream")
 }
 
+// Current Xray represents the legacy KCP checksum/encryption and packet header as UDP masks.
+func setLegacyKCP(stream *coreObj.StreamSettings, header, seed string) {
+	stream.Network = "mkcp"
+	stream.KcpSettings = &coreObj.KcpSettings{Mtu: 1350, Tti: 50, UplinkCapacity: 12, DownlinkCapacity: 100}
+	encoding, _ := jsoniter.Marshal(map[string]string{"value": seed})
+	masks := []coreObj.UdpMask{{Type: "mkcp-legacy", Settings: encoding}}
+	if header != "" && header != "none" {
+		if header == "wechat-video" {
+			header = "wechat"
+		}
+		obfuscation, _ := jsoniter.Marshal(map[string]string{"header": header})
+		masks = append(masks, coreObj.UdpMask{Type: "mkcp-legacy", Settings: obfuscation})
+	}
+	stream.FinalMask = &coreObj.FinalMask{Udp: masks}
+}
+
 func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 	core := coreObj.OutboundObject{
 		Tag:      info.Tag,
@@ -390,7 +437,7 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 		if v.BrutalUp != "" || v.BrutalDown != "" {
 			log.Warn("node %q: brutal congestion control (%v,%v) is not supported by the core yet, ignoring", v.Ps, v.BrutalUp, v.BrutalDown)
 		}
-		network := v.Net
+		network := v2rayNetwork(v.Net)
 		if l := len([]byte(id)); l < 32 || l > 36 {
 			id = common.StringToUUID5(id)
 		}
@@ -456,7 +503,7 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 		}
 		// 根据传输协议(network)修改streamSettings
 		//TODO: QUIC
-		switch strings.ToLower(v.Net) {
+		switch network {
 		case "grpc":
 			if v.Path == "" {
 				v.Path = "GunService"
@@ -512,20 +559,8 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 				}
 			}
 			core.StreamSettings.WsSettings = &wsSettings
-		case "mkcp", "kcp":
-			core.StreamSettings.KcpSettings = &coreObj.KcpSettings{
-				Mtu:              1350,
-				Tti:              50,
-				UplinkCapacity:   12,
-				DownlinkCapacity: 100,
-				Congestion:       false,
-				ReadBufferSize:   2,
-				WriteBufferSize:  2,
-				Header: coreObj.KcpHeader{
-					Type: v.Type,
-				},
-				Seed: v.Path,
-			}
+		case "kcp":
+			setLegacyKCP(core.StreamSettings, v.Type, v.Path)
 		case "tcp":
 			if strings.ToLower(v.Type) == "http" {
 				tcpSetting := coreObj.TCPSettings{
@@ -568,6 +603,8 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 							tcpSetting.Header.Request.Path[i] = "/" + tcpSetting.Header.Request.Path[i]
 						}
 					}
+				} else {
+					tcpSetting.Header.Request.Path = []string{"/"}
 				}
 				core.StreamSettings.TCPSettings = &tcpSetting
 			}
@@ -668,7 +705,7 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 			if v.SNI != "" {
 				core.StreamSettings.TLSSettings.ServerName = v.SNI
 			} else if v.Host != "" {
-				core.StreamSettings.TLSSettings.ServerName = v.Host
+				core.StreamSettings.TLSSettings.ServerName = strings.TrimSpace(strings.SplitN(v.Host, ",", 2)[0])
 			}
 			// Alpn
 			if v.Alpn != "" {
@@ -694,7 +731,7 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 			if v.SNI != "" {
 				core.StreamSettings.XTLSSettings.ServerName = v.SNI
 			} else if v.Host != "" {
-				core.StreamSettings.XTLSSettings.ServerName = v.Host
+				core.StreamSettings.XTLSSettings.ServerName = strings.TrimSpace(strings.SplitN(v.Host, ",", 2)[0])
 			}
 			if v.Alpn != "" {
 				alpn := strings.Split(v.Alpn, ",")
@@ -733,10 +770,11 @@ func (v *V2Ray) ExportToURL() string {
 	case "vless":
 		// https://github.com/XTLS/Xray-core/issues/91
 		var query = make(url.Values)
-		setValue(&query, "type", v.Net)
+		network := v2rayNetwork(v.Net)
+		setValue(&query, "type", network)
 		setValue(&query, "security", v.TLS)
-		switch v.Net {
-		case "websocket", "ws", "http", "h2":
+		switch network {
+		case "ws", "http", "h2":
 			setValue(&query, "path", v.Path)
 			setValue(&query, "host", v.Host)
 			if v.MaxEarlyData != "" {
@@ -745,7 +783,7 @@ func (v *V2Ray) ExportToURL() string {
 			if v.EarlyDataHeaderName != "" {
 				setValue(&query, "earlyDataHeaderName", v.EarlyDataHeaderName)
 			}
-		case "mkcp", "kcp":
+		case "kcp":
 			setValue(&query, "headerType", v.Type)
 			setValue(&query, "seed", v.Path)
 		case "tcp":
@@ -754,9 +792,11 @@ func (v *V2Ray) ExportToURL() string {
 			setValue(&query, "path", v.Path)
 		case "grpc":
 			setValue(&query, "serviceName", v.Path)
-			if v.MultiMode != "" {
-				setValue(&query, "multiMode", v.MultiMode)
-			}
+			setValue(&query, "multiMode", v.MultiMode)
+			setValue(&query, "idleTimeout", v.IdleTimeout)
+			setValue(&query, "healthCheckTimeout", v.HealthCheckTimeout)
+			setValue(&query, "permitWithoutStream", v.PermitWithoutStream)
+			setValue(&query, "initialWindowsSize", v.InitialWindowsSize)
 		case "httpupgrade":
 			setValue(&query, "path", v.Path)
 			setValue(&query, "host", v.Host)
@@ -841,9 +881,10 @@ func (v *V2Ray) ExportToURL() string {
 		}
 		return U.String()
 	case "vmess":
-		v.V = "2"
-		b, _ := jsoniter.Marshal(v)
-		return "vmess://" + strings.TrimSuffix(base64.StdEncoding.EncodeToString(b), "=")
+		export := *v
+		export.V, export.Net = "2", v2rayNetwork(v.Net)
+		b, _ := jsoniter.Marshal(export)
+		return "vmess://" + base64.RawStdEncoding.EncodeToString(b)
 	}
 	log.Warn("unexpected protocol: %v", v.Protocol)
 	return ""

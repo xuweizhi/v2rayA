@@ -16,11 +16,12 @@ import (
 )
 
 var (
-	dbMu     sync.Mutex
-	sqlDB    *sql.DB
-	dbPath   string
-	readOnly bool
-	IsNewDB  bool // true if the database was just created (no pre-existing file)
+	dbMu             sync.Mutex
+	sqlDB            *sql.DB
+	dbPath           string
+	readOnly         bool
+	readOnlyTempPath string
+	IsNewDB          bool // true if the database was just created (no pre-existing file)
 )
 
 // ErrNeedMigration is returned when an old BoltDB database is detected,
@@ -62,30 +63,49 @@ func SetReadOnly() {
 	readOnly = true
 }
 
+func sqlitePragmaQuery() string {
+	switch sqliteDriverName {
+	case "sqlite":
+		return "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
+	case "sqlite3":
+		return "_busy_timeout=5000&_foreign_keys=on&_synchronous=NORMAL"
+	default:
+		return ""
+	}
+}
+
 // initDB opens or creates the SQLite database with WAL mode
 func initDB() {
 	confPath := conf.GetEnvironmentConfig().Config
 	dbPath = filepath.Join(confPath, "v2raya.db")
 
 	if readOnly {
-		// For read-only mode, create a temporary copy
-		f, err := os.CreateTemp(os.TempDir(), "v2raya_tmp_sqlite_*.db")
+		// VACUUM INTO takes a consistent snapshot including live, committed WAL
+		// frames. Copying the main and WAL files separately races checkpoints.
+		f, err := os.CreateTemp("", "v2raya_tmp_sqlite_*.db")
 		if err != nil {
 			panic(err)
 		}
 		newPath := f.Name()
-		f.Close()
-
-		// Copy existing database if it exists
-		if _, err := os.Stat(dbPath); err == nil {
-			input, err := os.ReadFile(dbPath)
-			if err != nil {
-				panic(err)
-			}
-			if err := os.WriteFile(newPath, input, 0600); err != nil {
-				panic(err)
-			}
+		if err := f.Close(); err != nil {
+			os.Remove(newPath)
+			panic(err)
 		}
+		if _, err := os.Stat(dbPath); err == nil {
+			source, err := openSQLiteFile(dbPath, "mode=ro")
+			if err == nil {
+				_, snapshotErr := source.Exec("VACUUM INTO ?", newPath)
+				err = errors.Join(snapshotErr, source.Close())
+			}
+			if err != nil {
+				os.Remove(newPath)
+				panic(err)
+			}
+		} else if !os.IsNotExist(err) {
+			os.Remove(newPath)
+			panic(err)
+		}
+		readOnlyTempPath = newPath
 		dbPath = newPath
 	}
 
@@ -93,10 +113,15 @@ func initDB() {
 	if err = validateSQLiteDriver(); err != nil {
 		log.Fatal("SQLite driver is unavailable: %v", err)
 	}
-	sqlDB, err = openSQLiteFile(dbPath, "")
+	sqlDB, err = openSQLiteFile(dbPath, sqlitePragmaQuery())
 	if err != nil {
 		log.Fatal("sql.Open: %v", err)
 	}
+	// SQLite only supports a single writer; keeping a single pooled connection
+	// ensures session PRAGMAs apply consistently and avoids SQLITE_BUSY across
+	// secondary pool connections.
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 
 	// Configure PRAGMAs for WAL mode and performance
 	pragmas := []string{
@@ -215,11 +240,17 @@ func InitDefaultsIfEmpty(setting, ports any) (bool, error) {
 func Close() error {
 	dbMu.Lock()
 	defer dbMu.Unlock()
-	if sqlDB == nil {
-		return nil
+	var err error
+	if sqlDB != nil {
+		err = sqlDB.Close()
+		sqlDB = nil
 	}
-	err := sqlDB.Close()
-	sqlDB = nil
+	if readOnlyTempPath != "" {
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			_ = os.Remove(readOnlyTempPath + suffix)
+		}
+		readOnlyTempPath = ""
+	}
 	return err
 }
 

@@ -62,28 +62,36 @@ func ParseTrojanURL(u string) (data *Trojan, err error) {
 	if err != nil {
 		return nil, ErrInvalidParameter
 	}
+	password := ""
+	if t.User != nil {
+		password = t.User.Username()
+		if p, ok := t.User.Password(); ok {
+			password += ":" + p
+		}
+	}
+	q := t.Query()
 	data = &Trojan{
 		Name:                 t.Fragment,
 		Server:               t.Hostname(),
 		Port:                 port,
-		Password:             t.User.Username(),
+		Password:             password,
 		Sni:                  sni,
-		Alpn:                 t.Query().Get("alpn"),
-		Type:                 t.Query().Get("type"),
-		Path:                 t.Query().Get("path"),
-		ServiceName:          t.Query().Get("serviceName"),
-		PinnedPeerCertSha256: t.Query().Get("pinnedPeerCertSha256"),
-		VerifyPeerCertByName: t.Query().Get("verifyPeerCertByName"),
+		Alpn:                 q.Get("alpn"),
+		Type:                 q.Get("type"),
+		Host:                 q.Get("host"),
+		Path:                 q.Get("path"),
+		ServiceName:          q.Get("serviceName"),
+		PinnedPeerCertSha256: q.Get("pinnedPeerCertSha256"),
+		VerifyPeerCertByName: q.Get("verifyPeerCertByName"),
 		Protocol:             "trojan",
-		Backend:              t.Query().Get("v2raya-backend"),
+		Backend:              q.Get("v2raya-backend"),
+	}
+	if (strings.EqualFold(data.Type, "kcp") || strings.EqualFold(data.Type, "mkcp")) && q.Has("seed") {
+		data.Path = q.Get("seed")
 	}
 	if t.Scheme == "trojan-go" {
 		data.Protocol = "trojan-go"
-		data.Encryption = t.Query().Get("encryption")
-		data.Host = t.Query().Get("host")
-		data.Path = t.Query().Get("path")
-		data.ServiceName = t.Query().Get("serviceName")
-		data.Type = t.Query().Get("type")
+		data.Encryption = q.Get("encryption")
 	}
 	return data, nil
 }
@@ -93,6 +101,9 @@ func (t *Trojan) GetBackend() string {
 }
 
 func (t *Trojan) ConfigurationMC(info PriorInfo) (c Configuration, err error) {
+	if t.Encryption != "" && t.Encryption != "none" {
+		return c, fmt.Errorf("Trojan-Go additional encryption is unsupported by the built-in Trojan outbound")
+	}
 	trojanServer := coreObj.Server{
 		Address:  t.Server,
 		Port:     t.Port,
@@ -124,8 +135,12 @@ func (t *Trojan) ConfigurationMC(info PriorInfo) (c Configuration, err error) {
 			Path:    t.Path,
 			Headers: coreObj.Headers{Host: t.Host},
 		}
+	case "", "tcp", "original", "raw":
+		streamSettings.Network = "tcp"
+	case "mkcp", "kcp":
+		setLegacyKCP(streamSettings, "", t.Path)
 	default:
-		// tcp is default
+		return c, fmt.Errorf("unsupported Trojan transport %q", t.Type)
 	}
 	return Configuration{
 		CoreOutbound: coreObj.OutboundObject{
@@ -173,16 +188,15 @@ func (t *Trojan) ExportToURL() string {
 		setValue(&query, "path", t.Path)
 		setValue(&query, "host", t.Host)
 	case "mkcp", "kcp":
-		setValue(&query, "headerType", t.Type)
 		setValue(&query, "seed", t.Path)
 	case "tcp":
-		setValue(&query, "headerType", t.Type)
 		setValue(&query, "host", t.Host)
 		setValue(&query, "path", t.Path)
 	case "grpc":
 		setValue(&query, "serviceName", t.ServiceName)
 	}
 
+	setValue(&query, "alpn", t.Alpn)
 	setValue(&query, "pinnedPeerCertSha256", t.PinnedPeerCertSha256)
 	setValue(&query, "verifyPeerCertByName", t.VerifyPeerCertByName)
 	setValue(&query, "sni", t.Sni)

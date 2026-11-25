@@ -13,14 +13,19 @@ func generatePortMap(syntax []string) (req map[int][]string, m map[string]map[in
 	req = make(map[int][]string)
 	for _, s := range syntax {
 		a1 := strings.SplitN(s, ":", 2)
+		if len(a1) < 2 {
+			continue
+		}
 		p, err := strconv.Atoi(a1[0])
 		if err != nil {
 			continue
 		}
-		req[p] = make([]string, 0, 2)
+		if _, exists := req[p]; !exists {
+			req[p] = make([]string, 0, 2)
+		}
 		a2 := strings.Split(a1[1], ",")
 		for _, proto := range a2 {
-			switch strings.ToLower(proto) {
+			switch strings.ToLower(strings.TrimSpace(proto)) {
 			case "tcp":
 				req[p] = append(req[p], "tcp", "tcp6")
 				if !tcp {
@@ -33,6 +38,18 @@ func generatePortMap(syntax []string) (req map[int][]string, m map[string]map[in
 				}
 			}
 		}
+	}
+	for p, protos := range req {
+		seen := make(map[string]struct{}, len(protos))
+		dedup := protos[:0]
+		for _, proto := range protos {
+			if _, ok := seen[proto]; ok {
+				continue
+			}
+			seen[proto] = struct{}{}
+			dedup = append(dedup, proto)
+		}
+		req[p] = dedup
 	}
 	if tcp {
 		rp = append(rp, "tcp", "tcp6")
@@ -64,7 +81,7 @@ func IsPortOccupied(syntax []string) (occupied bool, sockets []*netstat.Socket, 
 	for p, protos := range req {
 		for _, proto := range protos {
 			for _, v := range m[proto][p] {
-				if proto == "udp" || v.State != netstat.Close {
+				if proto == "udp" || proto == "udp6" || v.State != netstat.Close {
 					occupied = true
 					sockets = append(sockets, v)
 				}

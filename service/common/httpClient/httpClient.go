@@ -1,6 +1,7 @@
 package httpClient
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -8,10 +9,31 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/v2rayA/v2rayA/common/netTools"
 	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	proxyWithHttp2 "github.com/v2rayA/v2rayA/pkg/util/proxyWithHttp"
 )
+
+func isKernelTransparentOn(setting *configure.Setting) bool {
+	if setting == nil {
+		setting = configure.GetSettingNotNil()
+	}
+	return v2ray.IsTransparentOn(setting) && setting.TransparentType != configure.TransparentSystemProxy
+}
+
+func newDirectResolver() *net.Resolver {
+	dnsDialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+		Control: netTools.DirectSocketControl,
+	}
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return dnsDialer.DialContext(ctx, network, address)
+		},
+	}
+}
 
 func GetHttpClientWithProxy(proxyURL string) (client *http.Client, err error) {
 	u, err := url.Parse(proxyURL)
@@ -23,7 +45,11 @@ func GetHttpClientWithProxy(proxyURL string) (client *http.Client, err error) {
 		return
 	}
 	httpTransport := &http.Transport{
-		Dial: dialer.Dial,
+		Dial:                  dialer.Dial,
+		TLSHandshakeTimeout:   10 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
 	}
 	client = &http.Client{Transport: httpTransport}
 	return
@@ -40,7 +66,7 @@ func GetHttpClientWithv2rayAPac() (client *http.Client, err error) {
 
 func GetHttpClientAutomatically() (c *http.Client) {
 	setting := configure.GetSettingNotNil()
-	if !v2ray.ProcessManager.Running() || configure.GetConnectedServers() == nil || v2ray.IsTransparentOn(setting) {
+	if !v2ray.ProcessManager.Running() || configure.GetConnectedServers() == nil || isKernelTransparentOn(setting) {
 		return http.DefaultClient
 	}
 	var err error
@@ -62,10 +88,11 @@ func GetHttpClientAutomatically() (c *http.Client) {
 }
 
 // GetHttpClientDirect builds a client that ignores HTTP(S)_PROXY and, while
-// transparent proxying is active on Linux, marks sockets with v2rayA's bypass
-// mark so they do not get captured by the transparent rules again.
+// kernel transparent proxying is active on Linux, marks sockets with v2rayA's
+// bypass mark so they do not get captured by the transparent rules again.
 func GetHttpClientDirect() *http.Client {
-	return newDirectHTTPClient(v2ray.IsTransparentOn(configure.GetSettingNotNil()))
+	setting := configure.GetSettingNotNil()
+	return newDirectHTTPClient(isKernelTransparentOn(setting) && setting.TransparentType != configure.TransparentTun)
 }
 
 func newDirectHTTPClient(bypassTransparent bool) *http.Client {
@@ -86,7 +113,8 @@ func newDirectHTTPClient(bypassTransparent bool) *http.Client {
 		KeepAlive: 30 * time.Second,
 	}
 	if bypassTransparent {
-		dialer.Control = directSocketControl
+		dialer.Control = netTools.DirectSocketControl
+		dialer.Resolver = newDirectResolver()
 	}
 	transport.DialContext = dialer.DialContext
 	return &http.Client{Transport: transport}
@@ -135,8 +163,9 @@ func GetHttpClientsForWebdav(mode configure.WebdavConnectionMode) ([]*http.Clien
 // GetDirectDialer bypasses the system proxy and the active transparent rules.
 func GetDirectDialer() *net.Dialer {
 	d := &net.Dialer{Timeout: 8 * time.Second}
-	if v2ray.IsTransparentOn(configure.GetSettingNotNil()) {
-		d.Control = directSocketControl
+	if isKernelTransparentOn(configure.GetSettingNotNil()) {
+		d.Control = netTools.DirectSocketControl
+		d.Resolver = newDirectResolver()
 	}
 	return d
 }

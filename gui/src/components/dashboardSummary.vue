@@ -116,7 +116,11 @@ export default {
   data: () => ({ transparent: null }),
   computed: {
     currentNode() {
-      const node = this.runningState.outboundToServerName[this.outbound];
+      const map = this.runningState.outboundToServerName || {};
+      if (!Object.prototype.hasOwnProperty.call(map, this.outbound)) {
+        return this.$t("dashboard.pending");
+      }
+      const node = map[this.outbound];
       return typeof node === "number"
         ? `${this.$t("common.loadBalance")} (${node})`
         : node || this.$t("dashboard.pending");

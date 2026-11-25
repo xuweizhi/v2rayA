@@ -52,9 +52,19 @@ func (p *systemProxy) AddIPWhitelist(cidr string) {}
 func (p *systemProxy) RemoveIPWhitelist(cidr string) {}
 
 // checkCommand checks if a command exists
-func checkCommand(cmd string) bool {
+var checkCommand = func(cmd string) bool {
 	_, err := exec.LookPath(cmd)
 	return err == nil
+}
+
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func appendKDENotifyCmd(commands *strings.Builder) {
+	if checkCommand("dbus-send") {
+		commands.WriteString("dbus-send --type=signal /KIO/Scheduler org.kde.KIO.Scheduler.reparseSlaveConfiguration string:'' 2>/dev/null || true\n")
+	}
 }
 
 // readGsettingsValue runs "gsettings get <schema> <key>" and returns the trimmed output
@@ -140,8 +150,8 @@ func (p *systemProxy) GetSetupCommands() Setter {
 		commands.WriteString("kwriteconfig6 --file kioslaverc --group 'Proxy Settings' --key httpProxy 'http://127.0.0.1:52345'\n")
 		commands.WriteString("kwriteconfig6 --file kioslaverc --group 'Proxy Settings' --key httpsProxy 'http://127.0.0.1:52345'\n")
 		commands.WriteString("kwriteconfig6 --file kioslaverc --group 'Proxy Settings' --key socksProxy 'socks://127.0.0.1:52306'\n")
-		// Notify KDE about the change
-		commands.WriteString("dbus-send --type=signal /KIO/Scheduler org.kde.KIO.Scheduler.reparseSlaveConfiguration string:''\n")
+		// Notify KDE about the change (best-effort; do not abort setup if dbus-send is unavailable)
+		appendKDENotifyCmd(&commands)
 		log.Info("Using kwriteconfig6 to configure system proxy (HTTP: 52345, SOCKS: 52306)")
 	}
 
@@ -152,8 +162,8 @@ func (p *systemProxy) GetSetupCommands() Setter {
 		commands.WriteString("kwriteconfig5 --file kioslaverc --group 'Proxy Settings' --key httpProxy 'http://127.0.0.1:52345'\n")
 		commands.WriteString("kwriteconfig5 --file kioslaverc --group 'Proxy Settings' --key httpsProxy 'http://127.0.0.1:52345'\n")
 		commands.WriteString("kwriteconfig5 --file kioslaverc --group 'Proxy Settings' --key socksProxy 'socks://127.0.0.1:52306'\n")
-		// Notify KDE about the change
-		commands.WriteString("dbus-send --type=signal /KIO/Scheduler org.kde.KIO.Scheduler.reparseSlaveConfiguration string:''\n")
+		// Notify KDE about the change (best-effort; do not abort setup if dbus-send is unavailable)
+		appendKDENotifyCmd(&commands)
 		log.Info("Using kwriteconfig5 to configure system proxy (HTTP: 52345, SOCKS: 52306)")
 	}
 
@@ -210,13 +220,13 @@ func (p *systemProxy) GetCleanCommands() Setter {
 
 		if checkCommand("kwriteconfig6") {
 			commands.WriteString("kwriteconfig6 --file kioslaverc --group 'Proxy Settings' --key ProxyType 0\n")
-			commands.WriteString("dbus-send --type=signal /KIO/Scheduler org.kde.KIO.Scheduler.reparseSlaveConfiguration string:''\n")
+			appendKDENotifyCmd(&commands)
 			log.Info("Disabling system proxy via kwriteconfig6")
 		}
 
 		if checkCommand("kwriteconfig5") {
 			commands.WriteString("kwriteconfig5 --file kioslaverc --group 'Proxy Settings' --key ProxyType 0\n")
-			commands.WriteString("dbus-send --type=signal /KIO/Scheduler org.kde.KIO.Scheduler.reparseSlaveConfiguration string:''\n")
+			appendKDENotifyCmd(&commands)
 			log.Info("Disabling system proxy via kwriteconfig5")
 		}
 
@@ -259,23 +269,25 @@ func (p *systemProxy) GetCleanCommands() Setter {
 	// Restore KDE
 	if kde.proxyType != "" {
 		restoreKDE := func(cmd string) {
-			commands.WriteString(fmt.Sprintf("%v --file kioslaverc --group 'Proxy Settings' --key ProxyType %v\n", cmd, kde.proxyType))
-			if kde.httpProxy != "" {
-				commands.WriteString(fmt.Sprintf("%v --file kioslaverc --group 'Proxy Settings' --key httpProxy '%v'\n", cmd, kde.httpProxy))
+			commands.WriteString(fmt.Sprintf("%s --file kioslaverc --group 'Proxy Settings' --key ProxyType %s\n", cmd, shellSingleQuote(kde.proxyType)))
+			restoreKey := func(key, val string) {
+				if val != "" {
+					commands.WriteString(fmt.Sprintf("%s --file kioslaverc --group 'Proxy Settings' --key %s %s\n", cmd, key, shellSingleQuote(val)))
+				} else if kde.proxyType == "1" {
+					commands.WriteString(fmt.Sprintf("%s --file kioslaverc --group 'Proxy Settings' --key %s --delete\n", cmd, key))
+				}
 			}
-			if kde.httpsProxy != "" {
-				commands.WriteString(fmt.Sprintf("%v --file kioslaverc --group 'Proxy Settings' --key httpsProxy '%v'\n", cmd, kde.httpsProxy))
-			}
-			if kde.socksProxy != "" {
-				commands.WriteString(fmt.Sprintf("%v --file kioslaverc --group 'Proxy Settings' --key socksProxy '%v'\n", cmd, kde.socksProxy))
-			}
-			commands.WriteString("dbus-send --type=signal /KIO/Scheduler org.kde.KIO.Scheduler.reparseSlaveConfiguration string:''\n")
+			restoreKey("httpProxy", kde.httpProxy)
+			restoreKey("httpsProxy", kde.httpsProxy)
+			restoreKey("socksProxy", kde.socksProxy)
+			appendKDENotifyCmd(&commands)
 		}
 
 		if checkCommand("kwriteconfig6") {
 			restoreKDE("kwriteconfig6")
 			log.Info("Restoring original system proxy via kwriteconfig6")
-		} else if checkCommand("kwriteconfig5") {
+		}
+		if checkCommand("kwriteconfig5") {
 			restoreKDE("kwriteconfig5")
 			log.Info("Restoring original system proxy via kwriteconfig5")
 		}
@@ -283,20 +295,23 @@ func (p *systemProxy) GetCleanCommands() Setter {
 		// No saved KDE state: disable KDE proxy if tooling is available
 		if checkCommand("kwriteconfig6") {
 			commands.WriteString("kwriteconfig6 --file kioslaverc --group 'Proxy Settings' --key ProxyType 0\n")
-			commands.WriteString("dbus-send --type=signal /KIO/Scheduler org.kde.KIO.Scheduler.reparseSlaveConfiguration string:''\n")
+			appendKDENotifyCmd(&commands)
 			log.Info("Disabling system proxy via kwriteconfig6 (no saved state)")
-		} else if checkCommand("kwriteconfig5") {
+		}
+		if checkCommand("kwriteconfig5") {
 			commands.WriteString("kwriteconfig5 --file kioslaverc --group 'Proxy Settings' --key ProxyType 0\n")
-			commands.WriteString("dbus-send --type=signal /KIO/Scheduler org.kde.KIO.Scheduler.reparseSlaveConfiguration string:''\n")
+			appendKDENotifyCmd(&commands)
 			log.Info("Disabling system proxy via kwriteconfig5 (no saved state)")
 		}
 	}
 
-	savedLinuxProxy.mu.Lock()
-	savedLinuxProxy.saved = false
-	savedLinuxProxy.mu.Unlock()
-
 	return Setter{
 		Cmds: commands.String(),
+		AfterFunc: func() error {
+			savedLinuxProxy.mu.Lock()
+			savedLinuxProxy.saved = false
+			savedLinuxProxy.mu.Unlock()
+			return nil
+		},
 	}
 }

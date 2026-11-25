@@ -126,7 +126,9 @@ export default {
   data() {
     return {
       items: [],
+      nextItemId: 0,
       endOfLine: true,
+      fetching: false,
       currentSkip: 0,
       intervalId: 0,
       intervalTime: 5,
@@ -175,16 +177,11 @@ export default {
     this.itemSize = Math.max(28, Math.round(rootSize * 1.75));
     this.autoScoll = !(localStorage.getItem("log.autoScoll") === "false");
 
-    this.$axios({
-      url: apiRoot + "/logger",
-    }).then(this.updateLog);
+    this.fetchLogs(false);
   },
   mounted() {
     this.intervalId = setInterval(() => {
-      this.$axios({
-        url: apiRoot + `/logger`,
-        params: { skip: this.currentSkip },
-      }).then(this.updateLog);
+      this.fetchLogs(true);
     }, this.intervalTime * 1000);
   },
   destroyed() {
@@ -258,46 +255,74 @@ export default {
         });
       }
     },
+    fetchLogs(withSkip = true) {
+      if (this.fetching) {
+        return;
+      }
+      this.fetching = true;
+      const config = {
+        url: apiRoot + "/logger",
+      };
+      if (withSkip) {
+        config.params = { skip: this.currentSkip };
+      }
+      this.$axios(config)
+        .then((logs) => this.updateLog(logs))
+        .catch(() => {})
+        .finally(() => {
+          this.fetching = false;
+        });
+    },
     updateLog(logs) {
-      if (logs.data.length && logs.data.length !== 0) {
-        const baseIndex = this.items.length;
-        const items = logs.data
-          .split("\n")
-          .map((x, i) => {
-            const source = this.detectSource(x);
-            this.addSourceOption(source);
-            return {
-              text: x,
-              id: baseIndex + i,
-              level: this.detectLevel(x),
-              source: source,
-            };
-          });
-        if (this.endOfLine) {
-          this.items = this.items.concat(items);
-        } else {
-          this.items[this.items.length - 1].text += items[0].text;
-          this.items = this.items.concat(items.slice(1));
+      if (!logs || typeof logs.data !== "string" || logs.data.length === 0) {
+        return;
+      }
+      const raw = logs.data;
+      const endsWithNewline = raw.endsWith("\n");
+      const trimmed = endsWithNewline ? raw.slice(0, -1) : raw;
+      const lines = trimmed.split("\n");
+
+      const makeItem = (text) => {
+        const source = this.detectSource(text);
+        this.addSourceOption(source);
+        return {
+          text,
+          id: this.nextItemId++,
+          level: this.detectLevel(text),
+          source,
+        };
+      };
+
+      if (this.endOfLine || this.items.length === 0) {
+        const newItems = lines.map(makeItem);
+        this.items = this.items.concat(newItems);
+      } else {
+        const last = this.items[this.items.length - 1];
+        const mergedText = last.text + lines[0];
+        const source = this.detectSource(mergedText);
+        this.addSourceOption(source);
+        last.text = mergedText;
+        last.level = this.detectLevel(mergedText);
+        last.source = source;
+        if (lines.length > 1) {
+          this.items = this.items.concat(lines.slice(1).map(makeItem));
         }
-        this.endOfLine = items[items.length - 1].text.endsWith("\n");
-        this.currentSkip += new Blob([logs.data]).size;
-        if (this.autoScoll && this.filteredItems.length > 0) {
-          this.$nextTick(() => {
-            if (this.$refs.logScroller && this.filteredItems.length > 0) {
-              this.$refs.logScroller.scrollToItem(this.filteredItems.length - 1);
-            }
-          });
-        }
+      }
+      this.endOfLine = endsWithNewline;
+      this.currentSkip += new Blob([raw]).size;
+      if (this.autoScoll && this.filteredItems.length > 0) {
+        this.$nextTick(() => {
+          if (this.$refs.logScroller && this.filteredItems.length > 0) {
+            this.$refs.logScroller.scrollToItem(this.filteredItems.length - 1);
+          }
+        });
       }
     },
     changeInterval(val) {
       this.intervalTime = val;
       clearInterval(this.intervalId);
       this.intervalId = setInterval(() => {
-        this.$axios({
-          url: apiRoot + `/logger`,
-          params: { skip: this.currentSkip },
-        }).then(this.updateLog);
+        this.fetchLogs(true);
       }, this.intervalTime * 1000);
     },
     changeScoll(val) {
@@ -305,6 +330,7 @@ export default {
     },
     clearView() {
       this.items = [];
+      this.endOfLine = true;
     },
     async copyLogs() {
       const content = this.filteredItems.map((i) => i.text).join("\n");

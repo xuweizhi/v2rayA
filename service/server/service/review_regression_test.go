@@ -79,7 +79,8 @@ func TestDeleteMultipleConnectedNodesKeepsIndices(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := DeleteWhich([]*configure.Which{{TYPE: configure.ServerType, ID: 1}, {TYPE: configure.ServerType, ID: 3}}); err != nil {
+	// A server selected through different groups still has only one database row.
+	if err := DeleteWhich([]*configure.Which{{TYPE: configure.ServerType, ID: 1}, {TYPE: configure.ServerType, ID: 1, Outbound: "other", Latency: "10ms"}, {TYPE: configure.ServerType, ID: 3}}); err != nil {
 		t.Fatal(err)
 	}
 	kept := configure.GetServers()

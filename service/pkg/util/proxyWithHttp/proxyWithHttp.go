@@ -21,18 +21,53 @@ func (direct) Dial(network, addr string) (net.Conn, error) {
 }
 
 // httpsDialer
-type httpsDialer struct{}
+type httpsDialer struct {
+	forward proxy.Dialer
+}
 
 // HTTPSDialer is a https proxy: one that makes network connections on tls.
 var HttpsDialer = httpsDialer{}
 var TlsConfig = &tls.Config{}
 
 func (d httpsDialer) Dial(network, addr string) (c net.Conn, err error) {
-	c, err = tls.Dial("tcp", addr, TlsConfig)
+	fwd := d.forward
+	if fwd == nil {
+		fwd = Direct
+	}
+	rawConn, err := fwd.Dial("tcp", addr)
 	if err != nil {
 		log.Warn("%v", err)
+		return nil, err
 	}
-	return
+	cfg := TlsConfig.Clone()
+	if cfg == nil {
+		cfg = &tls.Config{}
+	}
+	if cfg.ServerName == "" {
+		if host, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
+			cfg.ServerName = host
+		} else {
+			cfg.ServerName = addr
+		}
+	}
+	tlsConn := tls.Client(rawConn, cfg)
+	if err = tlsConn.Handshake(); err != nil {
+		rawConn.Close()
+		log.Warn("%v", err)
+		return nil, err
+	}
+	return tlsConn, nil
+}
+
+// bufferedConn wraps a net.Conn with a bufio.Reader so any bytes buffered
+// ahead during the HTTP CONNECT response read are not lost.
+type bufferedConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (bc *bufferedConn) Read(p []byte) (int, error) {
+	return bc.r.Read(p)
 }
 
 // proxyWithHttp is a HTTP/HTTPS connect proxy.
@@ -45,7 +80,10 @@ type httpProxy struct {
 }
 
 func newHTTPSProxy(uri *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
-	return newHTTPProxy(uri, HttpsDialer)
+	if forward == nil {
+		forward = Direct
+	}
+	return newHTTPProxy(uri, httpsDialer{forward: forward})
 }
 
 func newHTTPProxy(uri *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
@@ -95,21 +133,25 @@ func (s *httpProxy) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	resp, err := http.ReadResponse(bufio.NewReader(c), req)
+	br := bufio.NewReader(c)
+	resp, err := http.ReadResponse(br, req)
 	if err != nil {
+		c.Close()
 		if resp != nil {
 			resp.Body.Close()
 		}
-		c.Close()
 		return nil, err
 	}
-	resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		c.Close()
+		resp.Body.Close()
 		err = fmt.Errorf("Connect server using proxy error, StatusCode [%d]", resp.StatusCode)
 		return nil, err
 	}
 
+	if br.Buffered() > 0 {
+		return &bufferedConn{Conn: c, r: br}, nil
+	}
 	return c, nil
 }
 

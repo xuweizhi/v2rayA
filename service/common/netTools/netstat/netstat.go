@@ -20,6 +20,7 @@ const (
 	LastAck             = 0x09
 	Listen              = 0x0a
 	Closing             = 0x0b
+	NewSynRecv          = 0x0c
 )
 
 var skStates = [...]string{
@@ -35,12 +36,16 @@ var skStates = [...]string{
 	"LAST_ACK",
 	"LISTEN",
 	"CLOSING",
+	"NEW_SYN_RECV",
 }
 
 // Socket states
 type SkState uint8
 
 func (sk SkState) String() string {
+	if int(sk) >= len(skStates) {
+		return skStates[0]
+	}
 	return skStates[sk]
 }
 

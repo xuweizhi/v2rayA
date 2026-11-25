@@ -33,9 +33,6 @@ func ValidateResponse(msg *dns.Msg) error {
 
 	// Verify question is well-formed.
 	q := msg.Question[0]
-	if q.Qclass != dns.ClassINET {
-		return fmt.Errorf("dns validator: unexpected question class %d", q.Qclass)
-	}
 	if q.Name == "" {
 		return fmt.Errorf("dns validator: empty question name")
 	}
@@ -139,9 +136,13 @@ func ValidateAnswerCount(msg *dns.Msg) error {
 }
 
 // ValidateQuestionMatch verifies that the response question matches the
-// expected query name and type. This is an additional safety check beyond
-// the ID matching that miekg/dns performs internally.
+// expected query name and type (assuming ClassINET). This is an additional
+// safety check beyond the ID matching that miekg/dns performs internally.
 func ValidateQuestionMatch(msg *dns.Msg, expectedName string, expectedQType QueryType) error {
+	return validateQuestionMatchWithClass(msg, expectedName, expectedQType, dns.ClassINET)
+}
+
+func validateQuestionMatchWithClass(msg *dns.Msg, expectedName string, expectedQType QueryType, expectedQClass uint16) error {
 	if msg == nil {
 		return fmt.Errorf("dns validator: nil message")
 	}
@@ -149,9 +150,12 @@ func ValidateQuestionMatch(msg *dns.Msg, expectedName string, expectedQType Quer
 		return fmt.Errorf("dns validator: expected exactly one question")
 	}
 
+	if expectedQClass == 0 {
+		expectedQClass = dns.ClassINET
+	}
 	q := msg.Question[0]
-	if q.Qclass != dns.ClassINET {
-		return fmt.Errorf("dns validator: unexpected question class %d", q.Qclass)
+	if q.Qclass != expectedQClass {
+		return fmt.Errorf("dns validator: unexpected question class %d (expected %d)", q.Qclass, expectedQClass)
 	}
 	if !strings.EqualFold(q.Name, dns.Fqdn(expectedName)) {
 		return fmt.Errorf("dns validator: question name mismatch: got %q, expected %q",

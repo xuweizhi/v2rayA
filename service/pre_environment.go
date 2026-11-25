@@ -20,6 +20,9 @@ func checkEnvironment() {
 	if len(config.PrintReport) > 0 {
 		db.SetReadOnly()
 		config.Report()
+		if err := db.Close(); err != nil {
+			log.Fatal("closing report database: %v", err)
+		}
 		os.Exit(0)
 	}
 	if !config.PassCheckRoot {
@@ -42,9 +45,14 @@ func checkEnvironment() {
 	if config.ResetPassword {
 		fmt.Println("Config directory:", config.Config)
 		fmt.Println("Resetting password...\nIf no response for a long time, please stop other v2rayA instances and try again.")
-		err := configure.ResetAccounts()
-		if err != nil {
+		if err := openMigratedDatabase(); err != nil {
+			log.Fatal("opening account database: %v", err)
+		}
+		if err := configure.ResetAccounts(); err != nil {
 			log.Fatal("checkEnvironment: %v", err)
+		}
+		if err := db.Close(); err != nil {
+			log.Fatal("closing account database: %v", err)
 		}
 		fmt.Println("Succeed. It will work after you restart v2rayA.")
 		os.Exit(0)

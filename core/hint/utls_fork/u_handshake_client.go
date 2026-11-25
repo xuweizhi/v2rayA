@@ -207,6 +207,7 @@ func (c *Conn) makeClientHelloForApplyPreset() (*clientHelloMsg, *keySharePrivat
 		secureRenegotiationSupported: true,
 		alpnProtocols:                config.NextProtos,
 		supportedVersions:            supportedVersions,
+		marshalHook:                  config.ClientHelloMarshalHook,
 	}
 
 	// The version at the beginning of the ClientHello was capped at TLS 1.2
@@ -251,8 +252,12 @@ func (c *Conn) makeClientHelloForApplyPreset() (*clientHelloMsg, *keySharePrivat
 	//
 	// The session ID is not set for QUIC connections (see RFC 9001, Section 8.4).
 	if c.quic == nil {
-		if SessionIDProvider != nil {
-			sid := SessionIDProvider()
+		provider := config.SessionIDProvider
+		if provider == nil {
+			provider = SessionIDProvider
+		}
+		if provider != nil {
+			sid := provider()
 			hello.sessionId = sid[:]
 		} else {
 			hello.sessionId = make([]byte, 32)

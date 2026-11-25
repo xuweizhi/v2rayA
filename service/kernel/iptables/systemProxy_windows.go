@@ -137,6 +137,7 @@ func HasAdminRights() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer token.Close()
 
 	member, err := token.IsMember(sid)
 	if err != nil {
@@ -181,12 +182,20 @@ func getProfileListSubKeyNames() ([]string, error) {
 	return k.ReadSubKeyNames(0)
 }
 
-// windowsProxySavedState stores the original proxy values before v2rayA modifies them
+// windowsEntryProxyState stores the original proxy values for a single registry hive/SID.
+type windowsEntryProxyState struct {
+	proxyEnable    uint32
+	proxyServer    string
+	hasProxyServer bool
+	autoConfigURL  string
+	hasAutoConfig  bool
+}
+
+// windowsProxySavedState stores the original per-SID proxy values before v2rayA modifies them
 type windowsProxySavedState struct {
-	mu          sync.Mutex
-	saved       bool
-	proxyEnable uint32
-	proxyServer string
+	mu      sync.Mutex
+	saved   bool
+	entries map[string]windowsEntryProxyState
 }
 
 var savedWindowsProxy windowsProxySavedState
@@ -204,63 +213,70 @@ type todo struct {
 	Prefix string
 }
 
-// readRegistryProxyState reads ProxyEnable and ProxyServer from a registry key path
-func readRegistryProxyState(key registry.Key, prefix string) (proxyEnable uint32, proxyServer string, err error) {
+func buildWindowsTodoList(hasAdminRights bool) ([]todo, error) {
+	var todolist []todo
+	if hasAdminRights {
+		// https://docs.microsoft.com/en-us/windows/win32/services/services-and-the-registry
+		// A service should not access HKEY_CURRENT_USER or HKEY_CLASSES_ROOT, especially when impersonating a user.
+		sids, err := getProfileListSubKeyNames()
+		if err != nil {
+			return nil, err
+		}
+		for _, sid := range sids {
+			todolist = append(todolist, todo{
+				Key:    registry.USERS,
+				Prefix: sid + `\`,
+			})
+		}
+	} else {
+		todolist = append(todolist, todo{
+			Key:    registry.CURRENT_USER,
+			Prefix: "",
+		})
+	}
+	return todolist, nil
+}
+
+// readRegistryProxyState reads ProxyEnable, ProxyServer, and AutoConfigURL from a registry key path
+func readRegistryProxyState(key registry.Key, prefix string) (state windowsEntryProxyState, err error) {
 	k, err := registry.OpenKey(key, prefix+`SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.READ)
 	if err != nil {
-		return 0, "", fmt.Errorf("open key for reading: %v", err)
+		return state, fmt.Errorf("open key for reading: %v", err)
 	}
 	defer k.Close()
 
-	val, _, err := k.GetIntegerValue("ProxyEnable")
-	if err != nil {
-		proxyEnable = 0
-	} else {
-		proxyEnable = uint32(val)
+	if val, _, err := k.GetIntegerValue("ProxyEnable"); err == nil {
+		state.proxyEnable = uint32(val)
+	}
+	if server, _, err := k.GetStringValue("ProxyServer"); err == nil {
+		state.proxyServer = server
+		state.hasProxyServer = true
+	}
+	if pac, _, err := k.GetStringValue("AutoConfigURL"); err == nil {
+		state.autoConfigURL = pac
+		state.hasAutoConfig = true
 	}
 
-	proxyServer, _, err = k.GetStringValue("ProxyServer")
-	if err != nil {
-		proxyServer = ""
-	}
-
-	return proxyEnable, proxyServer, nil
+	return state, nil
 }
 
-// saveProxyState reads and saves the current proxy state before we modify it
-func saveProxyState(hasAdminRights bool) {
-	var savedEnable uint32
-	var savedServer string
-
-	if hasAdminRights {
-		sids, err := getProfileListSubKeyNames()
+// saveProxyState reads and saves the current per-SID proxy state before we modify it
+func saveProxyState(todolist []todo) {
+	entries := make(map[string]windowsEntryProxyState, len(todolist))
+	for _, item := range todolist {
+		state, err := readRegistryProxyState(item.Key, item.Prefix)
 		if err != nil {
-			log.Debug("saveProxyState: getProfileListSubKeyNames: %v", err)
-			return
+			log.Debug("saveProxyState: readRegistryProxyState for %q: %v", item.Prefix, err)
+			continue
 		}
-		for _, sid := range sids {
-			enable, server, err := readRegistryProxyState(registry.USERS, sid+`\`)
-			if err != nil {
-				log.Debug("saveProxyState: readRegistryProxyState for %v: %v", sid, err)
-				continue
-			}
-			savedEnable = enable
-			savedServer = server
-			break
-		}
-	} else {
-		enable, server, err := readRegistryProxyState(registry.CURRENT_USER, "")
-		if err != nil {
-			log.Debug("saveProxyState: readRegistryProxyState: %v", err)
-			return
-		}
-		savedEnable = enable
-		savedServer = server
+		entries[item.Prefix] = state
+	}
+	if len(entries) == 0 {
+		return
 	}
 
 	savedWindowsProxy.mu.Lock()
-	savedWindowsProxy.proxyEnable = savedEnable
-	savedWindowsProxy.proxyServer = savedServer
+	savedWindowsProxy.entries = entries
 	savedWindowsProxy.saved = true
 	savedWindowsProxy.mu.Unlock()
 }
@@ -272,45 +288,36 @@ func (p *systemProxy) GetSetupCommands() Setter {
 	}
 	setter := Setter{
 		PreFunc: func() error {
-			// Step 1: Save current proxy state before modifying
-			saveProxyState(hasAdminRights)
-
-			// Step 2: Original setup logic - set proxy to v2rayA
-			var todolist []todo
-			if hasAdminRights {
-				// https://docs.microsoft.com/en-us/windows/win32/services/services-and-the-registry
-				// A service should not access HKEY_CURRENT_USER or HKEY_CLASSES_ROOT, especially when impersonating a user.
-				sids, err := getProfileListSubKeyNames()
-				if err != nil {
-					log.Debug("GetSetupCommands: getProfileListSubKeyNames: %v", err)
-					return err
-				}
-				for _, sid := range sids {
-					todolist = append(todolist, todo{
-						Key:    registry.USERS,
-						Prefix: sid + `\`,
-					})
-				}
-			} else {
-				todolist = append(todolist, todo{
-					Key:    registry.CURRENT_USER,
-					Prefix: "",
-				})
+			todolist, err := buildWindowsTodoList(hasAdminRights)
+			if err != nil {
+				log.Debug("GetSetupCommands: buildWindowsTodoList: %v", err)
+				return err
 			}
-			for _, todo := range todolist {
-				key, err := registry.OpenKey(todo.Key, todo.Prefix+`SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.ALL_ACCESS)
+
+			// Step 1: Save current per-SID proxy state before modifying
+			saveProxyState(todolist)
+
+			// Step 2: Set proxy to v2rayA
+			for _, item := range todolist {
+				err := func() error {
+					key, err := registry.OpenKey(item.Key, item.Prefix+`SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.ALL_ACCESS)
+					if err != nil {
+						log.Debug("GetSetupCommands: OpenKey %v, %v: %v", item.Key, item.Prefix+`SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings`, err)
+						return nil
+					}
+					defer key.Close()
+					_ = key.DeleteValue("AutoConfigURL")
+					if err = key.SetDWordValue("ProxyEnable", 1); err != nil {
+						log.Debug("GetSetupCommands: key: %v: SetDWordValue ProxyEnable: %v", item.Key, err)
+						return err
+					}
+					if err = key.SetStringValue("ProxyServer", "127.0.0.1:52345"); err != nil {
+						log.Debug("GetSetupCommands: key: %v: SetStringValue ProxyServer: %v", item.Key, err)
+						return err
+					}
+					return nil
+				}()
 				if err != nil {
-					log.Debug("GetSetupCommands: OpenKey %v, %v: %v", todo.Key, todo.Prefix+`SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings`, err)
-					continue
-				}
-				defer key.Close()
-				_ = key.DeleteValue("AutoConfigURL")
-				if err = key.SetDWordValue("ProxyEnable", 1); err != nil {
-					log.Debug("GetSetupCommands: key: %v: SetDWordValue ProxyEnable: %v", todo.Key, err)
-					return err
-				}
-				if err = key.SetStringValue("ProxyServer", "127.0.0.1:52345"); err != nil {
-					log.Debug("GetSetupCommands: key: %v: SetStringValue ProxyServer: %v", todo.Key, err)
 					return err
 				}
 			}
@@ -321,9 +328,8 @@ func (p *systemProxy) GetSetupCommands() Setter {
 				// To fix this, we set Windows Proxy settings using NETSH for all applications that rely on default system configuration.
 				time.Sleep(time.Second)
 				return exec.Command("netsh", "winhttp", "import", "proxy", "source=ie").Run()
-			} else {
-				return nil
 			}
+			return nil
 		},
 	}
 	return setter
@@ -335,132 +341,82 @@ func (p *systemProxy) GetCleanCommands() Setter {
 		return NewErrorSetter(err)
 	}
 
-	savedWindowsProxy.mu.Lock()
-	saved := savedWindowsProxy.saved
-	savedEnable := savedWindowsProxy.proxyEnable
-	savedServer := savedWindowsProxy.proxyServer
-	savedWindowsProxy.mu.Unlock()
-
-	if !saved {
-		// No saved state: fall back to original behavior (disable proxy)
-		setter := Setter{
-			PreFunc: func() error {
-				var todolist []todo
-				if hasAdminRights {
-					sids, err := getProfileListSubKeyNames()
-					if err != nil {
-						return err
-					}
-					for _, sid := range sids {
-						todolist = append(todolist, todo{
-							Key:    registry.USERS,
-							Prefix: sid + `\`,
-						})
-					}
-				} else {
-					todolist = append(todolist, todo{
-						Key:    registry.CURRENT_USER,
-						Prefix: "",
-					})
-				}
-
-				var errs []error
-				for _, todo := range todolist {
-					key, _, err := registry.CreateKey(todo.Key, todo.Prefix+`SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.ALL_ACCESS)
-					if err != nil {
-						errs = append(errs, err)
-						continue
-					}
-					defer key.Close()
-					if err = key.SetDWordValue("ProxyEnable", 0); err != nil {
-						errs = append(errs, err)
-						continue
-					}
-				}
-				_, _ = InternetOptionSettingsChanged()
-				if hasAdminRights {
-					e := exec.Command("netsh", "winhttp", "import", "proxy", "source=ie").Run()
-					if e != nil {
-						errs = append(errs, e)
-					}
-				}
-				if len(errs) > 0 {
-					return errs[0]
-				}
-				return nil
-			},
-		}
-		return setter
-	}
-
-	// Restore original state
-	setter := Setter{
+	return Setter{
 		PreFunc: func() error {
-			var todolist []todo
-			if hasAdminRights {
-				sids, err := getProfileListSubKeyNames()
-				if err != nil {
-					return err
+			savedWindowsProxy.mu.Lock()
+			saved := savedWindowsProxy.saved
+			var entries map[string]windowsEntryProxyState
+			if saved && savedWindowsProxy.entries != nil {
+				entries = make(map[string]windowsEntryProxyState, len(savedWindowsProxy.entries))
+				for k, v := range savedWindowsProxy.entries {
+					entries[k] = v
 				}
-				for _, sid := range sids {
-					todolist = append(todolist, todo{
-						Key:    registry.USERS,
-						Prefix: sid + `\`,
-					})
-				}
-			} else {
-				todolist = append(todolist, todo{
-					Key:    registry.CURRENT_USER,
-					Prefix: "",
-				})
+			}
+			savedWindowsProxy.mu.Unlock()
+
+			todolist, err := buildWindowsTodoList(hasAdminRights)
+			if err != nil {
+				return err
 			}
 
 			var errs []error
-			for _, todo := range todolist {
-				key, _, err := registry.CreateKey(todo.Key, todo.Prefix+`SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.ALL_ACCESS)
+			for _, item := range todolist {
+				key, err := registry.OpenKey(item.Key, item.Prefix+`SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.ALL_ACCESS)
 				if err != nil {
+					if err == registry.ErrNotExist {
+						continue
+					}
 					errs = append(errs, err)
 					continue
 				}
-				defer key.Close()
-
-				if savedEnable == 1 {
-					// Proxy was originally enabled: restore original server
-					if savedServer != "" {
-						if err = key.SetStringValue("ProxyServer", savedServer); err != nil {
+				if saved {
+					if state, ok := entries[item.Prefix]; ok {
+						if state.hasAutoConfig {
+							if err = key.SetStringValue("AutoConfigURL", state.autoConfigURL); err != nil {
+								errs = append(errs, err)
+							}
+						} else {
+							_ = key.DeleteValue("AutoConfigURL")
+						}
+						if state.hasProxyServer {
+							if err = key.SetStringValue("ProxyServer", state.proxyServer); err != nil {
+								errs = append(errs, err)
+							}
+						} else {
+							_ = key.DeleteValue("ProxyServer")
+						}
+						if err = key.SetDWordValue("ProxyEnable", state.proxyEnable); err != nil {
 							errs = append(errs, err)
-							continue
+						}
+					} else {
+						if err = key.SetDWordValue("ProxyEnable", 0); err != nil {
+							errs = append(errs, err)
 						}
 					}
-					if err = key.SetDWordValue("ProxyEnable", 1); err != nil {
-						errs = append(errs, err)
-						continue
-					}
 				} else {
-					// Proxy was originally disabled: disable it
 					if err = key.SetDWordValue("ProxyEnable", 0); err != nil {
 						errs = append(errs, err)
-						continue
 					}
 				}
+				_ = key.Close()
 			}
+
 			_, _ = InternetOptionSettingsChanged()
 			if hasAdminRights {
-				e := exec.Command("netsh", "winhttp", "import", "proxy", "source=ie").Run()
-				if e != nil {
+				if e := exec.Command("netsh", "winhttp", "import", "proxy", "source=ie").Run(); e != nil {
 					errs = append(errs, e)
 				}
 			}
+
+			savedWindowsProxy.mu.Lock()
+			savedWindowsProxy.saved = false
+			savedWindowsProxy.entries = nil
+			savedWindowsProxy.mu.Unlock()
+
 			if len(errs) > 0 {
 				return errs[0]
 			}
 			return nil
 		},
 	}
-
-	savedWindowsProxy.mu.Lock()
-	savedWindowsProxy.saved = false
-	savedWindowsProxy.mu.Unlock()
-
-	return setter
 }

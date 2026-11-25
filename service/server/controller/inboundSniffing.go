@@ -21,6 +21,9 @@ func PutDomainsExcluded(ctx *gin.Context) {
 		common.ResponseError(ctx, logError("bad request"))
 		return
 	}
-	configure.SetDomainsExcluded(data.DomainList)
+	if err := configure.SetDomainsExcluded(data.DomainList); err != nil {
+		common.ResponseError(ctx, logError(err))
+		return
+	}
 	common.ResponseSuccess(ctx, nil)
 }

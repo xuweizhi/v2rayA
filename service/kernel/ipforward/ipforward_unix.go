@@ -1,5 +1,5 @@
-//go:build darwin || dragonfly || freebsd || (js && wasm) || netbsd || openbsd
-// +build darwin dragonfly freebsd js,wasm netbsd openbsd
+//go:build darwin || dragonfly || freebsd || netbsd || openbsd
+// +build darwin dragonfly freebsd netbsd openbsd
 
 package ipforward
 
@@ -11,8 +11,8 @@ import (
 )
 
 func IsIpForwardOn() bool {
-	out, err := syscall.Sysctl("net.inet.ip.forwarding")
-	return err == nil && strings.TrimSpace(out) == "1"
+	val, err := syscall.SysctlUint32("net.inet.ip.forwarding")
+	return err == nil && val == 1
 }
 
 func WriteIpForward(on bool) (err error) {
@@ -25,6 +25,9 @@ func WriteIpForward(on bool) (err error) {
 	if on {
 		val = "1"
 	}
-	_, err = exec.Command("sysctl -w net.inet.ip.forwarding=" + val).CombinedOutput()
-	return err
+	out, err := exec.Command("sysctl", "-w", "net.inet.ip.forwarding="+val).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

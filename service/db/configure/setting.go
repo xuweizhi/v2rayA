@@ -1,6 +1,8 @@
 package configure
 
 import (
+	"net"
+
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/kernel/ipforward"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
@@ -94,6 +96,26 @@ func NewSetting() (setting *Setting) {
 		DnsPrefetch:      true,
 		DnsNegativeCache: true,
 	}
+}
+
+// DNSListenAddress resolves wildcard defaults from both new and existing databases.
+func (s *Setting) DNSListenAddress() string {
+	addr := s.DnsListenAddr
+	if addr == "" {
+		addr = "0.0.0.0:52353"
+	}
+	if !s.PortSharing {
+		host, port, err := net.SplitHostPort(addr)
+		if err == nil {
+			switch host {
+			case "", "0.0.0.0":
+				return net.JoinHostPort("127.0.0.1", port)
+			case "::":
+				return net.JoinHostPort("::1", port)
+			}
+		}
+	}
+	return addr
 }
 
 func (s *Setting) FillEmpty() {

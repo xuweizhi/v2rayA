@@ -19,7 +19,7 @@
         <b-button size="is-small" @click="paused = !paused">
           {{ paused ? $t("connections.resume") : $t("connections.pause") }}
         </b-button>
-        <b-button size="is-small" @click="connections = []">
+        <b-button size="is-small" @click="clearConnections">
           {{ $t("connections.clear") }}
         </b-button>
         <b-input
@@ -109,9 +109,8 @@
           <b-field :label="$t('dns.colOutbound')">
             <b-select v-model="newRule.outbound" expanded>
               <option value="direct">direct</option>
-              <option value="proxy">proxy</option>
               <option
-                v-for="out in outbounds"
+                v-for="out in outboundOptions"
                 :key="out"
                 :value="out"
               >{{ out }}</option>
@@ -122,7 +121,12 @@
           <button class="button" type="button" @click="showRuleDialog = false">
             {{ $t("operations.cancel") }}
           </button>
-          <button class="button is-primary" @click="createRule">
+          <button
+            class="button is-primary"
+            :class="{ 'is-loading': creatingRule }"
+            :disabled="creatingRule"
+            @click="createRule"
+          >
             {{ $t("operations.saveApply") }}
           </button>
         </footer>
@@ -137,19 +141,37 @@ export default {
   name: "ModalConnections",
   data: () => ({
     connections: [],
+    clearedAfterTime: 0,
     paused: false,
     page: 1,
     search: "",
     timer: null,
     outbounds: ["proxy"],
     showRuleDialog: false,
+    creatingRule: false,
     newRule: { domains: "", server: "223.5.5.5", outbound: "direct" },
   }),
   computed: {
+    outboundOptions() {
+      const list = ["proxy"];
+      for (const out of this.outbounds || []) {
+        if (out && out !== "direct" && !list.includes(out)) {
+          list.push(out);
+        }
+      }
+      return list;
+    },
     filteredConnections() {
-      const q = (this.search || "").toLowerCase();
-      if (!q) return this.connections;
-      return this.connections.filter(
+      let list = this.connections;
+      if (this.clearedAfterTime > 0) {
+        list = list.filter((c) => {
+          const ts = new Date(c.time).getTime();
+          return Number.isFinite(ts) && ts > this.clearedAfterTime;
+        });
+      }
+      const q = (this.search || "").trim().toLowerCase();
+      if (!q) return list;
+      return list.filter(
         (c) =>
           (c.dest || "").toLowerCase().includes(q) ||
           (c.source || "").toLowerCase().includes(q) ||
@@ -158,11 +180,13 @@ export default {
     },
   },
   created() {
-    this.$axios({ url: apiRoot + "/outbounds", method: "get" }).then((res) => {
-      if (res.data && res.data.data && res.data.data.outbounds) {
-        this.outbounds = res.data.data.outbounds;
-      }
-    });
+    this.$axios({ url: apiRoot + "/outbounds", method: "get" })
+      .then((res) => {
+        if (res.data && res.data.data && res.data.data.outbounds) {
+          this.outbounds = res.data.data.outbounds;
+        }
+      })
+      .catch(() => {});
     this.refresh();
     this.timer = setInterval(() => {
       if (!this.paused) this.refresh();
@@ -172,15 +196,28 @@ export default {
     if (this.timer) clearInterval(this.timer);
   },
   methods: {
+    clearConnections() {
+      let maxTime = Date.now();
+      for (const c of this.connections) {
+        const ts = new Date(c.time).getTime();
+        if (Number.isFinite(ts) && ts > maxTime) {
+          maxTime = ts;
+        }
+      }
+      this.clearedAfterTime = maxTime;
+      this.connections = [];
+    },
     refresh() {
       this.$axios({
         url: apiRoot + "/connections?limit=500",
         method: "get",
-      }).then((res) => {
-        if (res.data && res.data.code === "SUCCESS" && res.data.data) {
-          this.connections = res.data.data.connections || [];
-        }
-      });
+      })
+        .then((res) => {
+          if (res.data && res.data.code === "SUCCESS" && res.data.data) {
+            this.connections = res.data.data.connections || [];
+          }
+        })
+        .catch(() => {});
     },
     formatTime(t) {
       const d = new Date(t);
@@ -258,36 +295,61 @@ export default {
       this.showRuleDialog = true;
     },
     createRule() {
-      if (!this.newRule.domains.trim() || !this.newRule.server.trim()) {
+      if (
+        this.creatingRule ||
+        !this.newRule.domains.trim() ||
+        !this.newRule.server.trim()
+      ) {
         return;
       }
-      this.$axios({ url: apiRoot + "/dnsRules", method: "get" }).then((res) => {
-        let rules = [];
-        if (res.data && res.data.code === "SUCCESS" && res.data.data) {
-          rules = res.data.data.rules || [];
-        }
-        rules.push({
-          server: this.newRule.server,
-          domains: this.newRule.domains,
-          outbound: this.newRule.outbound,
-        });
-        this.$axios({
-          url: apiRoot + "/dnsRules",
-          method: "put",
-          data: rules,
-        }).then((res2) => {
-          handleResponse(res2, this, () => {
+      this.creatingRule = true;
+      this.$axios({ url: apiRoot + "/dnsRules", method: "get" })
+        .then((res) => {
+          if (!res.data || res.data.code !== "SUCCESS" || !Array.isArray(res.data.data?.rules)) {
             this.$buefy.toast.open({
-              message: this.$t("common.success"),
-              type: "is-success",
+              message: res.data?.message || this.$t("common.fail"),
+              type: "is-warning",
               position: "is-top",
-              duration: 3000,
+              duration: 5000,
               queue: false,
             });
-            this.showRuleDialog = false;
+            return null;
+          }
+          const rules = res.data.data.rules.slice();
+          rules.push({
+            server: this.newRule.server.trim(),
+            domains: this.newRule.domains.trim(),
+            outbound: this.newRule.outbound,
           });
+          return this.$axios({
+            url: apiRoot + "/dnsRules",
+            method: "put",
+            data: rules,
+          }).then((res2) => {
+            handleResponse(res2, this, () => {
+              this.$buefy.toast.open({
+                message: this.$t("common.success"),
+                type: "is-success",
+                position: "is-top",
+                duration: 3000,
+                queue: false,
+              });
+              this.showRuleDialog = false;
+            });
+          });
+        })
+        .catch((err) => {
+          this.$buefy.toast.open({
+            message: err?.response?.data?.message || err?.message || this.$t("common.fail"),
+            type: "is-warning",
+            position: "is-top",
+            duration: 5000,
+            queue: false,
+          });
+        })
+        .finally(() => {
+          this.creatingRule = false;
         });
-      });
     },
   },
 };

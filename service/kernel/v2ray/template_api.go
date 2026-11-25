@@ -36,6 +36,7 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 	// observatory
 	if serverData != nil {
 		outbounds := t.outNames()
+		var observatoryTags []string
 		for outbound, isGroup := range outbounds {
 			if !isGroup {
 				continue
@@ -43,6 +44,7 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 
 			//TODO: random, leastload
 			strategy := serverData.OutboundName2Setting[outbound].Type
+			isLeastPing := strings.EqualFold(strategy.String(), string(configure.LeastPing))
 			interval, err := time.ParseDuration(serverData.OutboundName2Setting[outbound].ProbeInterval)
 			if err != nil {
 				log.Warn("observatory: %v", err)
@@ -59,7 +61,7 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 			// An empty least-ping result otherwise selects Xray's first outbound,
 			// which can belong to a different group.
 			fallback := ""
-			if strategy == configure.LeastPing {
+			if isLeastPing {
 				fallback = "block"
 			}
 			t.Routing.Balancers = append(t.Routing.Balancers, coreObj.Balancer{
@@ -74,7 +76,7 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 				},
 			})
 
-			if strings.ToLower(strategy.String()) == "leastping" {
+			if isLeastPing {
 				probeUrl := serverData.OutboundName2Setting[outbound].ProbeURL
 				if _, err := url.Parse(probeUrl); err != nil {
 					log.Warn("observatory: %v", err)
@@ -98,20 +100,12 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 						ProbeInterval: interval.String(),
 					},
 				})
+				observatoryTags = append(observatoryTags, outbound)
 			}
 		}
-		if t.MultiObservatory != nil || t.Observatory != nil {
+		if len(observatoryTags) > 0 && t.Variant == where.V2rayaCore {
 			// v2raya_core supports ObservatoryService via the v2ray-compat gRPC path.
-			if t.Variant == where.V2rayaCore {
-
-				var observatoryTags []string
-				for name, isGroup := range t.outNames() {
-					if isGroup {
-						observatoryTags = append(observatoryTags, name)
-					}
-				}
-				t.ApiCloses = append(t.ApiCloses, ObservatoryProducer(port, observatoryTags))
-			}
+			t.ApiCloses = append(t.ApiCloses, ObservatoryProducer(port, observatoryTags))
 		}
 	}
 	t.API = &coreObj.APIObject{
@@ -136,7 +130,7 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 		},
 		Tag: "api-in",
 	})
-	t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{
+	t.internalRoutes = append(t.internalRoutes, coreObj.RoutingRule{
 		Type:        "field",
 		InboundTag:  []string{"api-in"},
 		OutboundTag: "api-out",

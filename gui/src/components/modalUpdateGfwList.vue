@@ -68,6 +68,15 @@ export default {
   },
   methods: {
     handleClickDelete() {
+      this.$buefy.dialog.confirm({
+        message: this.$t("gfwList.confirmRemoval"),
+        confirmText: this.$t("operations.delete"),
+        cancelText: this.$t("operations.cancel"),
+        type: "is-danger",
+        onConfirm: this.removeList,
+      });
+    },
+    removeList() {
       this.$axios({
         url: apiRoot + "/gfwList",
         method: "delete",
@@ -78,7 +87,8 @@ export default {
       });
     },
     handleClickSubmit() {
-      if (!this.downloadLink.startsWith("http") && this.downloadLink != "") {
+      const downloadLink = this.downloadLink.trim();
+      if (downloadLink && !/^https?:\/\//i.test(downloadLink)) {
         this.$buefy.toast.open({
           message: this.$t("gfwList.wrongCustomLink"),
           type: "is-warning",
@@ -94,7 +104,7 @@ export default {
         method: "put",
         timeout: 0,
         data: {
-          downloadLink: this.downloadLink,
+          downloadLink,
         },
       })
         .then((res) => {

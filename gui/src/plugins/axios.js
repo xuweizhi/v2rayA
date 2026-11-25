@@ -35,13 +35,22 @@ axios.interceptors.request.use(
   }
 );
 
-let informed = "";
+let informed = null;
 
 function informNotRunning(url = localStorage["backendAddress"]) {
-  if (informed === url) {
+  let displayUrl = url;
+  if (!displayUrl) {
+    const saved = localStorage["backendAddress"] || "";
+    displayUrl = saved.startsWith("/")
+      ? window.location.origin + saved
+      : saved || window.location.origin;
+  } else if (displayUrl.startsWith("/")) {
+    displayUrl = window.location.origin + displayUrl;
+  }
+  if (informed === displayUrl) {
     return;
   }
-  informed = url;
+  informed = displayUrl;
   snackbar.open({
     message: i18n.t("axios.messages.optimizeBackend"),
     type: "is-primary",
@@ -59,7 +68,7 @@ function informNotRunning(url = localStorage["backendAddress"]) {
     },
   });
   snackbar.open({
-    message: i18n.t("axios.messages.noBackendFound", { url }),
+    message: i18n.t("axios.messages.noBackendFound", { url: displayUrl }),
     type: "is-warning",
     queue: false,
     position: "is-top",
@@ -82,8 +91,12 @@ axios.interceptors.response.use(
     }
     let u, host;
     if (err.config?.url) {
-      u = parseURL(err.config.url);
-      host = u.host;
+      try {
+        u = parseURL(err.config.url);
+        host = u.host;
+      } catch {
+        // An invalid request URL still needs to reach the caller's error handler.
+      }
     }
     if (err.response && err.response.status === 401) {
       const reqUrl = (err.config && err.config.url) || "";
@@ -140,7 +153,7 @@ axios.interceptors.response.use(
       });
     } else if (
       (err.message && err.message === "Network Error") ||
-      (err.config && err.config.url === "/api/version")
+      err.config?.url?.endsWith("/api/version")
     ) {
       informNotRunning(u && u.source.replace(u.relative, ""));
     } else {

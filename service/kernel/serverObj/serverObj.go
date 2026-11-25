@@ -3,6 +3,7 @@ package serverObj
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/v2rayA/v2rayA/conf"
 	"github.com/v2rayA/v2rayA/kernel/coreObj"
@@ -99,4 +100,20 @@ func setValue(values *url.Values, key string, value string) {
 		return
 	}
 	values.Set(key, value)
+}
+
+func isQueryTruthy(v string) bool {
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+func updateLinkFragment(link, name string) string {
+	if link == "" {
+		return ""
+	}
+	u, err := url.Parse(link)
+	if err != nil {
+		return link
+	}
+	u.Fragment = name
+	return u.String()
 }

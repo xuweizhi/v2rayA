@@ -2,6 +2,7 @@ package where
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -48,21 +49,20 @@ func GetV2rayServiceVersion() (variant Variant, ver string, err error) {
 	}
 
 	// Get version from binary
-	cmd := exec.Command(v2rayPath, "version")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, v2rayPath, "version")
 	output := bytes.NewBuffer(nil)
 	cmd.Stdout = output
 	cmd.Stderr = output
-	go func() {
-		time.Sleep(5 * time.Second)
-		p := cmd.Process
-		if p != nil {
-			_ = p.Kill()
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return V2rayaCore, "", fmt.Errorf("timed out getting v2ray version: %w", ctx.Err())
 		}
-	}()
-	if err := cmd.Start(); err != nil {
-		return V2rayaCore, "", err
+		if output.Len() == 0 {
+			return V2rayaCore, "", err
+		}
 	}
-	cmd.Wait()
 
 	fields := strings.Fields(strings.TrimSpace(output.String()))
 	if len(fields) < 2 {

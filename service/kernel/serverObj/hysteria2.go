@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/v2rayA/v2rayA/kernel/coreObj"
 )
@@ -179,7 +180,7 @@ func (s *Hysteria2) Configuration(info PriorInfo) (c Configuration, err error) {
 		}}
 	}
 	if p.hopPorts != "" {
-		interval := p.hopInterval
+		interval := normalizeHopInterval(p.hopInterval)
 		if interval == "" {
 			interval = "30"
 		}
@@ -217,7 +218,7 @@ func (s *Hysteria2) Configuration(info PriorInfo) (c Configuration, err error) {
 }
 
 func (s *Hysteria2) ExportToURL() string {
-	return s.Link
+	return updateLinkFragment(s.Link, s.Name)
 }
 
 func (s *Hysteria2) NeedPluginPort() bool {
@@ -246,6 +247,42 @@ func (s *Hysteria2) GetName() string {
 
 func (s *Hysteria2) SetName(name string) {
 	s.Name = name
+	s.Link = updateLinkFragment(s.Link, name)
+}
+
+func parseHopSeconds(part string) (int, bool) {
+	part = strings.TrimSpace(part)
+	if part == "" {
+		return 0, false
+	}
+	if n, err := strconv.Atoi(part); err == nil {
+		return n, true
+	}
+	if d, err := time.ParseDuration(part); err == nil {
+		return int(d / time.Second), true
+	}
+	return 0, false
+}
+
+// normalizeHopInterval converts hysteria2 hopInterval values (e.g. "30s", "1m",
+// "10s-30s", "30") into the seconds integer or "min-max" range string expected
+// by xray-core's Int32Range.
+func normalizeHopInterval(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if secs, ok := parseHopSeconds(v); ok {
+		return strconv.Itoa(secs)
+	}
+	if parts := strings.SplitN(v, "-", 2); len(parts) == 2 {
+		left, okL := parseHopSeconds(parts[0])
+		right, okR := parseHopSeconds(parts[1])
+		if okL && okR {
+			return fmt.Sprintf("%d-%d", left, right)
+		}
+	}
+	return v
 }
 
 // normalizeBandwidth converts a hysteria2 bandwidth parameter into the unit

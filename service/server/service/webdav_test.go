@@ -92,3 +92,21 @@ func TestWebdavClientDoesNotRetryHTTPResponses(t *testing.T) {
 type emptyReader struct{}
 
 func (*emptyReader) Read(_ []byte) (int, error) { return 0, io.EOF }
+
+func TestWebdavFileNameIsOneLiteralPathComponent(t *testing.T) {
+	name := "report#100%? valid.db"
+	client := webdavClient{
+		baseURL: "https://dav.example.test/backups?share=existing",
+		clients: []*http.Client{{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/backups/"+name || r.URL.RawQuery != "share=existing" || r.URL.Fragment != "" {
+				t.Fatalf("incorrect target: %s", r.URL)
+			}
+			return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
+		})}},
+	}
+	resp, err := client.do(http.MethodGet, name, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+}

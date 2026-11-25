@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/miekg/dns"
@@ -60,9 +61,26 @@ func (m *UpstreamManager) SetDispatcher(d RouteDispatcher) {
 //
 // Exchange tries only the explicitly configured fallback resolvers. It never
 // consults an unrelated subscription or the default proxy DNS on failure.
+func isProxiedUpstream(upstream *UpstreamInstance) bool {
+	return upstream != nil && upstream.ProxyTag != "" && upstream.ProxyTag != "direct"
+}
+
 func (m *UpstreamManager) Exchange(upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
+	return m.ExchangeContext(context.Background(), upstream, query)
+}
+
+// ExchangeContext sends a DNS query to the specified upstream server (and any
+// explicitly configured fallback resolvers) while honoring ctx cancellation
+// and deadlines.
+func (m *UpstreamManager) ExchangeContext(ctx context.Context, upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if upstream == nil {
 		return nil, fmt.Errorf("nil DNS upstream")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	candidates := []*UpstreamInstance{upstream}
 	seen := map[string]bool{upstream.ID: true}
@@ -79,16 +97,31 @@ func (m *UpstreamManager) Exchange(upstream *UpstreamInstance, query *DnsQuery) 
 	}
 	var lastErr error
 	for _, candidate := range candidates {
-		if len(candidates) > 1 {
-			// Keep node-DNS fallback within the listener's five-second budget,
-			// including resolvers that drop packets instead of refusing them.
-			copy := *candidate
-			copy.attemptTimeout = 4 * time.Second / time.Duration(len(candidates))
-			candidate = &copy
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		response, err := m.exchangeOne(candidate, query)
+		if len(candidates) > 1 {
+			// Keep node-DNS fallback within the listener's budget,
+			// including resolvers that drop packets instead of refusing them.
+			budget := 4 * time.Second
+			if deadline, ok := ctx.Deadline(); ok {
+				if rem := time.Until(deadline); rem > 0 && rem < budget {
+					budget = rem
+				}
+			}
+			cp := *candidate
+			cp.attemptTimeout = budget / time.Duration(len(candidates))
+			if cp.attemptTimeout <= 0 {
+				cp.attemptTimeout = 100 * time.Millisecond
+			}
+			candidate = &cp
+		}
+		response, err := m.exchangeOne(ctx, candidate, query)
 		if err == nil && response != nil && response.Rcode != dns.RcodeServerFailure && response.Rcode != dns.RcodeRefused {
 			return response, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		if err == nil {
 			err = fmt.Errorf("DNS upstream %q returned no usable response", candidate.ID)
@@ -98,20 +131,20 @@ func (m *UpstreamManager) Exchange(upstream *UpstreamInstance, query *DnsQuery) 
 	return nil, lastErr
 }
 
-func (m *UpstreamManager) exchangeOne(upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
+func (m *UpstreamManager) exchangeOne(ctx context.Context, upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
 	if upstream == nil {
 		return nil, nil
 	}
 
-	if upstream.Protocol == "https" || upstream.Protocol == "doh" || upstream.Protocol == "tcp-tls" || upstream.Protocol == "tls" || upstream.Protocol == "dot" {
-		return m.exchangeEncrypted(upstream, query)
+	if isEncryptedDNS(upstream.Protocol) {
+		return m.exchangeEncryptedContext(ctx, upstream, query)
 	}
 	// Route through proxy if a proxy channel is specified — use dispatcher or SOCKS5.
-	if upstream.ProxyTag != "" && upstream.ProxyTag != "direct" {
+	if isProxiedUpstream(upstream) {
 		if m.getDispatcher() != nil {
-			return m.exchangeViaDispatcher(upstream, query)
+			return m.exchangeViaDispatcher(ctx, upstream, query)
 		}
-		return m.exchangeViaProxy(upstream, query)
+		return m.exchangeViaProxy(ctx, upstream, query)
 	}
 
 	// Direct upstream: use direct UDP/TCP with SO_MARK=0x80 on the socket.
@@ -119,33 +152,53 @@ func (m *UpstreamManager) exchangeOne(upstream *UpstreamInstance, query *DnsQuer
 	//   - DNS_MARK chain checks 0x80/0x80 → RETURN (skip)
 	//   - No 0x40 mark set, so ip rule fwmark 0x40/0xc0 doesn't match
 	//   - Packet goes out normally, no redirect to :52353
-	return m.exchangeDirect(upstream, query)
+	return m.exchangeDirect(ctx, upstream, query)
 }
 
-// UDP, TCP and proxied DNS share the same EDNS options. Only add ECS for
-// a public client; IsGlobalUnicast alone also accepts private addresses.
+// UDP, TCP and direct encrypted DNS share the same EDNS options.
+// Only add ECS for a public client on direct queries; proxied queries suppress
+// client ECS to prevent leaking the client's real IP through the proxy.
 func upstreamQuestion(query *DnsQuery) *dns.Msg {
+	return buildUpstreamQuestion(query, false)
+}
+
+func buildUpstreamQuestion(query *DnsQuery, proxied bool) *dns.Msg {
+	qclass := query.QClass
+	if qclass == 0 {
+		qclass = dns.ClassINET
+	}
 	msg := new(dns.Msg).SetQuestion(dns.Fqdn(query.Name), uint16(query.QType))
-	msg.SetEdns0(4096, true)
+	msg.Question[0].Qclass = qclass
+	msg.SetEdns0(4096, query.DNSSECOK)
 	markOutgoing(msg)
-	NewResponseBuilder().addECS(msg, upstreamClientSubnet(query.ClientIP))
+	if !proxied {
+		NewResponseBuilder().addECS(msg, upstreamClientSubnet(query.ClientIP))
+	}
 	return msg
 }
 
 // exchangeDirect sends a DNS query directly via UDP/TCP with SO_MARK=0x80 set
 // on the socket. The 0x80 mark tells iptables to skip redirect (loop protection).
-func (m *UpstreamManager) exchangeDirect(upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
+func (m *UpstreamManager) exchangeDirect(ctx context.Context, upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
 	if upstream == nil {
 		return nil, nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	// Build the DNS query message.
-	msg := upstreamQuestion(query)
-
-	protocol := upstream.Protocol
+	protocol := strings.ToLower(strings.TrimSpace(upstream.Protocol))
 	if protocol == "" {
 		protocol = "udp"
 	}
+	switch protocol {
+	case "udp", "udp4", "udp6", "tcp", "tcp4", "tcp6":
+	default:
+		return nil, fmt.Errorf("dns upstream: unsupported direct protocol %q", upstream.Protocol)
+	}
+
+	// Build the DNS query message.
+	msg := buildUpstreamQuestion(query, false)
 
 	dnsLogf("[dns upstream] exchange direct: %s %s → %s (%s)",
 		dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr, protocol)
@@ -154,11 +207,11 @@ func (m *UpstreamManager) exchangeDirect(upstream *UpstreamInstance, query *DnsQ
 	// The Control function sets the socket mark to 0x80, which iptables
 	// DNS_MARK/TP_OUT chains check and RETURN (skip), preventing the loop.
 	client := newMarkedDnsClient(protocol)
-	ctx := context.Background()
+	reqCtx := ctx
 	attempts := 2
 	if upstream.attemptTimeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, upstream.attemptTimeout)
+		reqCtx, cancel = context.WithTimeout(ctx, upstream.attemptTimeout)
 		defer cancel()
 		attempts = 1
 	}
@@ -172,27 +225,39 @@ func (m *UpstreamManager) exchangeDirect(upstream *UpstreamInstance, query *DnsQ
 		if attempt > 0 {
 			log.Printf("[dns upstream] retry %d: %s %s → %s", attempt+1,
 				dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr)
-			time.Sleep(100 * time.Millisecond)
+			timer := time.NewTimer(100 * time.Millisecond)
+			select {
+			case <-reqCtx.Done():
+				timer.Stop()
+				return nil, fmt.Errorf("dns upstream: exchange failed: %w", reqCtx.Err())
+			case <-timer.C:
+			}
 		}
 
-		resp, rtt, err = client.ExchangeContext(ctx, msg, upstream.Addr)
+		resp, rtt, err = client.ExchangeContext(reqCtx, msg, upstream.Addr)
 
 		if err != nil {
 			log.Printf("[dns upstream] attempt %d error: %s %s → %s: %v", attempt+1,
 				dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr, err)
+			if reqCtx.Err() != nil {
+				break
+			}
 			continue
 		}
 
 		// Handle UDP truncation → TCP fallback.
-		if resp != nil && resp.Truncated && protocol == "udp" {
+		if resp != nil && resp.Truncated && (protocol == "udp" || protocol == "udp4" || protocol == "udp6") {
 			log.Printf("[dns upstream] truncated response, falling back to TCP: %s %s → %s",
 				dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr)
 
 			tcpClient := newMarkedDnsClient("tcp")
-			resp, rtt, err = tcpClient.ExchangeContext(ctx, msg, upstream.Addr)
+			resp, rtt, err = tcpClient.ExchangeContext(reqCtx, msg, upstream.Addr)
 			if err != nil {
 				log.Printf("[dns upstream] TCP fallback error (attempt %d): %s %s → %s: %v", attempt+1,
 					dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr, err)
+				if reqCtx.Err() != nil {
+					break
+				}
 				continue
 			}
 		}
@@ -211,7 +276,7 @@ func (m *UpstreamManager) exchangeDirect(upstream *UpstreamInstance, query *DnsQ
 	if err := ValidateResponse(resp); err != nil {
 		return nil, fmt.Errorf("dns upstream: invalid response: %w", err)
 	}
-	if err := ValidateQuestionMatch(resp, query.Name, query.QType); err != nil {
+	if err := validateQuestionMatchWithClass(resp, query.Name, query.QType, query.QClass); err != nil {
 		return nil, fmt.Errorf("dns upstream: question mismatch: %w", err)
 	}
 
@@ -234,6 +299,7 @@ func (m *UpstreamManager) exchangeDirect(upstream *UpstreamInstance, query *DnsQ
 		Additional: resp.Extra,
 		TTL:        ttl,
 		Upstream:   upstream.Addr,
+		UpstreamID: upstream.ID,
 		ProxyTag:   upstream.ProxyTag,
 		RTT:        rtt,
 		Cached:     false,
@@ -250,16 +316,12 @@ func (m *UpstreamManager) exchangeDirect(upstream *UpstreamInstance, query *DnsQ
 // It uses the configured ProxyAddrResolver to find the SOCKS5/HTTP proxy
 // address for the given proxy tag, then sends the DNS query over TCP
 // through that proxy.
-//
-// This is a simplified implementation that:
-//  1. Resolves the proxy tag to a SOCKS5 proxy address.
-//  2. Establishes a TCP connection through the SOCKS5 proxy.
-//  3. Sends the DNS query over TCP (DNS over TCP is required for proxy).
-//  4. Reads and parses the response.
-//  5. Fails if the requested proxy channel is unavailable.
-func (m *UpstreamManager) exchangeViaProxy(upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
+func (m *UpstreamManager) exchangeViaProxy(ctx context.Context, upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
 	if upstream == nil {
 		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	dnsLogf("[dns upstream] exchange via proxy: %s %s → %s (proxyTag=%s)",
@@ -271,29 +333,46 @@ func (m *UpstreamManager) exchangeViaProxy(upstream *UpstreamInstance, query *Dn
 		return nil, fmt.Errorf("DNS proxy %q is unavailable", upstream.ProxyTag)
 	}
 
-	// Build DNS query message.
-	msg := upstreamQuestion(query)
+	// Build DNS query message (suppress client ECS on proxied queries).
+	msg := buildUpstreamQuestion(query, true)
 
-	// Exchange via SOCKS5 proxy (DNS over TCP).
-	start := time.Now()
-	resp, err := m.exchangeViaSocks5(proxyAddr, upstream.Addr, msg)
-	rtt := time.Since(start)
+	timeout := 5 * time.Second
+	attempts := 2
+	if upstream.attemptTimeout > 0 {
+		timeout = upstream.attemptTimeout
+		attempts = 1
+	}
+
+	var resp *dns.Msg
+	var rtt time.Duration
+	var err error
+
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			timer := time.NewTimer(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, fmt.Errorf("dns upstream: proxy exchange failed: %w", ctx.Err())
+			case <-timer.C:
+			}
+		}
+
+		start := time.Now()
+		resp, err = m.exchangeViaSocks5(ctx, proxyAddr, upstream.Addr, msg, timeout)
+		rtt = time.Since(start)
+		if err == nil {
+			break
+		}
+		log.Printf("[dns upstream] proxy exchange error (attempt %d): %s %s → %s via %s: %v",
+			attempt+1, dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr, proxyAddr, err)
+		if ctx.Err() != nil {
+			break
+		}
+	}
 
 	if err != nil {
-		log.Printf("[dns upstream] proxy exchange error: %s %s → %s via %s: %v",
-			dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr, proxyAddr, err)
-
-		// Retry once
-		time.Sleep(100 * time.Millisecond)
-		start = time.Now()
-		resp, err = m.exchangeViaSocks5(proxyAddr, upstream.Addr, msg)
-		rtt = time.Since(start)
-
-		if err != nil {
-			log.Printf("[dns upstream] proxy exchange retry failed: %s %s → %s via %s: %v",
-				dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr, proxyAddr, err)
-			return nil, fmt.Errorf("dns upstream: proxy exchange failed: %w", err)
-		}
+		return nil, fmt.Errorf("dns upstream: proxy exchange failed: %w", err)
 	}
 
 	if resp == nil {
@@ -306,7 +385,7 @@ func (m *UpstreamManager) exchangeViaProxy(upstream *UpstreamInstance, query *Dn
 	if err := ValidateResponse(resp); err != nil {
 		return nil, fmt.Errorf("dns upstream: invalid proxy response: %w", err)
 	}
-	if err := ValidateQuestionMatch(resp, query.Name, query.QType); err != nil {
+	if err := validateQuestionMatchWithClass(resp, query.Name, query.QType, query.QClass); err != nil {
 		return nil, fmt.Errorf("dns upstream: proxy question mismatch: %w", err)
 	}
 
@@ -330,6 +409,7 @@ func (m *UpstreamManager) exchangeViaProxy(upstream *UpstreamInstance, query *Dn
 		Additional: resp.Extra,
 		TTL:        ttl,
 		Upstream:   upstream.Addr,
+		UpstreamID: upstream.ID,
 		ProxyTag:   upstream.ProxyTag,
 		RTT:        rtt,
 		Cached:     false,
@@ -343,36 +423,63 @@ func (m *UpstreamManager) exchangeViaProxy(upstream *UpstreamInstance, query *Dn
 }
 
 // exchangeViaSocks5 sends a DNS query through a SOCKS5 proxy using TCP.
-// It implements the SOCKS5 protocol to establish a connection through
-// the proxy, then sends the DNS query over TCP.
-func (m *UpstreamManager) exchangeViaSocks5(proxyAddr, targetAddr string, msg *dns.Msg) (*dns.Msg, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// It honors ctx cancellation/deadline and the configured attempt timeout.
+func (m *UpstreamManager) exchangeViaSocks5(ctx context.Context, proxyAddr, targetAddr string, msg *dns.Msg, timeout time.Duration) (*dns.Msg, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	dialer, err := proxy.SOCKS5("tcp", proxyAddr, nil, markedDialer())
 	if err != nil {
 		return nil, err
 	}
-	conn, err := dialer.(proxy.ContextDialer).DialContext(ctx, "tcp", targetAddr)
+	conn, err := dialer.(proxy.ContextDialer).DialContext(reqCtx, "tcp", targetAddr)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-	deadline, _ := ctx.Deadline()
-	return exchangeDNSConn(conn, msg, deadline)
+	return exchangeDNSConnContext(reqCtx, conn, msg)
 }
 
 // dns.Conn reads the full TCP length prefix and payload, including fragmented
 // SOCKS5/TCP packets. IDs still need checking when using Conn directly.
 func exchangeDNSConn(conn net.Conn, msg *dns.Msg, deadline time.Time) (*dns.Msg, error) {
-	if err := conn.SetDeadline(deadline); err != nil {
-		return nil, err
+	ctx := context.Background()
+	if !deadline.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
 	}
+	return exchangeDNSConnContext(ctx, conn, msg)
+}
+
+func exchangeDNSConnContext(ctx context.Context, conn net.Conn, msg *dns.Msg) (*dns.Msg, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return nil, err
+		}
+	}
+	// Close the connection if ctx expires or is cancelled so connections whose
+	// SetDeadline is a no-op (such as xray cnc.Connection) cannot stall forever.
+	stopWatch := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopWatch()
+
 	client := &dns.Conn{Conn: conn}
 	if err := client.WriteMsg(msg); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	response, err := client.ReadMsg()
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	if response.Id != msg.Id {
@@ -458,9 +565,14 @@ func (m *UpstreamManager) ExchangeRaw(upstream *UpstreamInstance, msg *dns.Msg) 
 		return nil, 0, fmt.Errorf("dns upstream: nil message")
 	}
 
-	protocol := upstream.Protocol
+	protocol := strings.ToLower(strings.TrimSpace(upstream.Protocol))
 	if protocol == "" {
 		protocol = "udp"
+	}
+	switch protocol {
+	case "udp", "udp4", "udp6", "tcp", "tcp4", "tcp6", "tcp-tls":
+	default:
+		return nil, 0, fmt.Errorf("dns upstream: exchange raw unsupported protocol %q", upstream.Protocol)
 	}
 
 	msg = msg.Copy()
@@ -494,32 +606,34 @@ func (m *UpstreamManager) ExchangeRaw(upstream *UpstreamInstance, msg *dns.Msg) 
 //
 // This replaces the external SOCKS5 proxy approach with v2raya-core's built-in
 // routing logic, supporting any outbound type (VMESS, VLESS, Trojan, etc.).
-func (m *UpstreamManager) exchangeViaDispatcher(upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
+func (m *UpstreamManager) exchangeViaDispatcher(ctx context.Context, upstream *UpstreamInstance, query *DnsQuery) (*DnsResponse, error) {
 	dispatcher := m.getDispatcher()
 	if upstream == nil || dispatcher == nil {
 		return nil, fmt.Errorf("DNS dispatcher is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	dnsLogf("[dns upstream] exchange via xray routing: %s %s → %s (proxyTag=%s)",
 		dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr, upstream.ProxyTag)
 
-	// Build DNS query message.
-	msg := upstreamQuestion(query)
+	// Build DNS query message (suppress client ECS on proxied queries).
+	msg := buildUpstreamQuestion(query, isProxiedUpstream(upstream))
 
 	timeout := 5 * time.Second
 	if upstream.attemptTimeout > 0 {
 		timeout = upstream.attemptTimeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	start := time.Now()
-	conn, err := dispatcher.Dispatch(ctx, "tcp", upstream.Addr, upstream.ProxyTag)
+	conn, err := dispatcher.Dispatch(reqCtx, "tcp", upstream.Addr, upstream.ProxyTag)
 	if err != nil {
 		return nil, fmt.Errorf("DNS dispatch: %w", err)
 	}
 	defer conn.Close()
-	deadline, _ := ctx.Deadline()
-	dnsResp, err := exchangeDNSConn(conn, msg, deadline)
+	dnsResp, err := exchangeDNSConnContext(reqCtx, conn, msg)
 	if err != nil {
 		return nil, fmt.Errorf("DNS dispatcher exchange: %w", err)
 	}
@@ -529,7 +643,7 @@ func (m *UpstreamManager) exchangeViaDispatcher(upstream *UpstreamInstance, quer
 	if err := ValidateResponse(dnsResp); err != nil {
 		return nil, fmt.Errorf("dns upstream: invalid dispatcher response: %w", err)
 	}
-	if err := ValidateQuestionMatch(dnsResp, query.Name, query.QType); err != nil {
+	if err := validateQuestionMatchWithClass(dnsResp, query.Name, query.QType, query.QClass); err != nil {
 		return nil, fmt.Errorf("dns upstream: dispatcher question mismatch: %w", err)
 	}
 
@@ -553,6 +667,7 @@ func (m *UpstreamManager) exchangeViaDispatcher(upstream *UpstreamInstance, quer
 		Additional: dnsResp.Extra,
 		TTL:        ttl,
 		Upstream:   upstream.Addr,
+		UpstreamID: upstream.ID,
 		ProxyTag:   upstream.ProxyTag,
 		RTT:        rtt,
 		Cached:     false,

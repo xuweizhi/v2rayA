@@ -14,6 +14,7 @@ import (
 	"github.com/v2rayA/v2rayA/kernel/v2ray/service"
 	"github.com/v2rayA/v2rayA/kernel/v2ray/where"
 	"github.com/v2rayA/v2rayA/pkg/util/privilege"
+	serverService "github.com/v2rayA/v2rayA/server/service"
 )
 
 func GetVersion(ctx *gin.Context) {
@@ -32,11 +33,12 @@ func GetVersion(ctx *gin.Context) {
 	}
 
 	versionErr := service.CheckCoreVersionMatch()
+	foundNew, remoteVersion := serverService.GetRemoteUpdateInfo()
 
 	common.ResponseSuccess(ctx, gin.H{
 		"version":          conf.Version,
-		"foundNew":         conf.FoundNew,
-		"remoteVersion":    conf.RemoteVersion,
+		"foundNew":         foundNew,
+		"remoteVersion":    remoteVersion,
 		"serviceValid":     service.IsV2rayServiceValid(),
 		"v5":               versionErr == nil,
 		"lite":             lite,

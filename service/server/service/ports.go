@@ -16,6 +16,8 @@ func GetPorts() configure.Ports {
 }
 
 func SetPorts(ports *configure.Ports) (err error) {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
 	if ports == nil {
 		return fmt.Errorf("ports are required")
 	}

@@ -165,8 +165,18 @@ func (t *Template) PrependCustomRoutingRules() {
 		if isBalancerBool, ok := valid[r.Outbound]; ok && isBalancerBool {
 			isBalancer = true
 		} else if !ok {
-			log.Warn("custom routing rule #%d dropped: unknown outbound %q", i+1, r.Outbound)
-			continue
+			if configure.GetOutboundSetting(r.Outbound).MemberRule != nil {
+				// Empty automatic outbound group: register a blackhole outbound
+				// so custom routing rules fail-closed instead of being dropped.
+				t.Outbounds = append(t.Outbounds, coreObj.OutboundObject{
+					Tag:      r.Outbound,
+					Protocol: "blackhole",
+				})
+				valid[r.Outbound] = false
+			} else {
+				log.Warn("custom routing rule #%d dropped: unknown outbound %q", i+1, r.Outbound)
+				continue
+			}
 		}
 		rule := coreObj.RoutingRule{
 			Type:        "field",
@@ -390,9 +400,15 @@ func parseRoutingA(t *Template, routingInboundTags []string) error {
 }
 
 // parseRoutingARules parses RoutingA rule text and returns routing rules
-// filtered by the given inboundTag. This is used for custom inbound RoutingA rules.
+// pinned to the given inboundTag. This is used for custom inbound RoutingA rules.
 // It does NOT create any inbounds or outbounds - only routing rules.
-func parseRoutingARules(rulesText string, inboundTag string) (rules []coreObj.RoutingRule, err error) {
+//
+// It parses `default:` definitions (falling back to defaultOutbound if absent,
+// or "block" if both are empty), validates every outbound target against
+// validOutbounds plus built-in "direct"/"block", ignores any `inboundTag(...)`
+// predicate so rules cannot escape inboundTag, and appends a final fallback rule
+// for inboundTag so unmatched traffic never leaks to the global default outbound.
+func parseRoutingARules(rulesText string, inboundTag string, defaultOutbound string, validOutbounds map[string]bool) (rules []coreObj.RoutingRule, err error) {
 	lines := strings.Split(rulesText, "\n")
 	hardcodeReplacement := regexp.MustCompile(`\$\$.+?\$\$`)
 	for i := range lines {
@@ -412,13 +428,35 @@ func parseRoutingARules(rulesText string, inboundTag string) (rules []coreObj.Ro
 	if err != nil {
 		return nil, err
 	}
+
+	resolveOutbound := func(tag string) (isBalancer bool, ok bool) {
+		if validOutbounds == nil {
+			return false, true
+		}
+		if isBal, exists := validOutbounds[tag]; exists {
+			return isBal, true
+		}
+		if tag == "direct" || tag == "block" {
+			return false, true
+		}
+		return false, false
+	}
+
 	for _, rule := range parsedRules {
 		switch rule := rule.(type) {
+		case RoutingA.Define:
+			if rule.Name == "default" {
+				if v, ok := rule.Value.(string); ok && v != "" {
+					if _, valid := resolveOutbound(v); !valid {
+						return nil, fmt.Errorf("unknown outbound %q in RoutingA default rule", v)
+					}
+					defaultOutbound = v
+				}
+			}
 		case RoutingA.Routing:
 			rr := deepcopy.Copy(coreObj.RoutingRule{
-				Type:        "field",
-				OutboundTag: rule.Out,
-				InboundTag:  []string{inboundTag},
+				Type:       "field",
+				InboundTag: []string{inboundTag},
 			}).(coreObj.RoutingRule)
 			for _, f := range rule.And {
 				switch f.Name {
@@ -471,30 +509,64 @@ func parseRoutingARules(rulesText string, inboundTag string) (rules []coreObj.Ro
 				case "user":
 					rr.User = f.Params
 				case "inboundTag":
-					rr.InboundTag = f.Params
+					// Custom inbound RoutingA rules must stay scoped to inboundTag.
+					log.Warn("parseRoutingARules: ignoring inboundTag(%v) override in custom inbound %q", f.Params, inboundTag)
 				}
 			}
-			if rr.OutboundTag != "" {
+			// Always pin InboundTag to the custom inbound's tag.
+			rr.InboundTag = []string{inboundTag}
+			if rule.Out != "" {
+				isBal, valid := resolveOutbound(rule.Out)
+				if !valid {
+					return nil, fmt.Errorf("unknown outbound %q in RoutingA rule", rule.Out)
+				}
+				if isBal {
+					rr.BalancerTag = rule.Out
+				} else {
+					rr.OutboundTag = rule.Out
+				}
 				rules = append(rules, rr)
 			}
 		}
 	}
+
+	if defaultOutbound == "" {
+		defaultOutbound = "block"
+	}
+	isBal, valid := resolveOutbound(defaultOutbound)
+	if !valid {
+		return nil, fmt.Errorf("unknown default outbound %q in RoutingA rules", defaultOutbound)
+	}
+	fallback := coreObj.RoutingRule{
+		Type:       "field",
+		InboundTag: []string{inboundTag},
+	}
+	if isBal {
+		fallback.BalancerTag = defaultOutbound
+	} else {
+		fallback.OutboundTag = defaultOutbound
+	}
+	rules = append(rules, fallback)
 	return rules, nil
 }
 
 func (t *Template) setTransparentRouting() (err error) {
+	inbounds := []string{"transparent"}
+	if t.Setting != nil && t.Setting.TransparentType == configure.TransparentSystemProxy {
+		inbounds = append(inbounds, "transparent-socks")
+	}
 	switch t.Setting.Transparent {
 	case configure.TransparentProxy:
 		// Global transparent: route all transparent inbound to default outbound
 		t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{
 			Type:        "field",
-			InboundTag:  []string{"transparent"},
+			InboundTag:  deepcopy.Copy(inbounds).([]string),
 			OutboundTag: t.defaultProxyTag,
 		})
 	case configure.TransparentWhitelist:
-		return t.AppendRoutingRuleByMode(configure.WhitelistMode, []string{"transparent"})
+		return t.AppendRoutingRuleByMode(configure.WhitelistMode, inbounds)
 	case configure.TransparentGfwlist:
-		return t.AppendRoutingRuleByMode(configure.GfwlistMode, []string{"transparent"})
+		return t.AppendRoutingRuleByMode(configure.GfwlistMode, inbounds)
 	case configure.TransparentFollowRule:
 		// transparent mode is the same as rule
 		for i := range t.Routing.Rules {
@@ -506,7 +578,7 @@ func (t *Template) setTransparentRouting() (err error) {
 				}
 			}
 			if ok {
-				t.Routing.Rules[i].InboundTag = append(t.Routing.Rules[i].InboundTag, "transparent")
+				t.Routing.Rules[i].InboundTag = append(t.Routing.Rules[i].InboundTag, inbounds...)
 			}
 		}
 	}
@@ -514,14 +586,18 @@ func (t *Template) setTransparentRouting() (err error) {
 }
 func (t *Template) AppendDokodemoTProxy(tproxy string, port int, tag string) {
 	// Follow the "Allow connections from LAN" (PortSharing) toggle, the same way
-	// the socks/http inbounds and dns-in already do. Redirected/forwarded traffic
+	// the socks/http inbounds already do. Redirected/forwarded traffic
 	// (e.g. docker bridge containers, which the PREROUTING transparent rules
 	// REDIRECT to the bridge interface address) can only reach the inbound when
-	// it listens on 0.0.0.0; since v2.4 the loopback-only default broke those
-	// flows entirely.
+	// it listens on a wildcard address; use dual-stack "::" when IPv6 is supported
+	// so both IPv4 and IPv6 redirected/tproxied traffic have a listener.
 	listenAddr := "127.0.0.1"
 	if t.Setting != nil && t.Setting.PortSharing {
-		listenAddr = "0.0.0.0"
+		if isIPv6Supported() {
+			listenAddr = "::"
+		} else {
+			listenAddr = "0.0.0.0"
+		}
 	}
 	dokodemo := coreObj.Inbound{
 		Listen:   listenAddr,
@@ -570,6 +646,9 @@ func (t *Template) optimizeGeoipMemoryOccupation() {
 func (t *Template) setWhitelistRouting(whitelist []Addr) {
 	var rules []coreObj.RoutingRule
 	for _, addr := range whitelist {
+		if addr.host == "" {
+			continue
+		}
 		if net.ParseIP(addr.host) != nil {
 			rules = append(rules, coreObj.RoutingRule{
 				Type:        "field",
@@ -581,7 +660,7 @@ func (t *Template) setWhitelistRouting(whitelist []Addr) {
 			rules = append(rules, coreObj.RoutingRule{
 				Type:        "field",
 				OutboundTag: "direct",
-				Domain:      []string{addr.host},
+				Domain:      []string{"full:" + addr.host},
 				Port:        addr.port,
 			})
 		}

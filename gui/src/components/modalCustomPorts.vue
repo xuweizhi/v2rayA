@@ -33,6 +33,7 @@
             placeholder="20170"
             type="number"
             min="0"
+            max="65535"
             required
           ></b-input>
         </b-field>
@@ -45,6 +46,7 @@
             placeholder="20171"
             type="number"
             min="0"
+            max="65535"
             required
           ></b-input>
         </b-field>
@@ -57,6 +59,7 @@
             placeholder="0"
             type="number"
             min="0"
+            max="65535"
             required
           ></b-input>
         </b-field>
@@ -69,6 +72,7 @@
             placeholder="20172"
             type="number"
             min="0"
+            max="65535"
             required
           ></b-input>
         </b-field>
@@ -81,6 +85,7 @@
             placeholder="0"
             type="number"
             min="0"
+            max="65535"
             required
           ></b-input>
         </b-field>
@@ -93,6 +98,7 @@
             placeholder="0"
             type="number"
             min="0"
+            max="65535"
             required
           ></b-input>
         </b-field>
@@ -103,7 +109,7 @@
           <b-taginput
             v-model="table.api.services"
             :allow-new="false"
-            maxlength="3"
+            :maxtags="3"
             autocomplete
             open-on-focus
             :data="supportedService"
@@ -124,29 +130,30 @@
             {{ $t("customAddressPort.portVmessLink") }}
           </b-button>
         </b-message>
-        <b-message
-          type="is-info"
-          style="font-size: 13px"
-          class="after-line-dot5"
-        >
-          <p
-            v-show="!dockerMode"
-            v-html="$t('customAddressPort.messages.0')"
-          ></p>
-          <p
-            v-show="dockerMode"
-            v-html="$t('customAddressPort.messages.1')"
-          ></p>
-          <p
-            v-show="dockerMode"
-            v-html="$t('customAddressPort.messages.2')"
-          ></p>
-          <p v-html="$t('customAddressPort.messages.3')"></p>
-        </b-message>
       </template>
+      <b-message
+        v-if="backendReady && !addressChanged"
+        type="is-info"
+        style="font-size: 13px"
+        class="after-line-dot5"
+      >
+        <p
+          v-show="!dockerMode"
+          v-html="$t('customAddressPort.messages.0')"
+        ></p>
+        <p
+          v-show="dockerMode"
+          v-html="$t('customAddressPort.messages.1')"
+        ></p>
+        <p
+          v-show="dockerMode"
+          v-html="$t('customAddressPort.messages.2')"
+        ></p>
+        <p v-html="$t('customAddressPort.messages.3')"></p>
+      </b-message>
     </section>
     <footer class="modal-card-foot" style="justify-content: space-between">
-      <b-button outlined type="is-info" icon-left="plus" @click="showCustomInbound = true">
+      <b-button v-if="backendReady && !addressChanged" outlined type="is-info" icon-left="plus" @click="showCustomInbound = true">
         {{ $t("customInbound.title") }}
       </b-button>
       <div>
@@ -255,6 +262,15 @@ export default {
       }
       //当前服务端是否正常工作
       if (this.backendReady && !this.addressChanged) {
+        if (this.dockerMode) {
+          this.$emit("close");
+          return;
+        }
+        const invalid = Array.from(this.$el.querySelectorAll('input[type="number"]')).find(input => !input.validity.valid);
+        if (invalid) {
+          invalid.reportValidity();
+          return;
+        }
         this.$axios({
           url: backendAddress + "/api/ports",
           method: "put",

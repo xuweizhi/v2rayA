@@ -51,38 +51,52 @@ func NewDiagnostics(module *DnsModule) *Diagnostics {
 // GetDebugInfo 收集完整的调试信息
 func (d *Diagnostics) GetDebugInfo() *DebugInfo {
 	info := &DebugInfo{}
+	if d == nil || d.module == nil {
+		return info
+	}
+
+	// 在 d.module.mu.RLock() 下安全读取所有模块字段，避免与 Start/Stop 竞争
+	d.module.mu.RLock()
+	d.module.stats.mu.Lock()
+	startedAt := d.module.stats.StartedAt
+	d.module.stats.mu.Unlock()
+	listener := d.module.listener
+	listenAddr := ""
+	if d.module.config != nil {
+		listenAddr = d.module.config.Listener.ListenAddr
+	}
+	cache := d.module.cache
+	metrics := d.module.metrics
+	upstreamMgr := d.module.upstreamMgr
+	router := d.module.router
+	d.module.mu.RUnlock()
 
 	// 运行时间
-	info.Uptime = time.Since(d.module.stats.StartedAt).Round(time.Second).String()
+	info.Uptime = time.Since(startedAt).Round(time.Second).String()
 
 	// 监听状态
 	listenerStatus := "stopped"
-	if d.module.listener != nil && d.module.listener.Healthy() {
-		listenerStatus = fmt.Sprintf("running on %s", d.module.config.Listener.ListenAddr)
+	if listener != nil && listener.Healthy() {
+		listenerStatus = fmt.Sprintf("running on %s", listenAddr)
 	}
 	info.ListenerStatus = listenerStatus
 
 	// 缓存统计
-	if d.module.cache != nil {
-		info.CacheStats = d.module.cache.Stats()
+	if cache != nil {
+		info.CacheStats = cache.Stats()
 	}
 
-	// 指标快照
-	if d.module.metrics != nil {
-		info.MetricsSnapshot = d.module.metrics.Snapshot()
+	// 指标快照（采集一次并复用，确保视图一致）
+	var snap *MetricsSnapshot
+	if metrics != nil {
+		snap = metrics.Snapshot()
+		info.MetricsSnapshot = snap
 	}
 
 	// 上游状态
-	upstreamMgr := d.module.GetUpstreamManager()
 	if upstreamMgr != nil {
 		upstreams := upstreamMgr.ListUpstreams()
 		info.UpstreamStatus = make([]UpstreamStatus, 0, len(upstreams))
-
-		// 获取指标快照用于填充上游统计
-		var snap *MetricsSnapshot
-		if d.module.metrics != nil {
-			snap = d.module.metrics.Snapshot()
-		}
 
 		for _, u := range upstreams {
 			status := UpstreamStatus{
@@ -124,15 +138,13 @@ func (d *Diagnostics) GetDebugInfo() *DebugInfo {
 	}
 
 	// 规则状态
-	router := d.module.GetRouter()
 	if router != nil {
 		rules := router.ListRules()
 		info.RuleStatus = make([]RuleStatus, 0, len(rules))
 
 		// 获取规则命中次数
 		ruleHits := make(map[string]int64)
-		if d.module.metrics != nil {
-			snap := d.module.metrics.Snapshot()
+		if snap != nil {
 			for k, v := range snap.HitsByRule {
 				ruleHits[k] = v
 			}
@@ -140,9 +152,9 @@ func (d *Diagnostics) GetDebugInfo() *DebugInfo {
 
 		for _, rule := range rules {
 			status := RuleStatus{
-				ID:     rule.ID,
-				Action: rule.Action,
-				Active: true,
+				ID:      rule.ID,
+				Action:  rule.Action,
+				Active:  true,
 				Matches: ruleHits[rule.ID],
 			}
 			info.RuleStatus = append(info.RuleStatus, status)
@@ -224,10 +236,14 @@ func (d *Diagnostics) Summary() string {
 // CacheDump 导出缓存内容（调试用）
 // 返回当前缓存中所有的键列表
 func (d *Diagnostics) CacheDump() []CacheKey {
-	if d.module.cache == nil {
+	if d == nil || d.module == nil {
 		return nil
 	}
-	return d.module.cache.Keys()
+	cache := d.module.GetCache()
+	if cache == nil {
+		return nil
+	}
+	return cache.Keys()
 }
 
 // calcHitRate 计算缓存命中率（百分比）

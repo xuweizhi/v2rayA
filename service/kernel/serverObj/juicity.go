@@ -78,8 +78,8 @@ func (s *Juicity) Configuration(info PriorInfo) (c Configuration, err error) {
 		congestion = q.Get("congestionControl")
 	}
 	pinnedSHA := q.Get("pinned_certchain_sha256")
-	// accept both "allow_insecure" and "allowInsecure" query spellings
-	allowInsecure := q.Get("allow_insecure") == "true" || q.Get("allowInsecure") == "true"
+	// accept both "allow_insecure" and "allowInsecure" query spellings ("1" or "true")
+	allowInsecure := isQueryTruthy(q.Get("allow_insecure")) || isQueryTruthy(q.Get("allowInsecure"))
 
 	settingsJSON, err := json.Marshal(juicitySettings{
 		Address:           net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
@@ -105,7 +105,7 @@ func (s *Juicity) Configuration(info PriorInfo) (c Configuration, err error) {
 }
 
 func (s *Juicity) ExportToURL() string {
-	return s.Link
+	return updateLinkFragment(s.Link, s.Name)
 }
 
 func (s *Juicity) NeedPluginPort() bool {
@@ -134,4 +134,5 @@ func (s *Juicity) GetName() string {
 
 func (s *Juicity) SetName(name string) {
 	s.Name = name
+	s.Link = updateLinkFragment(s.Link, name)
 }

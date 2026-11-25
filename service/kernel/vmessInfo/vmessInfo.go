@@ -134,7 +134,9 @@ func (v *VmessInfo) ExportToURL() string {
 			if v.Host != "" {
 				fields := strings.SplitN(v.Host, ",", 2)
 				q.Set("sni", fields[0])
-				q.Set("host", fields[1])
+				if len(fields) > 1 {
+					q.Set("host", fields[1])
+				}
 			}
 			q.Set("encryption", v.Type)
 			q.Set("type", v.Net)

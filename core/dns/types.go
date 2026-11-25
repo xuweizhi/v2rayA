@@ -61,6 +61,8 @@ type DnsQuery struct {
 	ClientIP net.IP
 	// IsBootstrap indicates whether this is a bootstrap query.
 	IsBootstrap bool
+	// DNSSECOK indicates whether the client requested EDNS0 DNSSEC OK (DO=1).
+	DNSSECOK bool
 }
 
 // DnsResponse represents a normalized DNS query response.
@@ -81,6 +83,8 @@ type DnsResponse struct {
 	TTL uint32
 	// Upstream is the upstream DNS server address that provided the response.
 	Upstream string
+	// UpstreamID is the configured identifier of the upstream server that provided the response.
+	UpstreamID string
 	// ProxyTag is the proxy channel tag used for the query.
 	ProxyTag string
 	// RTT is the round-trip time of the query.
@@ -103,10 +107,11 @@ type DnsListenerConfig struct {
 
 // DnsModuleConfig holds the complete DNS module configuration.
 type DnsModuleConfig struct {
-	Listener  DnsListenerConfig `json:"listener"`
-	Cache     CacheConfig       `json:"cache"`
-	Upstreams []UpstreamConfig  `json:"upstreams"`
-	Rules     []RuleConfig      `json:"rules"`
+	Listener        DnsListenerConfig `json:"listener"`
+	Cache           CacheConfig       `json:"cache"`
+	Upstreams       []UpstreamConfig  `json:"upstreams"`
+	Rules           []RuleConfig      `json:"rules"`
+	DefaultUpstream string            `json:"default_upstream,omitempty"`
 	// ProxyMap maps proxy tags (e.g. "proxy") to SOCKS5 proxy addresses (e.g. "127.0.0.1:20170").
 	// The DNS module connects to these SOCKS5 proxies when sending queries through tagged upstreams.
 	// If a tag is not found in this map, the module falls back to common defaults ("proxy" → "127.0.0.1:1080").

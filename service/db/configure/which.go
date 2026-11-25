@@ -81,6 +81,7 @@ func (ws *Whiches) SortSameTypeReverse() {
 				ws.Touches[begin+j], ws.Touches[i-j-1] = ws.Touches[i-j-1], ws.Touches[begin+j]
 			}
 			begin = i
+			typ = ws.Touches[i].TYPE
 		}
 	}
 	if begin < len(ws.Touches)-1 {
@@ -289,7 +290,13 @@ func (ws *Whiches) SaveLatencies() (err error) {
 	// set subscriptions
 	for subIndex, serverIndexes := range subscriptionIndexes {
 		subRaw := GetSubscription(subIndex)
+		if subRaw == nil {
+			continue
+		}
 		for index, which := range serverIndexes {
+			if index < 0 || index >= len(subRaw.Servers) {
+				continue
+			}
 			subRaw.Servers[index].Latency = which.Latency
 		}
 		if err := SetSubscription(subIndex, subRaw); err != nil {

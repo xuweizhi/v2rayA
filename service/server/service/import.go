@@ -64,7 +64,10 @@ func ImportProfile(req ImportRequest) (ImportResult, error) {
 		for _, node := range profile.nodes {
 			nodes = append(nodes, &configure.ServerRaw{ServerObj: node})
 		}
-		if err := configure.AppendServers(nodes); err != nil {
+		membershipMu.Lock()
+		err = configure.AppendServers(nodes)
+		membershipMu.Unlock()
+		if err != nil {
 			return report, fmt.Errorf("append imported nodes: %w", err)
 		}
 		AutoBackup()
@@ -100,14 +103,21 @@ func ImportProfile(req ImportRequest) (ImportResult, error) {
 	extra.Upload = result.traffic.Upload
 	extra.Download = result.traffic.Download
 	extra.Total = result.traffic.Total
-	extra.Expire = result.traffic.Expire.Unix()
+	if !result.traffic.Expire.IsZero() {
+		extra.Expire = result.traffic.Expire.Unix()
+	} else {
+		extra.Expire = 0
+	}
 	extra.LastUpdateTime = time.Now().Unix()
 	extra.ProviderNodeDNS = result.nodeDNS
 	extra.PreferNodeDNS = len(extra.NodeDNS) > 0 || (req.NodeDNS == nil && len(result.nodeDNS) > 0)
-	if err := configure.AppendSubscriptions([]*configure.SubscriptionRaw{{
+	membershipMu.Lock()
+	err = configure.AppendSubscriptions([]*configure.SubscriptionRaw{{
 		Address: link.URL, Remarks: link.Remarks, Status: string(touch.NewUpdateStatus()),
 		Servers: servers, Info: result.status, DecryptPassword: req.Password, Extra: extra,
-	}}); err != nil {
+	}})
+	membershipMu.Unlock()
+	if err != nil {
 		return report, err
 	}
 	AutoBackup()

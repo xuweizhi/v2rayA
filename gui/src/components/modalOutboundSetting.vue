@@ -69,14 +69,24 @@
       </b-field>
     </section>
     <footer class="modal-card-foot outbound-setting-foot">
-      <button class="button is-danger is-outlined" type="button" @click="handleClickDelete">
+      <button
+        v-if="outbound !== 'proxy'"
+        class="button is-danger is-outlined"
+        type="button"
+        @click="handleClickDelete"
+      >
         {{ $t("operations.delete") }}
       </button>
       <div class="outbound-setting-foot__right">
         <button class="button" type="button" @click="$emit('close')">
           {{ $t("operations.cancel") }}
         </button>
-        <button class="button is-primary" :disabled="!backendReady || !ruleReady" @click="handleClickSubmit">
+        <button
+          class="button is-primary"
+          :class="{ 'is-loading': submitting }"
+          :disabled="!backendReady || !ruleReady || submitting"
+          @click="handleClickSubmit"
+        >
           {{ $t("operations.confirm") }}
         </button>
       </div>
@@ -107,6 +117,7 @@ export default {
       type: "",
     },
     backendReady: false,
+    submitting: false,
     sources: [],
     preview: null,
     previewSequence: 0,
@@ -137,19 +148,28 @@ export default {
     },
   },
   created() {
-    this.$axios.get(apiRoot + '/outbounds').then(res => handleResponse(res, this, () => { this.groups = res.data.data.outbounds; }));
+    this.$axios
+      .get(apiRoot + "/outbounds")
+      .then((res) =>
+        handleResponse(res, this, () => {
+          this.groups = res.data.data.outbounds;
+        })
+      )
+      .catch(() => {});
     this.$axios({
       url: apiRoot + "/outbound",
       params: {
         outbound: this.outbound,
       },
-    }).then((res) => {
-      handleResponse(res, this, () => {
-        Object.assign(this.setting, res.data.data.setting);
-        this.sources = res.data.data.subscriptionSources || [];
-        this.backendReady = true;
-      });
-    });
+    })
+      .then((res) => {
+        handleResponse(res, this, () => {
+          Object.assign(this.setting, res.data.data.setting);
+          this.sources = res.data.data.subscriptionSources || [];
+          this.backendReady = true;
+        });
+      })
+      .catch(() => {});
   },
   methods: {
     toggleRule(enabled) {
@@ -157,14 +177,19 @@ export default {
     },
     previewMembers() {
       const sequence = ++this.previewSequence;
-      this.$axios.post(apiRoot + "/outboundMemberPreview", {
-        outbound: this.outbound,
-        memberRule: this.setting.memberRule,
-      }).then(res => {
-        if (sequence === this.previewSequence) {
-          handleResponse(res, this, () => { this.preview = res.data.data; });
-        }
-      });
+      this.$axios
+        .post(apiRoot + "/outboundMemberPreview", {
+          outbound: this.outbound,
+          memberRule: this.setting.memberRule,
+        })
+        .then((res) => {
+          if (sequence === this.previewSequence) {
+            handleResponse(res, this, () => {
+              this.preview = res.data.data;
+            });
+          }
+        })
+        .catch(() => {});
     },
     handleClickDelete() {
       const that = this;
@@ -185,6 +210,9 @@ export default {
       });
     },
     handleClickSubmit() {
+      if (this.submitting) {
+        return;
+      }
       let valid = true;
       for (let k in this.$refs) {
         if (!Object.prototype.hasOwnProperty.call(this.$refs, k)) {
@@ -206,6 +234,7 @@ export default {
       if (!valid) {
         return;
       }
+      this.submitting = true;
       this.$axios({
         url: apiRoot + "/outbound",
         method: "put",
@@ -213,19 +242,23 @@ export default {
           outbound: this.outbound,
           setting: this.setting,
         },
-      }).then((res) => {
-        handleResponse(res, this, () => {
-          this.$buefy.toast.open({
-            message: this.$t("common.success"),
-            type: "is-success",
-            position: "is-top",
-            queue: false,
+      })
+        .then((res) => {
+          handleResponse(res, this, () => {
+            this.$buefy.toast.open({
+              message: this.$t("common.success"),
+              type: "is-success",
+              position: "is-top",
+              queue: false,
+            });
+            this.$emit("saved");
+            this.$parent.close();
           });
-          this.$emit("saved");
-          this.$parent.close();
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.submitting = false;
         });
-
-      });
     },
   },
 };

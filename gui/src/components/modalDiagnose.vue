@@ -66,6 +66,7 @@ export default {
   },
   methods: {
     run() {
+      if (this.loading) return;
       this.loading = true;
       this.report = null;
       this.$axios({
@@ -95,18 +96,26 @@ export default {
           queue: false,
         });
       };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(notifySuccess);
-      } else {
+      const fallback = () => {
         const ta = document.createElement("textarea");
         ta.value = text;
         ta.style.position = "fixed";
         ta.style.opacity = "0";
         document.body.appendChild(ta);
         ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-        notifySuccess();
+        try {
+          if (!document.execCommand("copy")) throw new Error("copy failed");
+          notifySuccess();
+        } catch {
+          this.$buefy.toast.open({ message: this.$t("common.fail"), type: "is-warning" });
+        } finally {
+          ta.remove();
+        }
+      };
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).then(notifySuccess, fallback);
+      } else {
+        fallback();
       }
     },
   },

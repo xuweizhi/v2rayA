@@ -1,12 +1,18 @@
 package v2ray
 
 import (
-	"fmt"
+	"context"
+	"errors"
 	"net"
 	"runtime"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
+	"github.com/v2rayA/v2rayA/common/netTools"
 	"github.com/v2rayA/v2rayA/db/configure"
+	"github.com/v2rayA/v2rayA/kernel/serverObj"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 )
 
@@ -21,16 +27,12 @@ const (
 	connectivityBackoffMax = 120 * time.Second
 )
 
-// connectivitySocksAddr is the local SOCKS5 forward address used for probing.
-// It matches the "transparent" inbound port added by setInbound for the
-// transparent proxy modes (tinytunSocksPort = 52345).  Using a local TCP dial
-// avoids routing the probe through the TUN device itself, which could produce
-// false negatives while wintun routes are being (re-)configured on Windows.
-var connectivitySocksAddr = fmt.Sprintf("127.0.0.1:%d", tinytunSocksPort)
-
 // connectivityStartupDelay is the initial wait before the first connectivity
 // probe.  On Windows it is larger to accommodate wintun driver initialisation.
 var connectivityStartupDelay time.Duration
+
+// connectivityProbeForSetting allows tests to override connectivity probing.
+var connectivityProbeForSetting = probeConnectivityForSetting
 
 func init() {
 	connectivityStartupDelay = 5 * time.Second
@@ -39,16 +41,117 @@ func init() {
 	}
 }
 
-// probePhysicalConnectivity checks whether the local SOCKS5 forward port is
-// reachable.  A successful TCP dial to the loopback address confirms that the
-// v2ray/xray inbound is up without routing the probe through the TUN device.
-func probePhysicalConnectivity() bool {
-	conn, err := net.DialTimeout("tcp", connectivitySocksAddr, connectivityCheckTimeout)
+// hasActivePhysicalInterface checks whether at least one non-loopback, non-TUN
+// network interface is up and has a routable unicast address. Used in TProxy
+// and Redirect modes so we do not dial dokodemo-door on 127.0.0.1:52345 (which
+// would trigger Xray isLoopBack rejections and cannot detect physical network loss).
+func hasActivePhysicalInterface() bool {
+	interfaces, err := net.Interfaces()
 	if err != nil {
+		return true
+	}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if runtime.GOOS == "linux" && iface.Flags&net.FlagRunning == 0 {
+			continue
+		}
+		ifName := strings.ToLower(iface.Name)
+		if strings.HasPrefix(ifName, "tun") || strings.HasPrefix(ifName, "utun") || strings.HasPrefix(ifName, "tap") || strings.HasPrefix(ifName, "veth") || strings.HasPrefix(ifName, "docker") {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok || ipnet.IP == nil {
+				continue
+			}
+			ip := ipnet.IP
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+				continue
+			}
+			if v4 := ip.To4(); v4 != nil && v4[0] == 169 && v4[1] == 254 {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// Probe the actual remote node endpoints. TinyTun excludes these addresses;
+// on Linux the bypass mark also keeps traffic out of TProxy and Redirect.
+func probeConnectivityForSetting(t *Template) bool {
+	if !hasActivePhysicalInterface() {
 		return false
 	}
-	conn.Close()
-	return true
+	ctx, cancel := context.WithTimeout(context.Background(), connectivityCheckTimeout)
+	defer cancel()
+	dialer := &net.Dialer{Timeout: time.Second}
+	if runtime.GOOS == "linux" && t.Setting.TransparentType != configure.TransparentTun {
+		dialer.Control = netTools.DirectSocketControl
+	}
+	dialer.Resolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return (&net.Dialer{Control: dialer.Control}).DialContext(ctx, network, addr)
+	}}
+	tried := false
+	udpRoute := false
+	seen := map[string]bool{}
+	for _, tag := range t.OutboundTags {
+		info := t.serverInfoMap[tag]
+		if info == nil || info.Info == nil {
+			continue
+		}
+		host := info.Info.GetHostname()
+		ip := net.ParseIP(host)
+		if host == "" || strings.EqualFold(host, "localhost") || ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+			continue
+		}
+		address := net.JoinHostPort(host, strconv.Itoa(info.Info.GetPort()))
+		if seen[address] {
+			continue
+		}
+		seen[address], tried = true, true
+		c, err := dialer.DialContext(ctx, "tcp", address)
+		if err == nil {
+			c.Close()
+			return true
+		}
+		// Even a UDP-only node can return a TCP reset. That proves a
+		// responsive remote host without requiring a TCP service.
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			return true
+		}
+		// A filtered TCP port on a UDP-only node is inconclusive. Check that
+		// its actual UDP endpoint still has an outbound route.
+		if usesUDPTransport(info.Info) {
+			if conn, err := dialer.DialContext(ctx, "udp", address); err == nil {
+				udpRoute = true
+				conn.Close()
+			}
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	// Local-only tunnels have no external endpoint to measure.
+	return udpRoute || !tried
+}
+
+func usesUDPTransport(node serverObj.ServerObj) bool {
+	switch n := node.(type) {
+	case *serverObj.Hysteria2, *serverObj.Juicity, *serverObj.Tuic, *serverObj.WireGuard:
+		return true
+	case *serverObj.V2Ray:
+		return n.Net == "quic" || n.Net == "kcp" || n.Net == "mkcp"
+	case *serverObj.Mieru:
+		return strings.EqualFold(n.Transport, "udp")
+	}
+	return false
 }
 
 // connectivityBackoffDelay returns the delay to wait after consecutiveFailures
@@ -65,25 +168,26 @@ func connectivityBackoffDelay(consecutiveFailures int) time.Duration {
 	return delay
 }
 
-func (m *CoreProcessManager) startConnectivityMonitor(t *Template) {
+func (m *CoreProcessManager) startConnectivityMonitor(t *Template, expectedGen uint64, expectedProc *Process) {
 	if t == nil || t.Setting == nil || !IsTransparentOn(t.Setting) || t.Setting.TransparentType == configure.TransparentSystemProxy {
 		return
 	}
 
 	m.mu.Lock()
-	if m.testing || m.p == nil {
+	if m.testing || m.p == nil || m.startGen != expectedGen || (expectedProc != nil && m.p != expectedProc) {
 		m.mu.Unlock()
 		return
 	}
 	m.stopConnectivityMonitorLocked()
 	stopCh := make(chan struct{})
 	m.connectivityStop = stopCh
+	proc := m.p
 	m.mu.Unlock()
 
-	go m.connectivityLoop(stopCh, t)
+	go m.connectivityLoop(stopCh, t, expectedGen, proc)
 }
 
-func (m *CoreProcessManager) connectivityLoop(stopCh chan struct{}, t *Template) {
+func (m *CoreProcessManager) connectivityLoop(stopCh chan struct{}, t *Template, expectedGen uint64, expectedProc *Process) {
 	// Wait for the transparent proxy (e.g. TinyTun) to fully initialize before
 	// the first connectivity check.  Probing too early on Windows can yield a
 	// false network-unavailable result while the wintun driver is still setting
@@ -97,7 +201,7 @@ func (m *CoreProcessManager) connectivityLoop(stopCh chan struct{}, t *Template)
 
 	failureCount := 0
 	for {
-		stop, healthy := m.syncConnectivityState(t)
+		stop, healthy := m.syncConnectivityStateForGen(t, expectedGen, expectedProc)
 		if stop {
 			return
 		}
@@ -120,58 +224,58 @@ func (m *CoreProcessManager) connectivityLoop(stopCh chan struct{}, t *Template)
 }
 
 // syncConnectivityState checks and updates the transparent proxy connectivity
-// state.  It returns (stop, healthy): stop=true means the monitor goroutine
-// should exit; healthy=true means the local SOCKS5 probe succeeded.
+// state for the manager's current generation.
 func (m *CoreProcessManager) syncConnectivityState(t *Template) (stop bool, healthy bool) {
+	m.mu.Lock()
+	gen := m.startGen
+	proc := m.p
+	m.mu.Unlock()
+	return m.syncConnectivityStateForGen(t, gen, proc)
+}
+
+// syncConnectivityStateForGen checks and updates the transparent proxy
+// connectivity state for a specific start generation. It returns (stop, healthy):
+// stop=true means the monitor goroutine should exit; healthy=true means
+// connectivity is healthy and rules are active.
+func (m *CoreProcessManager) syncConnectivityStateForGen(t *Template, expectedGen uint64, expectedProc *Process) (stop bool, healthy bool) {
 	if t == nil || t.Setting == nil {
 		return true, false
 	}
 
 	m.mu.Lock()
-	if m.p == nil || m.testing {
+	if m.p == nil || m.testing || m.startGen != expectedGen || (expectedProc != nil && m.p != expectedProc) {
+		m.mu.Unlock()
+		return true, false
+	}
+	setting := t.Setting
+	m.mu.Unlock()
+	if setting.TransparentType == configure.TransparentSystemProxy || !IsTransparentOn(setting) {
+		return false, true
+	}
+	online := connectivityProbeForSetting(t)
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	m.mu.Lock()
+	if m.testing || m.startGen != expectedGen || m.p != expectedProc {
 		m.mu.Unlock()
 		return true, false
 	}
 	paused := m.networkPaused
-	setting := t.Setting
 	m.mu.Unlock()
-
-	if setting.TransparentType == configure.TransparentSystemProxy || !IsTransparentOn(setting) {
-		return false, true
+	if paused == !online {
+		return false, online
 	}
-
-	if !probePhysicalConnectivity() {
-		if paused {
+	if online {
+		if err := m.setupTransparentProxy(setting, t); err != nil {
+			log.Warn("failed to resume transparent proxy after network recovery: %v", err)
 			return false, false
 		}
-		deleteTransparentProxyRulesKeepSystemProxy()
-		m.mu.Lock()
-		if m.p != nil && !m.testing {
-			m.networkPaused = true
-			m.mu.Unlock()
-			ApiFeed.ProductMessage("running_state", map[string]interface{}{"running": false, "networkPaused": true})
-			log.Info("connectivity lost, transparent proxy paused")
-			return false, false
-		}
-		m.mu.Unlock()
-		return true, false
-	}
-
-	if !paused {
-		return false, true
-	}
-	if err := m.CheckAndSetupTransparentProxy(false, setting, t); err != nil {
-		log.Warn("failed to resume transparent proxy after network recovery: %v", err)
-		return false, true
+	} else {
+		deleteTransparentProxyRulesKeepSystemProxyFn()
 	}
 	m.mu.Lock()
-	if m.p != nil && !m.testing {
-		m.networkPaused = false
-		m.mu.Unlock()
-		ApiFeed.ProductMessage("running_state", map[string]interface{}{"running": true, "networkPaused": false})
-		log.Info("connectivity restored, transparent proxy resumed")
-		return false, true
-	}
+	m.networkPaused = !online
 	m.mu.Unlock()
-	return true, true
+	ApiFeed.ProductMessage("running_state", map[string]interface{}{"running": online, "networkPaused": !online})
+	return false, online
 }

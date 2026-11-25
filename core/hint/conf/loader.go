@@ -22,7 +22,6 @@ import (
 	hint_shadowtls "github.com/v2rayA/v2raya-core/hint/proxy/shadowtls"
 	hint_tuic "github.com/v2rayA/v2raya-core/hint/proxy/tuic"
 	xray_commander "github.com/xtls/xray-core/app/commander"
-	xray_proxyman "github.com/xtls/xray-core/app/proxyman"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/cmdarg"
 	"github.com/xtls/xray-core/common/errors"
@@ -30,8 +29,10 @@ import (
 	xray_core "github.com/xtls/xray-core/core"
 	xray_conf "github.com/xtls/xray-core/infra/conf"
 	xray_cfgdur "github.com/xtls/xray-core/infra/conf/cfgcommon/duration"
+	json_reader "github.com/xtls/xray-core/infra/conf/json"
 	conf_serial "github.com/xtls/xray-core/infra/conf/serial"
 	"github.com/xtls/xray-core/main/confloader"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -50,7 +51,7 @@ type pingConfigJSON struct {
 	Destination   string               `json:"destination"`
 	Connectivity  string               `json:"connectivity"`
 	Interval      xray_cfgdur.Duration `json:"interval"`
-	SamplingCount int                  `json:"samplingCount"`
+	SamplingCount int32                `json:"samplingCount"`
 	Timeout       xray_cfgdur.Duration `json:"timeout"`
 	HTTPMethod    string               `json:"httpMethod"`
 }
@@ -99,25 +100,21 @@ func buildOutbound(c *xray_conf.OutboundDetourConfig) (*xray_core.OutboundHandle
 		return c.Build()
 	}
 	if c.Settings != nil {
-		if err := json.Unmarshal(*c.Settings, settings); err != nil {
+		decoder := protojson.UnmarshalOptions{DiscardUnknown: true}
+		if err := decoder.Unmarshal(*c.Settings, settings); err != nil {
 			return nil, errors.New("invalid ", c.Protocol, " settings for tag ", c.Tag).Base(err)
 		}
 	}
-	// Preserve the transport settings used to reach the proxy server.
-	// Transparent mode marks the socket so it bypasses local redirection.
-	sender := &xray_proxyman.SenderConfig{}
-	if c.StreamSetting != nil {
-		stream, err := c.StreamSetting.Build()
-		if err != nil {
-			return nil, err
-		}
-		sender.StreamSettings = stream
+	// Build the sender through Xray's native builder so chaining, socket options,
+	// address selection and multiplexing have the same semantics for all protocols.
+	native := *c
+	native.Protocol, native.Settings = "freedom", nil
+	handler, err := native.Build()
+	if err != nil {
+		return nil, err
 	}
-	return &xray_core.OutboundHandlerConfig{
-		Tag:            c.Tag,
-		SenderSettings: serial.ToTypedMessage(sender),
-		ProxySettings:  serial.ToTypedMessage(settings),
-	}, nil
+	handler.ProxySettings = serial.ToTypedMessage(settings)
+	return handler, nil
 }
 
 // injectMultiObservatory appends the multiobservatory.Config TypedMessage to coreConfig.App.
@@ -136,74 +133,47 @@ func injectMultiObservatory(coreConfig *xray_core.Config, mo *multiObsJSON) {
 	coreConfig.App = append(coreConfig.App, serial.ToTypedMessage(cfg))
 }
 
-// injectBurstObservatoryAsMulti adapts v5 burstObservatory to a single-group MultiObservatory.
-// This keeps v2rayA's per-tag API path working: unknown tag requests fall back to aggregated result.
-func injectBurstObservatoryAsMulti(coreConfig *xray_core.Config, burst *burstObsJSON) {
-	if burst == nil || len(burst.SubjectSelector) == 0 {
-		return
-	}
-	observer := &multiobs.ObserverConfig{
-		Tag:             "_burst_global",
-		SubjectSelector: burst.SubjectSelector,
-	}
-	if burst.PingConfig != nil {
-		observer.ProbeUrl = burst.PingConfig.Destination
-		observer.ProbeInterval = int64(burst.PingConfig.Interval)
-	}
-	cfg := &multiobs.Config{Observers: []*multiobs.ObserverConfig{observer}}
-	coreConfig.App = append(coreConfig.App, serial.ToTypedMessage(cfg))
-}
-
 // normalizeObserverConfig converts legacy + v5 observatory JSON into one runtime observer config.
 func normalizeObserverConfig(e multiObsEntryJSON) *multiobs.ObserverConfig {
-	subjectSelector := e.SubjectSelector
-	probeURL := e.ProbeURL
-	probeInterval := e.ProbeInterval
-
+	observer := &multiobs.ObserverConfig{Tag: e.Tag, SubjectSelector: e.SubjectSelector,
+		ProbeUrl: e.ProbeURL, ProbeInterval: int64(e.ProbeInterval)}
+	var ping *pingConfigJSON
 	if e.Settings != nil {
-		if len(subjectSelector) == 0 {
-			subjectSelector = e.Settings.SubjectSelector
+		if len(observer.SubjectSelector) == 0 {
+			observer.SubjectSelector = e.Settings.SubjectSelector
 		}
-		if probeURL == "" {
-			probeURL = e.Settings.ProbeURL
+		if observer.ProbeUrl == "" {
+			observer.ProbeUrl = e.Settings.ProbeURL
 		}
-		if probeInterval == 0 {
-			probeInterval = e.Settings.ProbeInterval
+		if observer.ProbeInterval == 0 {
+			observer.ProbeInterval = int64(e.Settings.ProbeInterval)
 		}
-		if e.Settings.PingConfig != nil {
-			if probeURL == "" {
-				probeURL = e.Settings.PingConfig.Destination
-			}
-			if probeInterval == 0 {
-				probeInterval = e.Settings.PingConfig.Interval
-			}
-		}
+		ping = e.Settings.PingConfig
 	}
-
 	if e.Burst != nil {
-		if len(subjectSelector) == 0 {
-			subjectSelector = e.Burst.SubjectSelector
+		if len(observer.SubjectSelector) == 0 {
+			observer.SubjectSelector = e.Burst.SubjectSelector
 		}
-		if e.Burst.PingConfig != nil {
-			if probeURL == "" {
-				probeURL = e.Burst.PingConfig.Destination
-			}
-			if probeInterval == 0 {
-				probeInterval = e.Burst.PingConfig.Interval
-			}
+		if ping == nil {
+			ping = e.Burst.PingConfig
 		}
 	}
-
-	if len(subjectSelector) == 0 {
+	if len(observer.SubjectSelector) == 0 {
 		return nil
 	}
-
-	return &multiobs.ObserverConfig{
-		Tag:             e.Tag,
-		ProbeUrl:        probeURL,
-		ProbeInterval:   int64(probeInterval),
-		SubjectSelector: subjectSelector,
+	if ping != nil {
+		if observer.ProbeUrl == "" {
+			observer.ProbeUrl = ping.Destination
+		}
+		if observer.ProbeInterval == 0 {
+			observer.ProbeInterval = int64(ping.Interval)
+		}
+		observer.Connectivity = ping.Connectivity
+		observer.SamplingCount = ping.SamplingCount
+		observer.Timeout = int64(ping.Timeout)
+		observer.HttpMethod = ping.HTTPMethod
 	}
+	return observer
 }
 
 // reorderAppsForAPIReadiness ensures the commander (API/gRPC) app starts before
@@ -275,7 +245,9 @@ func decodeConfig(r io.Reader) (*xray_conf.Config, *extendedJSON, error) {
 		return nil, nil, err
 	}
 	var ext extendedJSON
-	_ = json.Unmarshal(raw, &ext)
+	if err := json.NewDecoder(&json_reader.Reader{Reader: bytes.NewReader(raw)}).Decode(&ext); err != nil {
+		return nil, nil, err
+	}
 	return config, &ext, nil
 }
 
@@ -284,6 +256,10 @@ func buildExtendedConfig(config xray_conf.Config, ext *extendedJSON) (*xray_core
 	// recognizes its native protocols. Config.Override has already merged tags.
 	outbounds := config.OutboundConfigs
 	config.OutboundConfigs = nil
+	if ext != nil && (ext.MultiObservatory != nil || ext.BurstObservatory != nil) {
+		config.BurstObservatory = nil
+		config.Observatory = nil
+	}
 	coreConfig, err := config.Build()
 	if err != nil {
 		return nil, err
@@ -298,7 +274,7 @@ func buildExtendedConfig(config xray_conf.Config, ext *extendedJSON) (*xray_core
 	if ext != nil && ext.MultiObservatory != nil {
 		injectMultiObservatory(coreConfig, ext.MultiObservatory)
 	} else if ext != nil && ext.BurstObservatory != nil {
-		injectBurstObservatoryAsMulti(coreConfig, ext.BurstObservatory)
+		injectMultiObservatory(coreConfig, &multiObsJSON{Observers: []multiObsEntryJSON{{Tag: "_burst_global", Burst: ext.BurstObservatory}}})
 	}
 	injectCompatService(coreConfig)
 	reorderAppsForAPIReadiness(coreConfig)

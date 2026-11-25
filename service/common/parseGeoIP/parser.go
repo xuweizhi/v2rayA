@@ -24,8 +24,20 @@ type parserCacheKey struct {
 	countryCode string
 }
 
-var parserCache = make(map[parserCacheKey]parserResult)
-var parserCacheMu sync.Mutex
+var (
+	parserCache   = make(map[parserCacheKey]parserResult)
+	parserCacheMu sync.Mutex
+	fakeIPv4Net   = mustParseCIDR("198.18.0.0/15")
+	fakeIPv6Net   = mustParseCIDR("fc00::/7")
+)
+
+func mustParseCIDR(s string) *net.IPNet {
+	_, ipnet, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return ipnet
+}
 
 func Parser(filename string, countryCode string) ([]string, []string, error) {
 	realpath, err := asset.GetV2rayLocationAsset(filename)
@@ -44,7 +56,7 @@ func Parser(filename string, countryCode string) ([]string, []string, error) {
 		path:        realpath,
 		size:        info.Size(),
 		modTime:     info.ModTime().UnixNano(),
-		countryCode: countryCode,
+		countryCode: strings.ToUpper(countryCode),
 	}
 	if result, ok := parserCache[cacheKey]; ok {
 		return result.ipv4, result.ipv6, nil
@@ -75,7 +87,7 @@ func parseGeoIP(data []byte, countryCode string) ([]string, []string, error) {
 
 	// GeoIPList contains repeated GeoIP messages in field 1. Decoding the
 	// complete list expands a roughly 22 MiB asset to hundreds of MiB in
-	// memory. Decode one entry at a time and stop at the requested country.
+	// memory. Stop after decoding the requested country.
 	for len(data) > 0 {
 		number, wireType, n := protowire.ConsumeTag(data)
 		if n < 0 {
@@ -94,20 +106,24 @@ func parseGeoIP(data []byte, countryCode string) ([]string, []string, error) {
 			if err := proto.Unmarshal(entryData, &geo); err != nil {
 				return ipv4List, ipv6List, err
 			}
-			if geo.CountryCode != countryCode {
+			if !strings.EqualFold(geo.CountryCode, countryCode) {
 				continue
 			}
 
 			for _, c := range geo.Cidr {
 				ip := net.IP(c.Ip)
-				if strings.Contains(ip.String(), ":") {
-					ipv6List = append(ipv6List, fmt.Sprintf("%s/%d", ip.String(), c.Prefix))
-				} else {
-					if strings.Contains(ip.String(), "198.18.0.0") {
-						// 跳过fakeip
+				if ip4 := ip.To4(); ip4 != nil {
+					if fakeIPv4Net.Contains(ip4) {
+						// 跳过 fakeip 网段 (198.18.0.0/15)
 						continue
 					}
-					ipv4List = append(ipv4List, fmt.Sprintf("%s/%d", ip.String(), c.Prefix))
+					ipv4List = append(ipv4List, fmt.Sprintf("%s/%d", ip4.String(), c.Prefix))
+				} else if len(ip) == net.IPv6len {
+					if fakeIPv6Net.Contains(ip) {
+						// 跳过 fakeip 网段 (fc00::/7)
+						continue
+					}
+					ipv6List = append(ipv6List, fmt.Sprintf("%s/%d", ip.String(), c.Prefix))
 				}
 			}
 			return ipv4List, ipv6List, nil

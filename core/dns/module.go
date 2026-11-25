@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,22 +16,23 @@ import (
 // DnsModule is the top-level lifecycle manager for the DNS module.
 // It coordinates the listener, router, upstream manager, cache, and statistics.
 type DnsModule struct {
-	config      *DnsModuleConfig
-	listener    *DnsListener
-	handler     *DnsHandler
-	router      *Router
-	upstreamMgr *UpstreamManager
-	cache       *DnsCache // DNS 缓存模块（LRU + TTL 双淘汰）
-	stats       DnsStats
-	metrics     *DnsMetrics     // 指标收集器（新增）
-	diagnostics *Diagnostics    // 诊断模块（新增）
-	dispatcher  RouteDispatcher // xray-core 内部路由调度器（Start 前设置）
-	lifecycleMu sync.Mutex      // serializes Start and Stop while handlers may read module state
-	mu          sync.RWMutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	healthy     bool
+	config          *DnsModuleConfig
+	listener        *DnsListener
+	handler         *DnsHandler
+	router          *Router
+	upstreamMgr     *UpstreamManager
+	cache           *DnsCache // DNS 缓存模块（LRU + TTL 双淘汰）
+	stats           DnsStats
+	metrics         *DnsMetrics     // 指标收集器（新增）
+	diagnostics     *Diagnostics    // 诊断模块（新增）
+	dispatcher      RouteDispatcher // xray-core 内部路由调度器（Start 前设置）
+	geositeResolver GeositeResolver // geosite 标签解析器（Start 前设置，避免启动竞态）
+	lifecycleMu     sync.Mutex      // serializes Start and Stop while handlers may read module state
+	mu              sync.RWMutex
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	healthy         bool
 }
 
 // NewDnsModule creates a new DnsModule with the given configuration.
@@ -96,70 +98,112 @@ func (m *DnsModule) prepare() error {
 	// Reset metrics (fresh start).
 	m.metrics.Reset()
 
-	// 解析 bootstrap domain — 当 DNS 上游地址是域名时，用系统 DNS 解析出 IP。
-	// 避免 DNS 模块自身依赖 DNS 的循环依赖。
-	if len(m.config.Bootstrap) > 0 {
-		log.Printf("[dns module] bootstrap: %d domains to resolve: %v", len(m.config.Bootstrap), m.config.Bootstrap)
-		resolved := m.resolveBootstrap(m.config.Bootstrap)
-		log.Printf("[dns module] bootstrap: resolved %d/%d domains", len(resolved), len(m.config.Bootstrap))
-		for domain, ip := range resolved {
-			log.Printf("[dns module] bootstrap: %s → %s", domain, ip)
-		}
-		for i, upstream := range m.config.Upstreams {
-			if upstream.Bootstrap {
-				continue
-			}
-			if isEncryptedDNS(upstream.Protocol) {
-				host, port, err := encryptedDNSAddress(upstream.Addr, upstream.Protocol)
-				if err != nil {
-					return err
-				}
-				if ip, ok := resolved[host]; ok {
-					m.config.Upstreams[i].DialAddress = net.JoinHostPort(ip, port)
-				}
-				continue
-			}
-			before := upstream.Addr
-			// 从上游地址中提取主机名
-			host, port, err := net.SplitHostPort(upstream.Addr)
-			if err != nil {
-				// 格式不符合 host:port，尝试直接匹配
-				if ip, ok := resolved[upstream.Addr]; ok {
-					m.config.Upstreams[i].Addr = ip + ":53"
-					log.Printf("[dns module] bootstrap: upstream %s → %s (was %s)", upstream.ID, m.config.Upstreams[i].Addr, before)
-				} else {
-					log.Printf("[dns module] bootstrap: upstream %s addr=%s not resolved, keeping as-is", upstream.ID, upstream.Addr)
-				}
-				continue
-			}
-			if net.ParseIP(host) == nil {
-				if ip, ok := resolved[host]; ok {
-					m.config.Upstreams[i].Addr = net.JoinHostPort(ip, port)
-					log.Printf("[dns module] bootstrap: upstream %s → %s (was %s)", upstream.ID, m.config.Upstreams[i].Addr, before)
-				} else {
-					log.Printf("[dns module] bootstrap: upstream %s host=%s not resolved, keeping as-is", upstream.ID, host)
-				}
-			}
-		}
-	} else {
-		log.Printf("[dns module] bootstrap: no domains to resolve (list is empty)")
-	}
-
-	// 为所有缺失端口的上游地址补充默认端口
+	// 为所有缺失端口的上游地址补充默认端口（必须在 bootstrap 解析之前执行，
+	// 否则像 dot / quic 等不带显式端口的地址会导致 encryptedDNSAddress 解析失败）。
 	for i, upstream := range m.config.Upstreams {
-		if upstream.Protocol == "https" || upstream.Protocol == "doh" {
+		proto := strings.ToLower(strings.TrimSpace(upstream.Protocol))
+		if proto == "https" || proto == "doh" {
 			continue
 		}
 		if _, _, err := net.SplitHostPort(upstream.Addr); err != nil {
 			// 没有端口号，根据协议补充
 			port := "53"
-			switch upstream.Protocol {
-			case "tcp-tls", "tls":
+			switch proto {
+			case "tcp-tls", "tls", "dot", "quic", "doq":
 				port = "853"
 			}
-			m.config.Upstreams[i].Addr = net.JoinHostPort(upstream.Addr, port)
+			host := strings.Trim(upstream.Addr, "[]")
+			m.config.Upstreams[i].Addr = net.JoinHostPort(host, port)
 			log.Printf("[dns module] added default port %s to upstream %s (protocol=%s)", port, upstream.Addr, upstream.Protocol)
 		}
+	}
+
+	// 解析 bootstrap domain — 当直连 DNS 上游地址是域名时，用系统 DNS 解析出 IP。
+	// 避免 DNS 模块自身依赖 DNS 的循环依赖。
+	// 注意：仅对直连上游（ProxyTag == "" || ProxyTag == "direct"）做本地 bootstrap 解析，
+	// 代理上游应保留域名交由代理通道远端解析，避免向 ISP 泄露上游域名或被污染。
+	if len(m.config.Bootstrap) > 0 {
+		directHosts := make(map[string]bool)
+		for _, upstream := range m.config.Upstreams {
+			if upstream.Bootstrap || (upstream.ProxyTag != "" && upstream.ProxyTag != "direct") {
+				continue
+			}
+			var host string
+			if isEncryptedDNS(upstream.Protocol) {
+				if h, _, err := encryptedDNSAddress(upstream.Addr, upstream.Protocol); err == nil {
+					host = h
+				}
+			} else if h, _, err := net.SplitHostPort(upstream.Addr); err == nil {
+				host = h
+			} else {
+				host = upstream.Addr
+			}
+			if host != "" && net.ParseIP(host) == nil {
+				directHosts[strings.ToLower(host)] = true
+			}
+		}
+
+		var directBootstrap []string
+		for _, d := range m.config.Bootstrap {
+			if directHosts[strings.ToLower(d)] {
+				directBootstrap = append(directBootstrap, d)
+			}
+		}
+
+		if len(directBootstrap) > 0 {
+			log.Printf("[dns module] bootstrap: %d direct domains to resolve: %v", len(directBootstrap), directBootstrap)
+			resolved := m.resolveBootstrap(directBootstrap)
+			resolvedLower := make(map[string]string, len(resolved))
+			for domain, ip := range resolved {
+				log.Printf("[dns module] bootstrap: %s → %s", domain, ip)
+				resolvedLower[strings.ToLower(domain)] = ip
+			}
+			log.Printf("[dns module] bootstrap: resolved %d/%d domains", len(resolved), len(directBootstrap))
+
+			for i, upstream := range m.config.Upstreams {
+				if upstream.Bootstrap {
+					continue
+				}
+				// Proxied upstreams must keep their hostname so resolution happens
+				// through the proxy instead of unencrypted local ISP DNS.
+				if upstream.ProxyTag != "" && upstream.ProxyTag != "direct" {
+					continue
+				}
+				if isEncryptedDNS(upstream.Protocol) {
+					host, port, err := encryptedDNSAddress(upstream.Addr, upstream.Protocol)
+					if err != nil {
+						return err
+					}
+					if ip, ok := resolvedLower[strings.ToLower(host)]; ok {
+						m.config.Upstreams[i].DialAddress = net.JoinHostPort(ip, port)
+					}
+					continue
+				}
+				before := upstream.Addr
+				host, port, err := net.SplitHostPort(upstream.Addr)
+				if err != nil {
+					if ip, ok := resolvedLower[strings.ToLower(upstream.Addr)]; ok {
+						m.config.Upstreams[i].Addr = net.JoinHostPort(ip, "53")
+						log.Printf("[dns module] bootstrap: upstream %s → %s (was %s)", upstream.ID, m.config.Upstreams[i].Addr, before)
+					} else {
+						log.Printf("[dns module] bootstrap: upstream %s addr=%s not resolved, keeping as-is", upstream.ID, upstream.Addr)
+					}
+					continue
+				}
+				if net.ParseIP(host) == nil {
+					if ip, ok := resolvedLower[strings.ToLower(host)]; ok {
+						m.config.Upstreams[i].Addr = net.JoinHostPort(ip, port)
+						log.Printf("[dns module] bootstrap: upstream %s → %s (was %s)", upstream.ID, m.config.Upstreams[i].Addr, before)
+					} else {
+						log.Printf("[dns module] bootstrap: upstream %s host=%s not resolved, keeping as-is", upstream.ID, host)
+					}
+				}
+			}
+		} else {
+			log.Printf("[dns module] bootstrap: skipping local resolution (all configured domains belong to proxied upstreams)")
+		}
+	} else {
+		log.Printf("[dns module] bootstrap: no domains to resolve (list is empty)")
 	}
 
 	// 打印最终上游列表
@@ -214,29 +258,12 @@ func (m *DnsModule) prepare() error {
 		}
 	}
 
-	// Determine default upstream: the LAST non-bootstrap upstream.
-	// Convention: the first upstreams have domain-specific rules,
-	// and the LAST upstream (with empty domain) is the fallback.
-	defaultUpstream := ""
-	for _, u := range m.config.Upstreams {
-		if !u.Bootstrap {
-			defaultUpstream = u.ID
-			if defaultUpstream == "" {
-				defaultUpstream = u.Addr
-			}
-			// Continue iterating — the LAST non-bootstrap upstream wins.
-		}
-	}
-	if defaultUpstream == "" && len(m.config.Upstreams) > 0 {
-		u := m.config.Upstreams[len(m.config.Upstreams)-1]
-		defaultUpstream = u.ID
-		if defaultUpstream == "" {
-			defaultUpstream = u.Addr
-		}
-	}
+	// Determine default upstream (explicit DefaultUpstream, or last non-bootstrap upstream).
+	defaultUpstream := resolveDefaultUpstream(m.config)
 
-	// Create the Router.
-	router, err := NewRouter(rules, m.config.Upstreams, defaultUpstream)
+	// Create the Router with any pre-configured geositeResolver BEFORE the
+	// listener starts accepting packets (zero startup race window).
+	router, err := newRouter(rules, m.config.Upstreams, defaultUpstream, m.geositeResolver)
 	if err != nil {
 		return fmt.Errorf("dns module: failed to create router: %w", err)
 	}
@@ -286,38 +313,25 @@ func (m *DnsModule) resolveBootstrap(domains []string) map[string]string {
 			resolved[domain] = domain
 			continue
 		}
-		// 对每个 DNS 服务器尝试解析
+		// 对每个 DNS 服务器尝试解析（先查 A，若无 A 记录再回退查 AAAA 支持 IPv6）
 		for _, srv := range sysServers {
 			addr := srv.String()
-			m := new(dns.Msg)
-			m.SetQuestion(dns.Fqdn(domain), dns.TypeA)
-			markOutgoing(m)
-			m.RecursionDesired = true
+			if ip, err := resolveBootstrapRecord(domain, addr, dns.TypeA); err != nil {
+				log.Printf("[dns module] bootstrap: %s (A) via %s failed: %v", domain, addr, err)
+				continue
+			} else if ip != "" {
+				resolved[domain] = ip
+				log.Printf("[dns module] bootstrap resolved %s → %s (A) via %s", domain, ip, addr)
+				break
+			}
 
-			// Use SO_MARK=0x80 to bypass iptables DNS redirect loop.
-			// newMarkedDnsClient sets the mark on all sockets; the bootstrap
-			// client only overrides the timeout so a dead server fails fast
-			// and the next candidate is tried.
-			client := newMarkedDnsClient("udp")
-			client.Timeout = 3 * time.Second
-			client.Dialer.Timeout = 3 * time.Second
-			resp, _, err := client.Exchange(m, addr)
-			if err != nil {
-				log.Printf("[dns module] bootstrap: %s via %s failed: %v", domain, addr, err)
+			if ip, err := resolveBootstrapRecord(domain, addr, dns.TypeAAAA); err != nil {
+				log.Printf("[dns module] bootstrap: %s (AAAA) via %s failed: %v", domain, addr, err)
 				continue
-			}
-			if resp == nil || len(resp.Answer) == 0 {
-				continue
-			}
-			for _, ans := range resp.Answer {
-				if a, ok := ans.(*dns.A); ok {
-					resolved[domain] = a.A.String()
-					log.Printf("[dns module] bootstrap resolved %s → %s via %s", domain, a.A.String(), addr)
-					break
-				}
-			}
-			if _, ok := resolved[domain]; ok {
-				break // 已解析成功
+			} else if ip != "" {
+				resolved[domain] = ip
+				log.Printf("[dns module] bootstrap resolved %s → %s (AAAA) via %s", domain, ip, addr)
+				break
 			}
 		}
 		if _, ok := resolved[domain]; !ok {
@@ -326,6 +340,38 @@ func (m *DnsModule) resolveBootstrap(domains []string) map[string]string {
 	}
 
 	return resolved
+}
+
+func resolveBootstrapRecord(domain, serverAddr string, qtype uint16) (string, error) {
+	msg := new(dns.Msg)
+	msg.SetQuestion(dns.Fqdn(domain), qtype)
+	markOutgoing(msg)
+	msg.RecursionDesired = true
+
+	// Use SO_MARK=0x80 to bypass iptables DNS redirect loop.
+	client := newMarkedDnsClient("udp")
+	client.Timeout = 3 * time.Second
+	client.Dialer.Timeout = 3 * time.Second
+	resp, _, err := client.Exchange(msg, serverAddr)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil || len(resp.Answer) == 0 {
+		return "", nil
+	}
+	for _, ans := range resp.Answer {
+		switch r := ans.(type) {
+		case *dns.A:
+			if qtype == dns.TypeA && r.A != nil {
+				return r.A.String(), nil
+			}
+		case *dns.AAAA:
+			if qtype == dns.TypeAAAA && r.AAAA != nil {
+				return r.AAAA.String(), nil
+			}
+		}
+	}
+	return "", nil
 }
 
 // wellKnownPublicDns 是硬编码的著名公共 DNS 服务器列表，作为 bootstrap 解析的兜底。
@@ -362,10 +408,18 @@ func (m *DnsModule) collectBootstrapDns() []netip.AddrPort {
 
 	addServers := func(list []string) {
 		for _, s := range list {
-			if !seen[s] {
-				if ap, err := netip.ParseAddrPort(s); err == nil {
+			ap, err := netip.ParseAddrPort(s)
+			if err != nil {
+				if addr, addrErr := netip.ParseAddr(strings.Trim(s, "[]")); addrErr == nil {
+					ap = netip.AddrPortFrom(addr, 53)
+					err = nil
+				}
+			}
+			if err == nil {
+				key := ap.String()
+				if !seen[key] {
 					servers = append(servers, ap)
-					seen[s] = true
+					seen[key] = true
 				}
 			}
 		}
@@ -580,6 +634,35 @@ func (m *DnsModule) SetDispatcher(d RouteDispatcher) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.dispatcher = d
+}
+
+// SetGeositeResolver sets the geosite tag resolver used to expand geosite:
+// rules. Calling this before Start() ensures rules are expanded before the
+// listener accepts any queries (eliminating any startup race). If called after
+// Start(), the active router is updated and reloaded immediately.
+func (m *DnsModule) SetGeositeResolver(resolver GeositeResolver) {
+	m.mu.Lock()
+	m.geositeResolver = resolver
+	router := m.router
+	cfg := m.config
+	m.mu.Unlock()
+
+	if router != nil {
+		router.SetGeositeResolver(resolver)
+		if err := router.Reload(cfg); err != nil {
+			log.Printf("[dns module] reload router after SetGeositeResolver failed: %v", err)
+		}
+	}
+}
+
+func (m *DnsModule) lifecycleCtx() context.Context {
+	m.mu.RLock()
+	ctx := m.ctx
+	m.mu.RUnlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 // Config returns the module configuration.

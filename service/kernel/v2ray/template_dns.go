@@ -11,6 +11,7 @@ import (
 	jsoniter "github.com/json-iterator/go"
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/db/configure"
+	"github.com/v2rayA/v2rayA/kernel/coreObj"
 )
 
 type Addr struct {
@@ -78,15 +79,16 @@ func (t *Template) setDNS(serverInfos []serverInfo) error {
 //
 // 生成的配置结构对应 core/dns/config.go 中的 DnsModuleConfig。
 func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
+	return t.generateDnsModuleConfigWithRules(serverInfos, configure.GetDnsRulesNotNil())
+}
+
+func (t *Template) generateDnsModuleConfigWithRules(serverInfos []serverInfo, rules []configure.DnsRule) error {
 	setting := t.Setting
 	if setting == nil {
 		setting = configure.GetSettingNotNil()
 	}
 
-	listenAddr := setting.DnsListenAddr
-	if listenAddr == "" {
-		listenAddr = "0.0.0.0:52353"
-	}
+	listenAddr := setting.DNSListenAddress()
 
 	// 获取 SOCKS 入站端口（用于 proxy_map）
 	socksPort := 20170
@@ -98,12 +100,19 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 	// 重新加载配置时沿用接管前的系统 DNS。
 	bootstrapDns := getSystemDnsServers()
 
+	listenerCfg := map[string]interface{}{
+		"listen_addr": listenAddr,
+		"timeout":     5,
+	}
+	host, port, _ := net.SplitHostPort(listenAddr)
+	if shouldLocalDnsListen(setting) && !(port == "53" && parseListenSocketsConflict(host, "127.2.0.17")) {
+		if couldListen, _ := couldLocalDnsListen(); couldListen {
+			listenerCfg["extra_listen_addrs"] = []string{"127.2.0.17:53"}
+		}
+	}
+
 	cfg := map[string]interface{}{
-		"listener": map[string]interface{}{
-			"listen_addr":        listenAddr,
-			"extra_listen_addrs": []string{"127.2.0.17:53"},
-			"timeout":            5,
-		},
+		"listener": listenerCfg,
 		"cache": map[string]interface{}{
 			"enabled":   setting.DnsCacheEnabled,
 			"size":      setting.DnsCacheSize,
@@ -131,8 +140,7 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 		cache["max_ttl"] = 86400
 	}
 
-	// 获取并迁移 DNS 规则
-	rules := configure.GetDnsRulesNotNil()
+	// 迁移 DNS 规则
 	migrated := configure.MigrateDnsRules(rules)
 
 	// 扫描所有 DNS 规则中引用的出站标签，构建 proxy_map
@@ -142,123 +150,97 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 
 	// 用于上游去重的 key
 	type upstreamKey struct {
-		addr string
-		tag  string
+		addr  string
+		proto string
+		tag   string
 	}
 	seenUpstream := make(map[upstreamKey]int) // key → index in upstreams list
 	upstreams := cfg["upstreams"].([]map[string]interface{})
 	rulesList := cfg["rules"].([]map[string]interface{})
+	defaultUpstreamID := ""
 
 	for _, rule := range migrated {
-		upstreamAddr := rule.Upstream
-		if upstreamAddr == "" {
-			upstreamAddr = rule.Server
-		}
-		if upstreamAddr == "" {
-			continue
-		}
-
-		// "localhost" 表示本地系统 DNS 解析器，映射为 127.0.0.1
-		if upstreamAddr == "localhost" {
-			upstreamAddr = "127.0.0.1"
-		}
-
-		// 解析协议和地址，确保端口默认值正确
-		proto := "udp"
-		addr := upstreamAddr
-		needDefaultPort := false
-
-		if strings.Contains(upstreamAddr, "://") {
-			if strings.HasPrefix(upstreamAddr, "https://") {
-				proto = "https"
-				// DoH 地址保留完整 URL，端口由 URL 隐含
-			} else if strings.HasPrefix(upstreamAddr, "udp://") {
-				addr = strings.TrimPrefix(upstreamAddr, "udp://")
-				needDefaultPort = true
-			} else if strings.HasPrefix(upstreamAddr, "tcp://") {
-				proto = "tcp"
-				addr = strings.TrimPrefix(upstreamAddr, "tcp://")
-				needDefaultPort = true
-			} else if strings.HasPrefix(upstreamAddr, "tls://") {
-				proto = "tcp-tls"
-				addr = strings.TrimPrefix(upstreamAddr, "tls://")
-				needDefaultPort = true
-			} else if strings.HasPrefix(upstreamAddr, "quic://") {
-				proto = "quic"
-				addr = strings.TrimPrefix(upstreamAddr, "quic://")
-				needDefaultPort = true
-			} else {
-				addr = upstreamAddr
-				needDefaultPort = true
-			}
-		} else {
-			needDefaultPort = true
-		}
-
-		// 如果地址中没有端口号，根据协议类型补充默认端口
-		if needDefaultPort {
-			if _, _, err := net.SplitHostPort(addr); err != nil {
-				switch proto {
-				case "https":
-					// DoH URL 包含完整地址，不需追加端口
-				case "tcp-tls", "tls":
-					addr = net.JoinHostPort(addr, "853")
-				default:
-					addr = net.JoinHostPort(addr, "53")
-				}
-			}
-		}
-
-		// 如果是域名地址，加入 bootstrap 列表，由 v2raya-core 用系统 DNS 解析
-		if strings.Contains(upstreamAddr, "://") {
-			u, e := url.Parse(upstreamAddr)
-			if e == nil && u.Hostname() != "" && net.ParseIP(u.Hostname()) == nil {
-				bootstrapList = append(bootstrapList, u.Hostname())
-			}
-		} else {
-			host, _, err := net.SplitHostPort(addr)
-			if err != nil {
-				host = addr
-			}
-			if net.ParseIP(host) == nil {
-				bootstrapList = append(bootstrapList, host)
-			}
-		}
-
 		outboundTag := rule.Outbound
 		if outboundTag == "" {
 			outboundTag = "direct"
 		}
 
-		// 构建 proxy_map：为每个非直连的出站标签创建 SOCKS5 映射
-		if outboundTag != "direct" && outboundTag != "block" {
-			if _, exists := proxyMap[outboundTag]; !exists {
-				port := socksPort
-				if p := t.ProbePorts[outboundTag]; p > 0 {
-					port = p
+		action := rule.Action
+		if action == "" {
+			action = "route"
+		}
+		if outboundTag == "block" {
+			action = "reject"
+		}
+		isReject := action == "reject"
+		if action == "bypass" {
+			outboundTag = "direct"
+		}
+
+		upstreamAddr := rule.Upstream
+		if upstreamAddr == "" {
+			upstreamAddr = rule.Server
+		}
+		if upstreamAddr == "" && !isReject {
+			continue
+		}
+
+		upstreamID := ""
+		if !isReject {
+			// "localhost" 表示本地系统 DNS 解析器，映射为 127.0.0.1
+			if upstreamAddr == "localhost" {
+				upstreamAddr = "127.0.0.1"
+			}
+
+			proto, addr, hostname, err := parseDNSUpstream(upstreamAddr)
+			if err != nil {
+				return fmt.Errorf("DNS rule %q: %w", rule.RuleID, err)
+			}
+			if proto == "quic" && outboundTag != "direct" && action != "bypass" {
+				return fmt.Errorf("DNS rule %q: DNS-over-QUIC requires a direct upstream", rule.RuleID)
+			}
+			if net.ParseIP(hostname) == nil && (outboundTag == "direct" || action == "bypass") {
+				bootstrapList = append(bootstrapList, hostname)
+			}
+
+			// 构建 proxy_map：为每个非直连的出站标签创建 SOCKS5 映射
+			if outboundTag != "direct" && outboundTag != "block" {
+				if _, exists := proxyMap[outboundTag]; !exists {
+					switch p := t.ProbePorts[outboundTag]; {
+					case p > 0:
+						proxyMap[outboundTag] = fmt.Sprintf("127.0.0.1:%d", p)
+					case t.ProbePorts == nil:
+						proxyMap[outboundTag] = fmt.Sprintf("127.0.0.1:%d", socksPort)
+					default:
+						// No connected member for this DNS rule. Block the internal
+						// dispatch and leave no SOCKS fallback to another group.
+						proxyMap[outboundTag] = ""
+						t.internalRoutes = append(t.internalRoutes, coreObj.RoutingRule{
+							Type: "field", InboundTag: []string{internalGroupTag("dns", outboundTag)}, OutboundTag: "block",
+						})
+					}
 				}
-				proxyMap[outboundTag] = fmt.Sprintf("127.0.0.1:%d", port)
+			}
+
+			// 上游去重（相同地址+协议+代理标签的上游只创建一个实例）
+			key := upstreamKey{addr: addr, proto: proto, tag: outboundTag}
+			upstreamID = fmt.Sprintf("upstream-%d", len(upstreams))
+			if idx, ok := seenUpstream[key]; ok {
+				upstreamID = fmt.Sprintf("upstream-%d", idx)
+			} else {
+				seenUpstream[key] = len(upstreams)
+				upstreams = append(upstreams, map[string]interface{}{
+					"id":        upstreamID,
+					"addr":      addr,
+					"protocol":  proto,
+					"proxy_tag": outboundTag,
+					"bootstrap": false,
+				})
 			}
 		}
 
-		// 上游去重（相同地址+代理标签的上游只创建一个实例）
-		key := upstreamKey{addr: addr, tag: outboundTag}
-		upstreamID := fmt.Sprintf("upstream-%d", len(upstreams))
-		if idx, ok := seenUpstream[key]; ok {
-			upstreamID = fmt.Sprintf("upstream-%d", idx)
-		} else {
-			seenUpstream[key] = len(upstreams)
-			upstreams = append(upstreams, map[string]interface{}{
-				"id":        upstreamID,
-				"addr":      addr,
-				"protocol":  proto,
-				"proxy_tag": outboundTag,
-				"bootstrap": false,
-			})
-		}
-
 		// 解析域名匹配规则
-		var domains, suffixes []string
+		var domains, suffixes, regexes []string
 		domainStr := rule.Domain
 		if domainStr == "" {
 			domainStr = rule.Domains
@@ -269,12 +251,39 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 				if d == "" {
 					continue
 				}
-				if strings.HasPrefix(d, "domain:") {
-					suffixes = append(suffixes, strings.TrimPrefix(d, "domain:"))
-				} else if strings.HasPrefix(d, "geosite:") || strings.HasPrefix(d, "keyword:") {
+				switch {
+				case strings.HasPrefix(d, "full:"):
+					val := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(strings.TrimPrefix(d, "full:"))), ".")
+					if val != "" {
+						domains = append(domains, val)
+					}
+				case strings.HasPrefix(d, "domain:"):
+					val := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(strings.TrimPrefix(d, "domain:"))), ".")
+					if val != "" {
+						suffixes = append(suffixes, val)
+					}
+				case strings.HasPrefix(d, "suffix:"):
+					val := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(strings.TrimPrefix(d, "suffix:"))), ".")
+					if val != "" {
+						suffixes = append(suffixes, val)
+					}
+				case strings.HasPrefix(d, "regexp:"):
+					val := strings.TrimSpace(strings.TrimPrefix(d, "regexp:"))
+					if val != "" {
+						regexes = append(regexes, val)
+					}
+				case strings.HasPrefix(d, "keyword:"):
+					val := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(d, "keyword:")))
+					if val != "" {
+						domains = append(domains, "keyword:"+val)
+					}
+				case strings.HasPrefix(d, "geosite:"):
 					domains = append(domains, d)
-				} else {
-					domains = append(domains, d)
+				default:
+					val := strings.TrimSuffix(strings.ToLower(d), ".")
+					if val != "" {
+						domains = append(domains, val)
+					}
 				}
 			}
 		}
@@ -301,16 +310,24 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 			}
 		}
 
-		// 构建规则配置（仅在有匹配条件时）
-		if len(domains) > 0 || len(suffixes) > 0 || len(clientIPs) > 0 || len(ips) > 0 {
+		// 解析查询类型
+		var qtypes []string
+		if rule.QueryType != "" && rule.QueryType != "*" {
+			for _, qt := range strings.Split(rule.QueryType, ",") {
+				qt = strings.TrimSpace(qt)
+				if qt != "" && qt != "*" {
+					qtypes = append(qtypes, strings.ToUpper(qt))
+				}
+			}
+		}
+
+		hasConditions := len(domains) > 0 || len(suffixes) > 0 || len(regexes) > 0 || len(clientIPs) > 0 || len(ips) > 0 || len(qtypes) > 0
+
+		// 构建规则配置（有匹配条件时，或无条件的 reject 兜底规则）
+		if hasConditions || isReject {
 			ruleID := rule.RuleID
 			if ruleID == "" {
 				ruleID = fmt.Sprintf("rule-%d", len(rulesList))
-			}
-
-			action := rule.Action
-			if action == "" {
-				action = "route"
 			}
 
 			policy := rule.Policy
@@ -325,23 +342,18 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 				"policy":        policy,
 				"domain":        domains,
 				"domain_suffix": suffixes,
+				"domain_regex":  regexes,
 				"ip":            ips,
 				"client_ip":     clientIPs,
 			}
-
-			// 解析查询类型
-			if rule.QueryType != "" && rule.QueryType != "*" {
-				var qtypes []string
-				for _, qt := range strings.Split(rule.QueryType, ",") {
-					qt = strings.TrimSpace(qt)
-					if qt != "" {
-						qtypes = append(qtypes, strings.ToUpper(qt))
-					}
-				}
+			if len(qtypes) > 0 {
 				rc["query_type"] = qtypes
 			}
 
 			rulesList = append(rulesList, rc)
+		} else if upstreamID != "" {
+			// 无匹配条件的普通规则作为兜底默认上游
+			defaultUpstreamID = upstreamID
 		}
 	}
 
@@ -350,7 +362,7 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 	// 导致节点域名永远解析失败、代理通道完全不可用。
 	var nodeDomains []string
 	for _, info := range serverInfos {
-		host := info.Info.GetHostname()
+		host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(info.Info.GetHostname())), ".")
 		if host != "" && net.ParseIP(host) == nil {
 			nodeDomains = append(nodeDomains, host)
 		}
@@ -392,6 +404,22 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 	upstreams = append(privateUpstreams, upstreams...)
 	rulesList = append(privateRules, rulesList...)
 	bootstrapList = append(bootstrapList, privateBootstrap...)
+
+	// 显式写入 default_upstream，并将对应的兜底上游移到 upstreams 末尾，
+	// 确保即使去重命中先前的上游条目，默认上游依然无歧义。
+	if defaultUpstreamID != "" {
+		cfg["default_upstream"] = defaultUpstreamID
+		for i, u := range upstreams {
+			if id, ok := u["id"].(string); ok && id == defaultUpstreamID {
+				if i != len(upstreams)-1 {
+					target := upstreams[i]
+					upstreams = append(append(upstreams[:i], upstreams[i+1:]...), target)
+				}
+				break
+			}
+		}
+	}
+
 	cfg["upstreams"] = upstreams
 	cfg["rules"] = rulesList
 
@@ -430,4 +458,42 @@ func getSystemDnsServers() []string {
 		}
 	}
 	return servers
+}
+
+// parseDNSUpstream retains the hostname for TLS verification and bootstrap.
+func parseDNSUpstream(raw string) (protocol, addr, host string, err error) {
+	protocol = "udp"
+	addr = strings.TrimSpace(raw)
+	defaultPort := "53"
+	if scheme, rest, ok := strings.Cut(addr, "://"); ok {
+		switch strings.ToLower(scheme) {
+		case "https":
+			u, err := url.Parse(addr)
+			if err != nil || u.Hostname() == "" {
+				return "", "", "", fmt.Errorf("invalid DoH URL %q", addr)
+			}
+			return "https", u.String(), u.Hostname(), nil
+		case "tls", "dot", "tcp-tls":
+			protocol, defaultPort = "tcp-tls", "853"
+		case "quic", "doq":
+			protocol, defaultPort = "quic", "853"
+		case "udp", "tcp":
+			protocol = strings.ToLower(scheme)
+		default:
+			return "", "", "", fmt.Errorf("unsupported DNS upstream protocol %q", scheme)
+		}
+		addr = rest
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		host, port = strings.Trim(addr, "[]"), defaultPort
+		if strings.Contains(host, ":") && net.ParseIP(host) == nil {
+			return "", "", "", fmt.Errorf("invalid DNS upstream %q", raw)
+		}
+	}
+	portNumber, err := strconv.Atoi(port)
+	if host == "" || strings.ContainsAny(host, "/?#@ ") || err != nil || portNumber < 1 || portNumber > 65535 {
+		return "", "", "", fmt.Errorf("invalid DNS upstream %q", raw)
+	}
+	return protocol, net.JoinHostPort(host, port), host, nil
 }

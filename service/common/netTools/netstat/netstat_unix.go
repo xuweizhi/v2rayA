@@ -1,3 +1,4 @@
+//go:build linux || plan9 || freebsd || solaris
 // +build linux plan9 freebsd solaris
 
 package netstat
@@ -15,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 )
-
 
 const (
 	pathNet  = "/proc/net"
@@ -87,16 +87,32 @@ func FillProcesses(sockets []*Socket) error {
 	if err != nil {
 		return ProcOpenFailedErr
 	}
-	mapInodeSocket := make(map[string]*Socket)
-	iNodes := make(map[string]struct{})
-	for i, s := range sockets {
+	mapInodeSockets := make(map[string][]*Socket, len(sockets))
+	iNodes := make(map[string]struct{}, len(sockets))
+	seenSock := make(map[*Socket]struct{}, len(sockets))
+	for _, s := range sockets {
+		if s == nil {
+			continue
+		}
+		if _, dup := seenSock[s]; dup {
+			continue
+		}
+		seenSock[s] = struct{}{}
 		s.processMutex.Lock()
-		defer s.processMutex.Unlock()
-		mapInodeSocket[s.inode] = sockets[i]
-		iNodes[s.inode] = struct{}{}
+		if s.Proc == nil && s.inode != "" && s.inode != "0" {
+			mapInodeSockets[s.inode] = append(mapInodeSockets[s.inode], s)
+			iNodes[s.inode] = struct{}{}
+		}
+		s.processMutex.Unlock()
+	}
+	if len(iNodes) == 0 {
+		return nil
 	}
 loop1:
 	for _, fi := range f {
+		if len(iNodes) == 0 {
+			break
+		}
 		fn := fi.Name()
 		if !fi.IsDir() {
 			continue
@@ -106,19 +122,23 @@ loop1:
 				continue loop1
 			}
 		}
-		for _, s := range sockets {
-			if s.Proc != nil {
-				continue
-			}
-		}
-		if inode := isProcessSocket(fn, iNodes); inode != "" {
+		if matched := matchProcessSockets(fn, iNodes); len(matched) > 0 {
 			pn, ppid := getProcessInfo(fn)
-			mapInodeSocket[inode].Proc = &Process{
+			proc := &Process{
 				PID:  fn,
 				PPID: ppid,
 				Name: pn,
 			}
-			delete(iNodes, inode)
+			for _, inode := range matched {
+				for _, s := range mapInodeSockets[inode] {
+					s.processMutex.Lock()
+					if s.Proc == nil {
+						s.Proc = proc
+					}
+					s.processMutex.Unlock()
+				}
+				delete(iNodes, inode)
+			}
 		}
 	}
 	return nil
@@ -129,13 +149,13 @@ loop1:
 */
 func (s *Socket) Process() (*Process, error) {
 	s.processMutex.Lock()
-	s.processMutex.Unlock()
+	defer s.processMutex.Unlock()
 	if s.Proc != nil {
 		return s.Proc, nil
 	}
 	f, err := os.ReadDir(pathProc)
 	if err != nil {
-		return nil, nil
+		return nil, ProcOpenFailedErr
 	}
 loop1:
 	for _, fi := range f {
@@ -207,38 +227,62 @@ func getProcName(s string) string {
 	return s[:j]
 }
 
+func parseProcStat(b []byte) (pn string, ppid string) {
+	openIdx := bytes.IndexByte(b, '(')
+	closeIdx := bytes.LastIndexByte(b, ')')
+	if openIdx < 0 || closeIdx <= openIdx {
+		return "", ""
+	}
+	pn = string(b[openIdx+1 : closeIdx])
+	rest := bytes.Fields(b[closeIdx+1:])
+	// rest[0] is state, rest[1] is ppid
+	if len(rest) >= 2 {
+		ppid = string(rest[1])
+	}
+	return pn, ppid
+}
+
 func getProcessInfo(pid string) (pn string, ppid string) {
 	p := filepath.Join(pathProc, pid, "stat")
 	b, err := os.ReadFile(p)
 	if err != nil {
-		err = fmt.Errorf("getProcessInfo: %w", err)
-		return
+		return "", ""
 	}
-	sp := bytes.Fields(b)
-	pn = string(sp[1])
-	return getProcName(pn), string(sp[3])
+	return parseProcStat(b)
 }
 
-func isProcessSocket(pid string, socketInode map[string]struct{}) string {
+func matchProcessSockets(pid string, socketInodes map[string]struct{}) []string {
 	// link name is of the form socket:[5860846]
 	p := filepath.Join(pathProc, pid, "fd")
 	f, err := os.Open(p)
+	if err != nil {
+		return nil
+	}
 	fns, err := f.Readdirnames(-1)
 	f.Close()
 	if err != nil {
-		return ""
+		return nil
 	}
+	var matched []string
 	for _, fn := range fns {
 		lk, err := os.Readlink(filepath.Join(p, fn))
 		if err != nil {
 			continue
 		}
-		for inode := range socketInode {
-			target := "socket:[" + inode + "]"
-			if lk == target {
-				return inode
+		if strings.HasPrefix(lk, "socket:[") && strings.HasSuffix(lk, "]") {
+			inode := lk[8 : len(lk)-1]
+			if _, ok := socketInodes[inode]; ok {
+				matched = append(matched, inode)
 			}
 		}
+	}
+	return matched
+}
+
+func isProcessSocket(pid string, socketInode map[string]struct{}) string {
+	matched := matchProcessSockets(pid, socketInode)
+	if len(matched) > 0 {
+		return matched[0]
 	}
 	return ""
 }
@@ -247,18 +291,20 @@ func getProcessSocketSet(pid string) (set []string) {
 	// link name is of the form socket:[5860846]
 	p := filepath.Join(pathProc, pid, "fd")
 	f, err := os.Open(p)
+	if err != nil {
+		return nil
+	}
 	fns, err := f.Readdirnames(-1)
 	f.Close()
 	if err != nil {
-		err = fmt.Errorf("getProcessSocketSet: %w", err)
-		return
+		return nil
 	}
 	for _, fn := range fns {
 		lk, err := os.Readlink(filepath.Join(p, fn))
 		if err != nil {
 			continue
 		}
-		if strings.HasPrefix(lk, "socket:[") {
+		if strings.HasPrefix(lk, "socket:[") && strings.HasSuffix(lk, "]") {
 			set = append(set, lk[8:len(lk)-1])
 		}
 	}
@@ -388,7 +434,7 @@ func Print(protocols []string) string {
 			for _, v := range sockets {
 				process, err := v.Process()
 				var pstr string
-				if err != nil {
+				if err != nil || process == nil {
 					pstr = ""
 				} else {
 					pstr = process.PID + "/" + process.Name

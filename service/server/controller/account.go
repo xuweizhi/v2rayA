@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -87,6 +88,10 @@ func PostAccount(ctx *gin.Context) {
 	err := ctx.ShouldBindJSON(&data)
 	if err != nil {
 		common.ResponseError(ctx, logError("bad request"))
+		return
+	}
+	if strings.TrimSpace(data.Username) == "" {
+		common.ResponseError(ctx, logError("username cannot be empty"))
 		return
 	}
 	if ok, err := service.ValidPasswordLength(data.Password); !ok {

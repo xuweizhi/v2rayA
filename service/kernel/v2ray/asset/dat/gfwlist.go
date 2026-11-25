@@ -25,22 +25,37 @@ type GFWList struct {
 	Tag        string
 }
 
-var g GFWList
-var gMutex sync.Mutex
+const gfwListCacheTTL = 5 * time.Minute
+
+var (
+	g              GFWList
+	gCachedAt      time.Time
+	gMutex         sync.Mutex
+	gfwListTagsURL = "https://api.github.com/repos/v2rayA/dist-v2ray-rules-dat/tags"
+	gfwListNow     = time.Now
+)
 
 func GetRemoteGFWListUpdateTime(c *http.Client) (gfwlist GFWList, err error) {
 	gMutex.Lock()
 	defer gMutex.Unlock()
-	if !g.UpdateTime.IsZero() {
+	if !g.UpdateTime.IsZero() && gfwListNow().Sub(gCachedAt) < gfwListCacheTTL {
 		return g, nil
 	}
-	resp, err := httpClient.HttpGetUsingSpecificClient(c, "https://api.github.com/repos/v2rayA/dist-v2ray-rules-dat/tags")
+	resp, err := httpClient.HttpGetUsingSpecificClient(c, gfwListTagsURL)
 	if err != nil {
 		err = fmt.Errorf("failed to get latest version of GFWList: %w", err)
 		return
 	}
-	b, _ := io.ReadAll(resp.Body)
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("failed to get latest version of GFWList: unexpected status %s", resp.Status)
+		return
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		err = fmt.Errorf("failed to get latest version of GFWList: %w", err)
+		return
+	}
 	tag := gjson.GetBytes(b, "0.name").Str
 	t, err := time.Parse("200601021504", tag)
 	if err != nil {
@@ -49,6 +64,7 @@ func GetRemoteGFWListUpdateTime(c *http.Client) (gfwlist GFWList, err error) {
 	}
 	g.Tag = tag
 	g.UpdateTime = t
+	gCachedAt = gfwListNow()
 	return g, nil
 }
 func IsGFWListUpdate() (update bool, remoteTime time.Time, err error) {
@@ -91,7 +107,11 @@ var (
 func httpGet(url string) (data string, err error) {
 	resp, err := httpClient.GetHttpClientAutomatically().Get(url)
 	if err != nil {
-		return
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("http get %s: unexpected status %s", url, resp.Status)
 	}
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {

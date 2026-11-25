@@ -60,8 +60,7 @@ func checkUpdate() {
 		if setting.GFWListAutoUpdateMode == configure.AutoUpdateAtIntervals {
 			conf.TickerUpdateGFWList.Reset(configure.AutoUpdateInterval(setting.GFWListAutoUpdateIntervalHour))
 		}
-		switch setting.RulePortMode {
-		case configure.GfwlistMode:
+		if setting.RulePortMode == configure.GfwlistMode || setting.Transparent == configure.TransparentGfwlist {
 			go func() {
 				/* Update LoyalsoldierSite.dat */
 				localGFWListVersion, err := dat.CheckAndUpdateGFWList("")
@@ -71,8 +70,6 @@ func checkUpdate() {
 				}
 				log.Info("Complete updating PAC file. Localtime: %v", localGFWListVersion)
 			}()
-		case configure.CustomMode:
-			// obsolete
 		}
 	}
 
@@ -89,8 +86,7 @@ func checkUpdate() {
 	go func() {
 		f := func() {
 			if foundNew, remote, err := service.CheckUpdate(); err == nil {
-				conf.FoundNew = foundNew
-				conf.RemoteVersion = remote
+				service.SetRemoteUpdateInfo(foundNew, remote)
 			}
 		}
 		f()

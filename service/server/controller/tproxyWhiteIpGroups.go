@@ -24,6 +24,9 @@ func PutTproxyWhiteIpGroups(ctx *gin.Context) {
 		common.ResponseError(ctx, logError("bad request"))
 		return
 	}
-	configure.SetTproxyWhiteIpGroups(data.CountryCodes, data.CustomIps)
+	if err := configure.SetTproxyWhiteIpGroups(data.CountryCodes, data.CustomIps); err != nil {
+		common.ResponseError(ctx, logError(err))
+		return
+	}
 	common.ResponseSuccess(ctx, nil)
 }

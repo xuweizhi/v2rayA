@@ -1,21 +1,35 @@
 package v2ray
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/v2rayA/v2rayA/common/resolv"
 	"github.com/v2rayA/v2rayA/conf"
 	"github.com/v2rayA/v2rayA/db/configure"
+	"github.com/v2rayA/v2rayA/kernel/iptables"
 	"github.com/v2rayA/v2rayA/kernel/v2ray/asset"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 )
 
+var (
+	writeTransparentProxyRulesFn                 = writeTransparentProxyRules
+	deleteTransparentProxyRulesFn                = deleteTransparentProxyRules
+	deleteTransparentProxyRulesKeepSystemProxyFn = deleteTransparentProxyRulesKeepSystemProxy
+)
+
 type CoreProcessManager struct {
+	// lifecycle serializes child replacement, transparent rules and teardown.
+	// mu protects process and monitor state.
+	lifecycle        sync.Mutex
 	p                *Process
+	retiring         *Process
 	mu               sync.Mutex
+	startGen         uint64
 	testing          bool
 	networkPaused    bool
 	connectivityStop chan struct{}
@@ -24,7 +38,9 @@ type CoreProcessManager struct {
 var ProcessManager CoreProcessManager
 
 func (m *CoreProcessManager) beforeStop(p *Process) {
-	m.CheckAndStopTransparentProxy(p.template.Setting)
+	if p != nil && p.template != nil && p.template.Setting != nil {
+		m.stopTransparentProxy(p.template.Setting)
+	}
 
 	if corehook := conf.GetEnvironmentConfig().CoreHook; corehook != "" {
 		hook := strings.Split(corehook, " ")
@@ -79,13 +95,32 @@ func (m *CoreProcessManager) stopConnectivityMonitorLocked() {
 }
 
 func (m *CoreProcessManager) CheckAndSetupTransparentProxy(checkRunning bool, setting *configure.Setting, tmpl *Template) (err error) {
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	if checkRunning {
+		current := m.GetRunningTemplate()
+		if current == nil || tmpl != nil && tmpl != current {
+			return nil
+		}
+		tmpl = current
+	}
+	return m.setupTransparentProxy(setting, tmpl)
+}
+
+func (m *CoreProcessManager) setupTransparentProxy(setting *configure.Setting, tmpl *Template) (err error) {
 	if setting != nil {
+		copy := *setting
+		setting = &copy
 		setting.FillEmpty()
 	} else {
 		setting = configure.GetSettingNotNil()
 	}
-	if (!checkRunning || ProcessManager.Running()) && IsTransparentOn(setting) {
-		deleteTransparentProxyRules()
+	if IsTransparentOn(setting) {
+		if setting.TransparentType == configure.TransparentSystemProxy {
+			_ = iptables.SystemProxy.GetCleanCommands().Run(false)
+		} else {
+			deleteTransparentProxyRulesFn()
+		}
 
 		if thook := conf.GetEnvironmentConfig().TransparentHook; thook != "" {
 			hook := strings.Split(thook, " ")
@@ -103,7 +138,9 @@ func (m *CoreProcessManager) CheckAndSetupTransparentProxy(checkRunning bool, se
 			}
 		}
 
-		err = writeTransparentProxyRules(tmpl)
+		if err = writeTransparentProxyRulesFn(tmpl); err != nil {
+			return err
+		}
 
 		if thook := conf.GetEnvironmentConfig().TransparentHook; thook != "" {
 			hook := strings.Split(thook, " ")
@@ -121,10 +158,16 @@ func (m *CoreProcessManager) CheckAndSetupTransparentProxy(checkRunning bool, se
 			}
 		}
 	}
-	return
+	return nil
 }
 
 func (m *CoreProcessManager) CheckAndStopTransparentProxy(setting *configure.Setting) {
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	m.stopTransparentProxy(setting)
+}
+
+func (m *CoreProcessManager) stopTransparentProxy(setting *configure.Setting) {
 	if setting == nil {
 		if t := m.GetRunningTemplate(); t != nil {
 			setting = t.Setting
@@ -149,7 +192,11 @@ func (m *CoreProcessManager) CheckAndStopTransparentProxy(setting *configure.Set
 			}
 		}
 
-		deleteTransparentProxyRules()
+		if setting.TransparentType == configure.TransparentSystemProxy {
+			_ = iptables.SystemProxy.GetCleanCommands().Run(false)
+		} else {
+			deleteTransparentProxyRulesFn()
+		}
 
 		if thook := conf.GetEnvironmentConfig().TransparentHook; thook != "" {
 			hook := strings.Split(thook, " ")
@@ -193,61 +240,57 @@ func (m *CoreProcessManager) Stop(saveRunning bool) {
 // Return the exact child that received the stop request so a caller can
 // await its exit after releasing the manager lock.
 func (m *CoreProcessManager) stopCurrent(saveRunning bool) *Process {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	p := m.p
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	p := m.stop(saveRunning)
 	if p == nil {
-		return nil
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.retiring
 	}
+	status := configure.LastKernelExitRunning
 	if saveRunning {
-		// User explicitly stopped the core via API (StopV2ray).
-		defer func() { _ = configure.SetLastKernelExitStatus(configure.LastKernelExitStopped) }()
-	} else {
-		// Graceful shutdown — the kernel was running when v2rayA exited.
-		// Preserve the "running" status so it is restored on next startup.
-		defer func() { _ = configure.SetLastKernelExitStatus(configure.LastKernelExitRunning) }()
+		status = configure.LastKernelExitStopped
 	}
-	m.stop(saveRunning)
+	_ = configure.SetLastKernelExitStatus(status)
 	return p
 }
 
-func (m *CoreProcessManager) stop(saveRunning bool) {
-	if m.p == nil {
-		return
-	}
-
+// Caller holds lifecycle. Publish the stopped state before running teardown
+// hooks so status readers remain available while a hook or child is exiting.
+func (m *CoreProcessManager) stop(saveRunning bool) *Process {
+	m.mu.Lock()
 	p := m.p
-
+	if p == nil {
+		m.mu.Unlock()
+		return nil
+	}
+	m.startGen++
 	m.stopConnectivityMonitorLocked()
 	m.networkPaused = false
+	m.p = nil
+	m.retiring = p
+	m.mu.Unlock()
 
 	m.beforeStop(p)
-
-	err := p.Close()
-	if err != nil {
+	if err := p.Close(); err != nil {
 		log.Warn("CoreProcessManager.Stop: %v", err)
 	}
 	if saveRunning {
 		configure.SetRunning(false)
 	}
-
 	m.afterStop(p)
-
-	m.p = nil
-
-	// Notify connected frontend clients that the proxy is no longer running.
 	ApiFeed.ProductMessage("running_state", map[string]interface{}{"running": false, "networkPaused": false})
+	return p
 }
 
 func (m *CoreProcessManager) handleUnexpectedStop(p *Process) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.p != p {
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	if m.Process() != p {
 		return
 	}
 	m.stop(true)
-	// Override the default status (Stop() would have saved "running" or "stopped")
-	// to record the abnormal exit so the startup code can warn the user.
 	_ = configure.SetLastKernelExitStatus(configure.LastKernelExitCrashed)
 }
 
@@ -270,11 +313,11 @@ func (m *CoreProcessManager) runPreStartHook() error {
 	return nil
 }
 
-func (m *CoreProcessManager) afterStart(t *Template) (err error) {
-	if err = m.CheckAndSetupTransparentProxy(false, t.Setting, t); err != nil {
+func (m *CoreProcessManager) afterStart(t *Template, gen uint64, process *Process) (err error) {
+	if err := m.setupTransparentProxy(t.Setting, t); err != nil {
 		return err
 	}
-	m.startConnectivityMonitor(t)
+	m.startConnectivityMonitor(t, gen, process)
 
 	if corehook := conf.GetEnvironmentConfig().CoreHook; corehook != "" {
 		hook := strings.Split(corehook, " ")
@@ -291,11 +334,10 @@ func (m *CoreProcessManager) afterStart(t *Template) (err error) {
 	return nil
 }
 
-func (m *CoreProcessManager) Start(t *Template) (err error) {
-	// Phase 1 (pre-lock): lightweight checks that do not depend on whether a
-	// previous process is running.  Port occupancy is checked by NewProcess
-	// after the old process has been stopped.
-	if !ShouldLocalDnsListen() {
+func (m *CoreProcessManager) Start(t *Template) error {
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	if !shouldLocalDnsListen(t.Setting) {
 		resolv.CheckResolvConf()
 	}
 	if (t.Setting.Transparent == configure.TransparentGfwlist || t.Setting.RulePortMode == configure.GfwlistMode) && !asset.DoesV2rayAssetExist("LoyalsoldierSite.dat") {
@@ -303,36 +345,42 @@ func (m *CoreProcessManager) Start(t *Template) (err error) {
 		return fmt.Errorf("cannot find GFWList files. update GFWList and try again")
 	}
 
-	// Phase 2 (locked): stop the old process, run the pre-start hook (ordered
-	// after the pre-stop hook in beforeStop), then start the new core.
-	// afterStart is deferred to Phase 3 so that heavy operations (DNS, TinyTun,
-	// transparent-proxy hooks) do not block while the lock is held.
-	m.mu.Lock()
 	m.stop(true)
-	process, err := NewProcess(t, func() error {
-		return m.runPreStartHook()
-	}, func() error {
-		return nil // afterStart executed post-lock in Phase 3
-	}, m.handleUnexpectedStop)
-	if err != nil {
-		m.mu.Unlock()
-		return err
-	}
-	m.p = process
-	testing := m.testing
+	m.mu.Lock()
+	oldProc := m.retiring
+	m.startGen++
+	gen := m.startGen
 	m.mu.Unlock()
 
-	defer func() {
-		if err != nil {
-			m.Stop(true)
+	// Wait briefly for the previous process to exit before launching NewProcess
+	// so non-SO_REUSEPORT listeners (such as the DNS module) are released first.
+	if oldProc != nil {
+		waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if waitErr := oldProc.WaitUntilExit(waitCtx); waitErr != nil {
+			cancel()
+			_ = t.Close()
+			return fmt.Errorf("previous core did not exit before restart: %w", waitErr)
 		}
-	}()
+		cancel()
+		m.mu.Lock()
+		m.retiring = nil
+		m.mu.Unlock()
+	}
 
-	// Phase 3 (post-lock): heavy operations — transparent proxy setup (DNS,
-	// TinyTun), connectivity monitor, and post-start hook.
-	if err = m.afterStart(t); err != nil {
+	process, err := NewProcess(t, m.runPreStartHook, func() error { return nil }, m.handleUnexpectedStop)
+	if err != nil {
 		return err
 	}
+	m.mu.Lock()
+	m.p = process
+	m.mu.Unlock()
+	if err := m.afterStart(t, gen, process); err != nil {
+		m.stop(true)
+		return err
+	}
+	m.mu.Lock()
+	testing := m.testing
+	m.mu.Unlock()
 	configure.SetRunning(true)
 	_ = configure.SetLastKernelExitStatus(configure.LastKernelExitRunning)
 	if !testing {
@@ -343,6 +391,8 @@ func (m *CoreProcessManager) Start(t *Template) (err error) {
 
 // Running reports if v2ray-core is running.
 func (m *CoreProcessManager) Running() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.p != nil
 }
 

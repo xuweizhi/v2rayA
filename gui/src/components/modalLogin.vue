@@ -85,45 +85,21 @@ export default {
       }
       this.validationError = "";
       this.isSubmitting = true;
-      if (this.first) {
-        //register
-        this.$axios({
-          url: apiRoot + "/account",
-          method: "post",
-          data: {
-            username: this.username,
-            password: this.password,
-          },
-        }).then((res) => {
-          handleResponse(res, this, () => {
-            if (!isBackendRequest(res.config)) return;
-            localStorage["token"] = res.data.data.token;
-            this.$emit("close");
-            this.$remount();
-          });
-        }).finally(() => {
-          this.isSubmitting = false;
+      this.$axios.post(apiRoot + (this.first ? "/account" : "/login"), {
+        username: this.username,
+        password: this.password,
+      }).then((res) => {
+        handleResponse(res, this, () => {
+          if (!isBackendRequest(res.config)) return;
+          localStorage["token"] = res.data.data.token;
+          this.$emit("close");
+          this.$remount();
         });
-      } else {
-        //login
-        this.$axios({
-          url: apiRoot + "/login",
-          method: "post",
-          data: {
-            username: this.username,
-            password: this.password,
-          },
-        }).then((res) => {
-          handleResponse(res, this, () => {
-            if (!isBackendRequest(res.config)) return;
-            localStorage["token"] = res.data.data.token;
-            this.$emit("close");
-            this.$remount();
-          });
-        }).finally(() => {
-          this.isSubmitting = false;
-        });
-      }
+      }).catch((err) => {
+        this.validationError = err.response?.data?.message || err.message || this.$t("common.fail");
+      }).finally(() => {
+        this.isSubmitting = false;
+      });
     },
     handleEnter() {
       if (!this.isSubmitting) {

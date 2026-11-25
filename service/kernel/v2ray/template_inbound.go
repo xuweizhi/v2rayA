@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"sort"
 	"strings"
@@ -222,24 +223,32 @@ func (t *Template) setInbound(setting *configure.Setting) error {
 		t.Inbounds = append(t.Inbounds, ib)
 
 		// Generate per-inbound routing rules based on the bound outbound group
-		if ci.Outbound != "" && ci.OutboundType != "" {
+		if ci.OutboundType != "" {
 			switch ci.OutboundType {
 			case "direct":
-				// Direct single outbound: route all traffic from this inbound to the bound outbound group
-				t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{
-					Type:        "field",
-					OutboundTag: ci.Outbound,
-					InboundTag:  []string{ci.Tag},
-				})
+				if ci.Outbound != "" {
+					// Direct single outbound: route all traffic from this inbound to the bound outbound group
+					t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{
+						Type:        "field",
+						OutboundTag: ci.Outbound,
+						InboundTag:  []string{ci.Tag},
+					})
+				}
 			case "routingA":
-				// RoutingA rules: parse and apply with InboundTag filter
+				// RoutingA rules: parse and apply with pinned InboundTag filter
 				if ci.RoutingARules != "" {
-					rules, err := parseRoutingARules(ci.RoutingARules, ci.Tag)
+					rules, err := parseRoutingARules(ci.RoutingARules, ci.Tag, ci.Outbound, t.outNames())
 					if err != nil {
 						log.Warn("setInbound: failed to parse RoutingA rules for inbound %s: %v", ci.Tag, err)
-					} else {
-						t.Routing.Rules = append(t.Routing.Rules, rules...)
+						return fmt.Errorf("custom inbound %q routingA: %w", ci.Tag, err)
 					}
+					t.Routing.Rules = append(t.Routing.Rules, rules...)
+				} else if ci.Outbound != "" {
+					t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{
+						Type:        "field",
+						OutboundTag: ci.Outbound,
+						InboundTag:  []string{ci.Tag},
+					})
 				}
 			}
 		}

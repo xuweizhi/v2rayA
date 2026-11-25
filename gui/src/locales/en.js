@@ -138,6 +138,7 @@ export default {
     time: "Time",
     restore: "Restore",
     restoreConfirm: "The database will be replaced with this backup and the service will restart. The current database is preserved as a safety copy. Continue?",
+    restartRequired: "Backup prepared. Restart the v2rayA service to apply it.",
     restoring: "Restoring... the service will restart shortly",
     webdavUrl: "WebDAV URL",
     webdavUsername: "Username",
@@ -169,6 +170,7 @@ export default {
     openLink: "Open link",
   },
   routingRules: {
+    ips: "IP addresses and ranges (one per line)",
     title: "Routing Rules",
     note: "Rules are matched before the auto-generated ones. Outbound can be direct/block/proxy or any connected node/group.",
     domains: "Domains (one per line)",
@@ -203,6 +205,7 @@ export default {
     note: "Traffic handled by the v2rayA core, updated once per second.",
   },
   operations: {
+    qrTooLong: "This link is too long for a QR code. Use Copy link.",
     name: "Operations",
     tproxyWhiteIpGroups: "Direct Whitelist IP Groups",
     update: "Update",
@@ -417,6 +420,8 @@ export default {
     domainsPlaceholder: "One per line, e.g. geosite:cn\nLeave empty for fallback DNS",
     addRule: "Add Rule",
     resetDefault: "Reset to Defaults",
+    missingServer: "Enter a DNS server for every rule.",
+    autoSetupPreview: "Fastest servers selected. Save to apply the rules.",
     errNoRules: "At least one DNS rule is required",
     autoSetup: "Auto Test & Setup",
     autoSetupResult: "Auto setup done",
@@ -439,6 +444,8 @@ export default {
     ],
   },
   configureServer: {
+    nodeLink: "Node link",
+    unsupportedLink: "This link cannot be edited in the node form.",
     title: "Configure Server | Server",
     servername: "Servername",
     port: "Port",
@@ -629,6 +636,7 @@ export default {
     formPlaceholder: "courier.push.apple.com\nMijia Cloud\ndlg.io.mi.com"
   },
   gfwList: {
+    confirmRemoval: "Delete the local GFWList?",
     title: "Update GFWList",
     messages: [
       "If accessing GitHub is difficult in your current environment, you can download the latest GFWList（geosite.dat）from GitHub（https://github.com/v2rayA/dist-v2ray-rules-dat）, upload it to your server, and then enter your server address here to download it.",

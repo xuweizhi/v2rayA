@@ -900,9 +900,21 @@ type Config struct {
 	// will send a list of configs to retry based on the set of
 	// EncryptedClientHelloKeys which have the SendAsRetry field set.
 	//
-	// On the client side, this field is ignored. In order to configure ECH for
-	// clients, see the EncryptedClientHelloConfigList field.
+	// EncryptedClientHelloKeys are the ECH keys to use when a server receives an ECH extension.
 	EncryptedClientHelloKeys []EncryptedClientHelloKey
+
+	// ClientHelloMarshalHook, if set, is called with the marshaled ClientHello
+	// message (excluding the TLS record header) right before it is hashed into
+	// the handshake transcript and written to the wire.
+	ClientHelloMarshalHook func(marshaledHello []byte) // [UTLS]
+
+	// SessionIDProvider, if set, supplies the 32-byte legacy session ID of the
+	// ClientHello instead of a random one.
+	SessionIDProvider func() [32]byte // [UTLS]
+
+	// SkipSessionIDEchoCheck disables the legacy session ID echo verification
+	// in the TLS 1.3 client for this connection.
+	SkipSessionIDEchoCheck bool // [UTLS]
 
 	// mutex protects sessionTicketKeys and autoSessionTicketKeys.
 	mutex sync.RWMutex
@@ -1021,6 +1033,9 @@ func (c *Config) Clone() *Config {
 		autoSessionTicketKeys:               c.autoSessionTicketKeys,
 
 		PreferSkipResumptionOnNilExtension: c.PreferSkipResumptionOnNilExtension, // [UTLS]
+		ClientHelloMarshalHook:             c.ClientHelloMarshalHook,             // [UTLS]
+		SessionIDProvider:                  c.SessionIDProvider,                  // [UTLS]
+		SkipSessionIDEchoCheck:             c.SkipSessionIDEchoCheck,             // [UTLS]
 	}
 }
 

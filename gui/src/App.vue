@@ -41,7 +41,6 @@
             :outbounds="outbounds"
             :current-outbound="activeOutbound"
             :is-mobile="isMobile"
-            @select="outboundName = $event"
             @settings="handleClickOutboundSetting(null, $event)"
             @add-outbound="handleAddOutbound"
             @changed="handleGroupChanged"
@@ -210,10 +209,6 @@
         @active-nodes="openNodeAction('toggleSidebar')"
       />
     </node>
-    <b-modal :active.sync="showCustomPorts" has-modal-card trap-focus aria-role="dialog" aria-modal
-      class="modal-custom-ports">
-      <ModalCustomAddress @close="showCustomPorts = false" />
-    </b-modal>
     <b-modal :active.sync="loginModalActive" :can-cancel="false" has-modal-card trap-focus aria-role="dialog" aria-modal class="modal-login modal-login-app">
       <ModalLogin :first="loginModalFirst" @close="loginModalActive = false" />
     </b-modal>
@@ -242,7 +237,7 @@ import { applyAppearanceSettings } from "@/assets/js/appearance";
 import DashboardSummary from "@/components/dashboardSummary";
 
 export default {
-  components: { ModalCustomAddress, node, OutboundGroupPanel, ModalLogin, DashboardSummary },
+  components: { node, OutboundGroupPanel, ModalLogin, DashboardSummary },
   data() {
     return {
       ws: null,
@@ -261,7 +256,6 @@ export default {
         connectedServer: null,
         outboundToServerName: {},
       },
-      showCustomPorts: false,
       noviceMode: false,
       loadBalanceValid: localStorage["loadBalanceValid"] === "true",
       langs: [
@@ -357,17 +351,19 @@ export default {
     if (!localStorage["token"]) {
       // 使用重试机制确保注册页面可靠弹出
       const checkAccount = (retries = 3) => {
+        if (this.appDestroyed) return;
         this.$axios({
           url: apiRoot + "/account",
           method: "get",
         }).then((res) => {
+          if (this.appDestroyed) return;
           if (res.data.code === "SUCCESS") {
             const hasAnyAccounts = !!(res.data.data && res.data.data.hasAnyAccounts);
             // first=true -> register flow, first=false -> login flow
             this.showLoginModal(!hasAnyAccounts);
           }
         }).catch(() => {
-          if (retries > 0) {
+          if (retries > 0 && !this.appDestroyed) {
             // 网络错误时延迟重试，避免因后端尚未就绪而错过注册页面
             setTimeout(() => checkAccount(retries - 1), 2000);
           }
@@ -471,7 +467,8 @@ export default {
       this.loginModalActive = true;
     },
     connectWsMessage() {
-      if (this.appDestroyed) return;
+      const token = localStorage.getItem("token");
+      if (!token || this.appDestroyed) return;
       const that = this;
       let url = apiRoot;
       if (!url.trim() || url.startsWith("/")) {
@@ -486,7 +483,7 @@ export default {
       if (basePath.endsWith("/api")) {
         basePath = basePath.slice(0, -4);
       }
-      url = `${protocol}://${u.host}:${u.port}${basePath}/api/message?Authorization=${encodeURIComponent(localStorage["token"])}`;
+      url = `${protocol}://${u.host}:${u.port}${basePath}/api/message?Authorization=${encodeURIComponent(token)}`;
       if (this.ws) {
         this.ws.onclose = null;
         this.ws.close();
@@ -519,7 +516,7 @@ export default {
         if (that.ws === ws) {
           that.ws = null;
         }
-        if (that.appDestroyed) return;
+        if (that.appDestroyed || !localStorage.getItem("token")) return;
         that.recordTraffic({ up: 0, down: 0 });
         // 指数退避重连：1s, 2s, 4s, 8s... 最大 30 秒
         const delay = Math.min(1000 * Math.pow(2, that._wsRetries), 30000);
@@ -527,7 +524,7 @@ export default {
         if (that.wsReconnectTimer) clearTimeout(that.wsReconnectTimer);
         that.wsReconnectTimer = setTimeout(() => {
           that.wsReconnectTimer = null;
-          if (!that.appDestroyed && that.ws === null) {
+          if (!that.appDestroyed && that.ws === null && localStorage.getItem("token")) {
             that.connectWsMessage();
           }
         }, delay);
@@ -595,11 +592,16 @@ export default {
     handleGroupChanged() {
       this.refreshOutboundGroups();
       // Refresh node.vue's data after group membership change from the panel
-      if (this.$refs.nodeRef && this.$refs.nodeRef.created) {
-        this.$refs.nodeRef.$axios({ url: apiRoot + "/touch" }).then((res) => {
-          if (res.data && res.data.code === "SUCCESS") {
-            this.$refs.nodeRef.refreshTableData(res.data.data.touch, res.data.data.running);
-            this.$refs.nodeRef.updateConnectView();
+      if (this.$refs.nodeRef && this.$refs.nodeRef.ready) {
+        const node = this.$refs.nodeRef;
+        node.$axios({ url: apiRoot + "/touch" }).then((res) => {
+          if (node === this.$refs.nodeRef && res.data?.code === "SUCCESS") {
+            node.refreshTableData(
+              res.data.data.touch,
+              res.data.data.running,
+              !!res.data.data.networkPaused
+            );
+            node.updateConnectView();
           }
         }).catch(() => {});
       }
@@ -619,10 +621,9 @@ export default {
       ++this._groupsRequest;
       const active = data.activeOutbound || "proxy";
       this.outbounds = this.normalizeOutbounds(data.outbounds);
-      if (this.outboundName === this.activeOutbound || !this.outbounds.includes(this.outboundName)) {
-        this.outboundName = active;
-      }
-      this.activeOutbound = active;
+      const resolvedActive = this.outbounds.includes(active) ? active : "proxy";
+      this.activeOutbound = resolvedActive;
+      this.outboundName = resolvedActive;
     },
     normalizeOutbounds(outbounds) {
       const seen = new Set();
@@ -632,12 +633,11 @@ export default {
           if (typeof outbound !== "string") {
             continue;
           }
-          const name = outbound.trim();
-          if (!name || seen.has(name)) {
+          if (!outbound || seen.has(outbound)) {
             continue;
           }
-          seen.add(name);
-          normalized.push(name);
+          seen.add(outbound);
+          normalized.push(outbound);
         }
       }
       if (!seen.has("proxy")) {
@@ -665,7 +665,11 @@ export default {
           maxlength: 10,
         },
         trapFocus: true,
-        onConfirm: (outbound) => {
+        onConfirm: (value) => {
+          const outbound = (value || "").trim();
+          if (!outbound) {
+            return;
+          }
           let cancel;
           waitingConnected(
             this.$axios({
@@ -677,26 +681,28 @@ export default {
               cancelToken: new axios.CancelToken(function executor(c) {
                 cancel = c;
               }),
-            }).then((res) => {
-              if (res.data.code === "SUCCESS") {
-                this.$buefy.toast.open({
-                  message: this.$t("common.success"),
-                  type: "is-success",
-                  duration: 2000,
-                  position: "is-top",
-                  queue: false,
-                });
-                this.updateOutboundGroups(res.data.data);
-              } else {
-                this.$buefy.toast.open({
-                  message: res.data.message,
-                  type: "is-warning",
-                  duration: 5000,
-                  position: "is-top",
-                  queue: false,
-                });
-              }
-            }),
+            })
+              .then((res) => {
+                if (res.data.code === "SUCCESS") {
+                  this.$buefy.toast.open({
+                    message: this.$t("common.success"),
+                    type: "is-success",
+                    duration: 2000,
+                    position: "is-top",
+                    queue: false,
+                  });
+                  this.updateOutboundGroups(res.data.data);
+                } else {
+                  this.$buefy.toast.open({
+                    message: res.data.message,
+                    type: "is-warning",
+                    duration: 5000,
+                    position: "is-top",
+                    queue: false,
+                  });
+                }
+              })
+              .catch(() => {}),
             3 * 1000,
             cancel
           );
@@ -715,35 +721,48 @@ export default {
           cancelToken: new axios.CancelToken(function executor(c) {
             cancel = c;
           }),
-        }).then((res) => {
-          if (res.data.code === "SUCCESS") {
-            this.$buefy.toast.open({
-              message: this.$t("common.success"),
-              type: "is-success",
-              duration: 2000,
-              position: "is-top",
-              queue: false,
-            });
-            this.updateOutboundGroups(res.data.data);
-            if (this.outboundName === outbound) {
-              this.outboundName = "proxy";
+        })
+          .then((res) => {
+            if (res.data.code === "SUCCESS") {
+              this.$buefy.toast.open({
+                message: this.$t("common.success"),
+                type: "is-success",
+                duration: 2000,
+                position: "is-top",
+                queue: false,
+              });
+              this.updateOutboundGroups(res.data.data);
+              if (this.outboundName === outbound) {
+                this.outboundName = this.activeOutbound || "proxy";
+              }
+              if (
+                outbound in this.runningState.outboundToServerName &&
+                Array.isArray(this.runningState.connectedServer)
+              ) {
+                this.runningState.connectedServer =
+                  this.runningState.connectedServer.filter(
+                    (cs) => cs.outbound !== outbound
+                  );
+              }
+              if (this.$refs.nodeRef) {
+                if (typeof this.$refs.nodeRef.updateConnectView === "function") {
+                  this.$refs.nodeRef.updateConnectView();
+                }
+                if (typeof this.$refs.nodeRef.syncLatestNodeOverview === "function") {
+                  this.$refs.nodeRef.syncLatestNodeOverview();
+                }
+              }
+            } else {
+              this.$buefy.toast.open({
+                message: res.data.message,
+                type: "is-warning",
+                duration: 5000,
+                position: "is-top",
+                queue: false,
+              });
             }
-            if (outbound in this.runningState.outboundToServerName) {
-              this.runningState.connectedServer =
-                this.runningState.connectedServer.filter(
-                  (cs) => cs.outbound !== outbound
-                );
-            }
-          } else {
-            this.$buefy.toast.open({
-              message: res.data.message,
-              type: "is-warning",
-              duration: 5000,
-              position: "is-top",
-              queue: false,
-            });
-          }
-        }),
+          })
+          .catch(() => {}),
         3 * 1000,
         cancel
       );
@@ -804,12 +823,9 @@ export default {
         hasModalCard: true,
         canCancel: true,
         events: {
-          close: () => {
-            this.loadUnreadNotices();
-          },
+          read: this.loadUnreadNotices,
         },
       });
-      this.unreadNotices = 0;
     },
     handleOnOutboundMouseEnter(outbound) {
       this.outboundDropdownHover = { [outbound]: true };
@@ -826,8 +842,15 @@ export default {
         canCancel: true,
         events: {
           clickPorts() {
-            that.showCustomPorts = true;
+            that.$buefy.modal.open({
+              parent: that,
+              component: ModalCustomAddress,
+              hasModalCard: true,
+              canCancel: true,
+              customClass: "modal-custom-ports",
+            });
           },
+          "notices-read": this.loadUnreadNotices,
           "novice-change"(novice) {
             that.handleNoviceModeChange(novice);
           },
@@ -855,6 +878,23 @@ export default {
     },
     handleClickStatus() {
       if (this.statusBusy) return;
+      const applyStatusPayload = (data, defaultRunning) => {
+        const running = data && data.running !== undefined ? !!data.running : defaultRunning;
+        const networkPaused = !!(data && data.networkPaused);
+        const status = running ? "running" : networkPaused ? "waiting" : "stopped";
+        const label = running
+          ? this.$t("common.isRunning")
+          : networkPaused
+          ? this.$t("common.waitingNetwork")
+          : this.$t("common.notRunning");
+        Object.assign(this.runningState, {
+          status,
+          running: label,
+          networkPaused,
+          connectedServer:
+            data && data.touch ? data.touch.connectedServer : this.runningState.connectedServer,
+        });
+      };
       if (this.statusState === "stopped" || this.statusState === "waiting") {
         let cancel;
         this.statusBusy = true;
@@ -868,12 +908,7 @@ export default {
           })
             .then((res) => {
               if (res.data.code === "SUCCESS") {
-                Object.assign(this.runningState, {
-                  status: "running",
-                  running: this.$t("common.isRunning"),
-                  networkPaused: false,
-                  connectedServer: res.data.data.touch.connectedServer,
-                });
+                applyStatusPayload(res.data.data, true);
               } else {
                 this.$buefy.toast.open({
                   message: res.data.message,
@@ -884,7 +919,17 @@ export default {
                 });
               }
             })
-            .catch(() => {})
+            .catch((err) => {
+              if (!axios.isCancel(err)) {
+                this.$buefy.toast.open({
+                  message: err?.response?.data?.message || err?.message || this.$t("common.fail"),
+                  type: "is-warning",
+                  duration: 5000,
+                  position: "is-top",
+                  queue: false,
+                });
+              }
+            })
             .finally(() => {
               this.statusBusy = false;
             }),
@@ -899,12 +944,7 @@ export default {
         })
           .then((res) => {
             if (res.data.code === "SUCCESS") {
-              Object.assign(this.runningState, {
-                status: "stopped",
-                running: this.$t("common.notRunning"),
-                networkPaused: false,
-                connectedServer: res.data.data.touch.connectedServer,
-              });
+              applyStatusPayload(res.data.data, false);
             } else {
               this.$buefy.toast.open({
                 message: res.data.message,
@@ -915,7 +955,15 @@ export default {
               });
             }
           })
-          .catch(() => {})
+          .catch((err) => {
+            this.$buefy.toast.open({
+              message: err?.response?.data?.message || err?.message || this.$t("common.fail"),
+              type: "is-warning",
+              duration: 5000,
+              position: "is-top",
+              queue: false,
+            });
+          })
           .finally(() => {
             this.statusBusy = false;
           });
@@ -980,7 +1028,6 @@ export default {
 #app {
   margin: 0;
   position: relative;
-  isolation: isolate;
 }
 
 .app-ambient-glow {

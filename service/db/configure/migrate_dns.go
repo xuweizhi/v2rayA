@@ -7,6 +7,14 @@ import "fmt"
 // 如果规则同时设置了新旧字段，优先使用新字段值。
 func MigrateDnsRules(oldRules []DnsRule) []DnsRule {
 	migrated := make([]DnsRule, len(oldRules))
+	reserved := make(map[string]bool, len(oldRules))
+	for _, rule := range oldRules {
+		if rule.RuleID != "" {
+			reserved[rule.RuleID] = true
+		}
+	}
+	assigned := make(map[string]bool, len(oldRules))
+	next := 0
 	for i, rule := range oldRules {
 		migrated[i] = rule
 
@@ -49,9 +57,20 @@ func MigrateDnsRules(oldRules []DnsRule) []DnsRule {
 		}
 
 		// 设置 RuleID 默认值
-		if migrated[i].RuleID == "" {
-			migrated[i].RuleID = fmt.Sprintf("rule-%d", rule.ID)
+		id := rule.RuleID
+		if id == "" || assigned[id] {
+			n := rule.ID
+			if n == 0 {
+				n = i
+			}
+			id = fmt.Sprintf("rule-%d", n)
+			for reserved[id] || assigned[id] {
+				id = fmt.Sprintf("rule-%d", next)
+				next++
+			}
 		}
+		migrated[i].RuleID = id
+		assigned[id] = true
 	}
 	return migrated
 }

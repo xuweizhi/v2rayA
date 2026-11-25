@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/v2rayA/v2rayA/common/cmds"
 	"github.com/v2rayA/v2rayA/kernel/v2ray/asset"
 )
 
@@ -32,23 +31,21 @@ func init() {
 func (r *legacyRedirect) AddIPWhitelist(cidr string) {
 	// avoid duplication
 	r.RemoveIPWhitelist(cidr)
-	var commands string
-	commands = fmt.Sprintf(`iptables -w 2 -t nat -I TP_RULE -d %s -j RETURN`, cidr)
+	commands := fmt.Sprintf(`iptables -w 2 -t nat -I TP_RULE -d %s -j RETURN`, cidr)
 	if !strings.Contains(cidr, ".") {
-		//ipv6
+		// ipv6
 		commands = strings.Replace(commands, "iptables", "ip6tables", 1)
 	}
-	cmds.ExecCommands(commands, false)
+	_ = Setter{Cmds: commands}.Run(false)
 }
 
 func (r *legacyRedirect) RemoveIPWhitelist(cidr string) {
-	var commands string
-	commands = fmt.Sprintf(`iptables -w 2 -t nat -D TP_RULE -d %s -j RETURN`, cidr)
+	commands := fmt.Sprintf(`iptables -w 2 -t nat -D TP_RULE -d %s -j RETURN`, cidr)
 	if !strings.Contains(cidr, ".") {
-		//ipv6
+		// ipv6
 		commands = strings.Replace(commands, "iptables", "ip6tables", 1)
 	}
-	cmds.ExecCommands(commands, false)
+	_ = Setter{Cmds: commands}.Run(false)
 }
 
 func (r *legacyRedirect) GetSetupCommands() Setter {
@@ -56,7 +53,7 @@ func (r *legacyRedirect) GetSetupCommands() Setter {
 iptables -w 2 -t nat -N TP_OUT
 iptables -w 2 -t nat -N TP_PRE
 iptables -w 2 -t nat -N TP_RULE
-iptables -w 2 -t nat -N DNS_REDIRECT
+iptables -w 2 -t nat -A TP_RULE -p tcp --dport 53 -j RETURN
 iptables -w 2 -t nat -A TP_RULE -d 0.0.0.0/32 -j RETURN
 iptables -w 2 -t nat -A TP_RULE -d 10.0.0.0/8 -j RETURN
 iptables -w 2 -t nat -A TP_RULE -d 100.64.0.0/10 -j RETURN
@@ -74,17 +71,13 @@ iptables -w 2 -t nat -A TP_RULE -d 203.0.113.0/24 -j RETURN
 iptables -w 2 -t nat -A TP_RULE -d 224.0.0.0/4 -j RETURN
 iptables -w 2 -t nat -A TP_RULE -d 240.0.0.0/4 -j RETURN
 iptables -w 2 -t nat -A TP_RULE -m mark --mark 0x80/0x80 -j RETURN
-# DNS 重定向到新 DNS 模块端口 52353（必须在通用 REDIRECT 规则之前）
-iptables -w 2 -t nat -A DNS_REDIRECT -m mark --mark 0x80/0x80 -j RETURN
-iptables -w 2 -t nat -A DNS_REDIRECT -p tcp -j REDIRECT --to-port 52353
-iptables -w 2 -t nat -A DNS_REDIRECT -p udp -j REDIRECT --to-port 52353
 `
 	for _, v := range GetExcludedInterfaces() {
-		commands += fmt.Sprintf("iptables -w 2 -t nat -A TP_RULE -i %s -j RETURN\n", strings.ReplaceAll(v, "*", "+"))
+		commands += fmt.Sprintf("iptables -w 2 -t nat -A TP_RULE -i %s -j RETURN\n", shellWord(strings.ReplaceAll(v, "*", "+")))
 	}
 	// OUTPUT 路径使用 -o 匹配输出网卡（本地流量在 OUTPUT 链中 -i 始终为 lo）
 	for _, v := range GetExcludedInterfaces() {
-		commands += fmt.Sprintf("iptables -w 2 -t nat -A TP_RULE -o %s -j RETURN\n", strings.ReplaceAll(v, "*", "+"))
+		commands += fmt.Sprintf("iptables -w 2 -t nat -A TP_RULE -o %s -j RETURN\n", shellWord(strings.ReplaceAll(v, "*", "+")))
 	}
 	if IsEnabledTproxyWhiteIpGroups() {
 		whiteIpv4List, _ := GetWhiteListIPs()
@@ -99,23 +92,13 @@ iptables -w 2 -t nat -I PREROUTING -p tcp -j TP_PRE
 iptables -w 2 -t nat -I OUTPUT -p tcp -j TP_OUT
 iptables -w 2 -t nat -A TP_PRE -j TP_RULE
 iptables -w 2 -t nat -A TP_OUT -j TP_RULE
-# DNS 跳转在 TP_PRE/TP_OUT 之后插入：-I 总是插到链首，后插入者排在前面，
-# 因此 DNS 规则实际位于通用透明代理规则之前（否则本机/局域网 TCP DNS 会
-# 先命中 TP_OUT/TP_PRE 被重定向到 52345，绕过 DNS 模块）。
-iptables -w 2 -t nat -I PREROUTING -p udp --dport 53 -j DNS_REDIRECT
-iptables -w 2 -t nat -I PREROUTING -p tcp --dport 53 -j DNS_REDIRECT
-iptables -w 2 -t nat -I OUTPUT -p udp --dport 53 -j DNS_REDIRECT
-iptables -w 2 -t nat -I OUTPUT -p tcp --dport 53 -j DNS_REDIRECT
 `
 	if IsIPv6Supported() {
 		commands += `
 ip6tables -w 2 -t nat -N TP_OUT
 ip6tables -w 2 -t nat -N TP_PRE
 ip6tables -w 2 -t nat -N TP_RULE
-ip6tables -w 2 -t nat -N DNS_REDIRECT
-ip6tables -w 2 -t nat -A DNS_REDIRECT -m mark --mark 0x80/0x80 -j RETURN
-ip6tables -w 2 -t nat -A DNS_REDIRECT -p tcp -j REDIRECT --to-port 52353
-ip6tables -w 2 -t nat -A DNS_REDIRECT -p udp -j REDIRECT --to-port 52353
+ip6tables -w 2 -t nat -A TP_RULE -p tcp --dport 53 -j RETURN
 ip6tables -w 2 -t nat -A TP_RULE -d ::/128 -j RETURN
 ip6tables -w 2 -t nat -A TP_RULE -d ::1/128 -j RETURN
 ip6tables -w 2 -t nat -A TP_RULE -d 64:ff9b::/96 -j RETURN
@@ -131,11 +114,11 @@ ip6tables -w 2 -t nat -A TP_RULE -d ff00::/8 -j RETURN
 ip6tables -w 2 -t nat -A TP_RULE -m mark --mark 0x80/0x80 -j RETURN
 `
 		for _, v := range GetExcludedInterfaces() {
-			commands += fmt.Sprintf("ip6tables -w 2 -t nat -A TP_RULE -i %s -j RETURN\n", strings.ReplaceAll(v, "*", "+"))
+			commands += fmt.Sprintf("ip6tables -w 2 -t nat -A TP_RULE -i %s -j RETURN\n", shellWord(strings.ReplaceAll(v, "*", "+")))
 		}
 		// IPv6 OUTPUT 路径使用 -o 匹配输出网卡
 		for _, v := range GetExcludedInterfaces() {
-			commands += fmt.Sprintf("ip6tables -w 2 -t nat -A TP_RULE -o %s -j RETURN\n", strings.ReplaceAll(v, "*", "+"))
+			commands += fmt.Sprintf("ip6tables -w 2 -t nat -A TP_RULE -o %s -j RETURN\n", shellWord(strings.ReplaceAll(v, "*", "+")))
 		}
 		if IsEnabledTproxyWhiteIpGroups() {
 			_, whiteIpv6List := GetWhiteListIPs()
@@ -150,11 +133,6 @@ ip6tables -w 2 -t nat -I PREROUTING -p tcp -j TP_PRE
 ip6tables -w 2 -t nat -I OUTPUT -p tcp -j TP_OUT
 ip6tables -w 2 -t nat -A TP_PRE -j TP_RULE
 ip6tables -w 2 -t nat -A TP_OUT -j TP_RULE
-# DNS 跳转最后插入（-I 后到者居首），确保排在 TP_PRE/TP_OUT 之前
-ip6tables -w 2 -t nat -I PREROUTING -p udp --dport 53 -j DNS_REDIRECT
-ip6tables -w 2 -t nat -I PREROUTING -p tcp --dport 53 -j DNS_REDIRECT
-ip6tables -w 2 -t nat -I OUTPUT -p udp --dport 53 -j DNS_REDIRECT
-ip6tables -w 2 -t nat -I OUTPUT -p tcp --dport 53 -j DNS_REDIRECT
 `
 	}
 	return Setter{
@@ -207,7 +185,7 @@ func (t *nftRedirect) AddIPWhitelist(cidr string) {
 	if !strings.Contains(cidr, ".") {
 		command = strings.Replace(command, "local_ips", "local_ips6", 1)
 	}
-	cmds.ExecCommands(command, false)
+	_ = Setter{Cmds: command}.Run(false)
 }
 
 func (t *nftRedirect) RemoveIPWhitelist(cidr string) {
@@ -215,7 +193,7 @@ func (t *nftRedirect) RemoveIPWhitelist(cidr string) {
 	if !strings.Contains(cidr, ".") {
 		command = strings.Replace(command, "local_ips", "local_ips6", 1)
 	}
-	cmds.ExecCommands(command, false)
+	_ = Setter{Cmds: command}.Run(false)
 }
 
 func (r *nftRedirect) GetSetupCommands() Setter {
@@ -288,12 +266,8 @@ table inet v2raya {
         auto-merge
     }
 
-    chain dns_redirect {
-        meta mark & 0x80 == 0x80 return
-        meta l4proto { tcp, udp } th dport 53 redirect to :52353
-    }
-
     chain tp_rule {
+        tcp dport 53 return
         ip daddr @whitelist return
         ip daddr @local_ips return
         ip6 daddr @whitelist6 return
@@ -301,10 +275,10 @@ table inet v2raya {
         meta mark & 0x80 == 0x80 return
 `
 	for _, v := range GetExcludedInterfaces() {
-		table += fmt.Sprintf("        iifname \"%s\" return\n", v)
+		table += fmt.Sprintf("        iifname %q return\n", v)
 	}
 	for _, v := range GetExcludedInterfaces() {
-		table += fmt.Sprintf("        oifname \"%s\" return\n", v)
+		table += fmt.Sprintf("        oifname %q return\n", v)
 	}
 	table += `
         meta l4proto tcp redirect to :52345
@@ -312,15 +286,11 @@ table inet v2raya {
 
     chain tp_pre {
         type nat hook prerouting priority dstnat - 5
-        # DNS 重定向到 52353（优先于通用透明代理）
-        meta nfproto { ipv4, ipv6 } meta l4proto { tcp, udp } th dport 53 jump dns_redirect
         meta nfproto { ipv4, ipv6 } meta l4proto tcp jump tp_rule
     }
 
     chain tp_out {
         type nat hook output priority -105
-        # DNS 重定向到 52353（优先于通用透明代理）
-        meta nfproto { ipv4, ipv6 } meta l4proto { tcp, udp } th dport 53 jump dns_redirect
         meta nfproto { ipv4, ipv6 } meta l4proto tcp jump tp_rule
     }
 }
@@ -330,9 +300,11 @@ table inet v2raya {
 	}
 
 	nftablesConf := asset.GetNftablesConfigPath()
-	os.WriteFile(nftablesConf, []byte(table), 0644)
+	if err := os.WriteFile(nftablesConf, []byte(table), 0600); err != nil {
+		return NewErrorSetter(err)
+	}
 
-	command := `nft -f ` + nftablesConf
+	command := `nft -f ` + shellWord(nftablesConf)
 
 	return Setter{Cmds: command}
 }

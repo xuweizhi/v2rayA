@@ -1,6 +1,7 @@
 package jwt
 
 import (
+	"net/http"
 	"strings"
 	"time"
 
@@ -14,42 +15,42 @@ import (
 // stripBearerPrefixFromTokenString strips 'Bearer ' prefix from bearer token string
 func stripBearerPrefixFromTokenString(tok string) (string, error) {
 	// Should be a bearer token
-	if len(tok) > 6 && strings.ToUpper(tok[0:7]) == "BEARER " {
-		return tok[7:], nil
+	tok = strings.TrimSpace(tok)
+	if len(tok) >= 7 && strings.EqualFold(tok[:7], "Bearer ") {
+		return strings.TrimSpace(tok[7:]), nil
 	}
 	return tok, nil
 }
 
-// AuthorizationArgumentExtractor extracts bearer token from Argument header
-// Uses PostExtractionFilter to strip "Bearer " prefix from header
+// AuthorizationArgumentExtractor extracts the token from browser query or form arguments.
 var AuthorizationArgumentExtractor = &request.PostExtractionFilter{
-	Extractor: request.ArgumentExtractor{"Authorization"},
+	Extractor: request.ArgumentExtractor{"Authorization", "token"},
 	Filter:    stripBearerPrefixFromTokenString,
+}
+
+// RequestToken accepts the browser WebSocket query forms and the normal
+// authorization header with one precedence rule shared by all handlers.
+func RequestToken(req *http.Request) (string, error) {
+	if header := req.Header.Get("Authorization"); header != "" {
+		return stripBearerPrefixFromTokenString(header)
+	}
+	return AuthorizationArgumentExtractor.ExtractToken(req)
 }
 
 func JWTAuth(Admin bool) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		parser := jwt.NewParser(jwt.WithValidMethods([]string{"HS256"}))
-		token, err := request.ParseFromRequest(ctx.Request, request.AuthorizationHeaderExtractor,
-			func(token *jwt.Token) (interface{}, error) {
-				return getSecret(), nil
-			},
-			request.WithParser(parser),
-		)
+		rawToken, err := RequestToken(ctx.Request)
 		if err != nil {
-			if errors.Is(err, request.ErrNoTokenInRequest) {
-				token, err = request.ParseFromRequest(ctx.Request, AuthorizationArgumentExtractor,
-					func(token *jwt.Token) (interface{}, error) {
-						return getSecret(), nil
-					},
-					request.WithParser(parser),
-				)
-			}
-			if err != nil {
-				common.Response(ctx, common.UNAUTHORIZED, err.Error())
-				ctx.Abort()
-				return
-			}
+			common.Response(ctx, common.UNAUTHORIZED, err.Error())
+			ctx.Abort()
+			return
+		}
+		token, err := parser.Parse(rawToken, func(*jwt.Token) (interface{}, error) { return getSecret(), nil })
+		if err != nil {
+			common.Response(ctx, common.UNAUTHORIZED, err.Error())
+			ctx.Abort()
+			return
 		}
 		mapClaims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {

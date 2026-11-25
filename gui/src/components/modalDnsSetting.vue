@@ -117,6 +117,7 @@
           size="is-small"
           type="is-warning"
           :loading="autoSetupLoading"
+          :disabled="!loaded || saving"
           style="margin-left: 8px"
           @click="handleAutoSetup"
         >{{ $t("dns.autoSetup") }}</b-button>
@@ -161,7 +162,7 @@
       <button class="button" @click="$emit('close')">
         {{ $t("operations.cancel") }}
       </button>
-      <button class="button is-primary" @click="handleClickSubmit">
+      <button class="button is-primary" :disabled="!loaded || autoSetupLoading || saving" @click="handleClickSubmit">
         {{ $t("operations.save") }}
       </button>
     </footer>
@@ -180,7 +181,9 @@ const DEFAULT_RULES = [
 export default {
   name: "ModalDnsSetting",
   data: () => ({
-    rules: DEFAULT_RULES.map((r) => ({ ...r })),
+    rules: [],
+    loaded: false,
+    saving: false,
     outbounds: ["proxy"],
     probeOutbound: "proxy",
     autoSetupLoading: false,
@@ -209,10 +212,12 @@ export default {
     // Load current DNS rules
     this.$axios({ url: apiRoot + "/dnsRules" }).then((res) => {
       handleResponse(res, this, () => {
-        if (res.data.data && res.data.data.rules && res.data.data.rules.length > 0) {
+        if (Array.isArray(res.data.data?.rules)) {
+          this.loaded = true;
           this.rules = res.data.data.rules.map((r) => ({
-            server: r.server || "",
-            domains: r.domains || "",
+            ...r,
+            server: r.upstream || r.server || "",
+            domains: r.domain || r.domains || "",
             outbound: r.outbound || "direct",
           }));
         }
@@ -237,11 +242,12 @@ export default {
       this.rules = DEFAULT_RULES.map((r) => ({ ...r }));
     },
     handleAutoSetup() {
+      if (!this.loaded || this.autoSetupLoading || this.saving) return;
       this.autoSetupLoading = true;
       this.autoSetupResult = null;
       this.$axios({
         url: apiRoot + "/dnsAutoSetup",
-        params: { outbound: this.probeOutbound },
+        params: { outbound: this.probeOutbound, preview: true },
         method: "post",
         timeout: 60000,
       })
@@ -251,12 +257,13 @@ export default {
             this.autoSetupResult = data;
             if (data.rules && data.rules.length > 0) {
               this.rules = data.rules.map((r) => ({
-                server: r.server || "",
-                domains: r.domains || "",
+                ...r,
+                server: r.upstream || r.server || "",
+                domains: r.domain || r.domains || "",
                 outbound: r.outbound || "direct",
               }));
               this.$buefy.toast.open({
-                message: this.$t("dns.autoSetupApplied"),
+                message: this.$t("dns.autoSetupPreview"),
                 type: "is-success",
                 position: "is-top",
                 duration: 3000,
@@ -270,24 +277,28 @@ export default {
         });
     },
     handleClickSubmit() {
-      const validRules = this.rules.filter((r) => r.server.trim() !== "");
-      if (validRules.length === 0) {
+      if (!this.loaded || this.autoSetupLoading || this.saving) return;
+      const missingServer = this.rules.some(r => r.action !== "reject" && r.outbound !== "block" && !r.server.trim());
+      if (!this.rules.length || missingServer) {
         this.$buefy.toast.open({
-          message: this.$t("dns.errNoRules"),
+          message: this.$t(missingServer ? "dns.missingServer" : "dns.errNoRules"),
           type: "is-danger",
           position: "is-top",
         });
         return;
       }
+      this.saving = true;
       this.$axios({
         url: apiRoot + "/dnsRules",
         method: "put",
-        data: validRules,
+        data: this.rules.map(r => ({
+          ...r, upstream: r.server.trim(), server: r.server.trim(), domain: r.domains, domains: r.domains,
+        })),
       }).then((res) => {
         handleResponse(res, this, () => {
           this.$emit("close");
         });
-      });
+      }).finally(() => { this.saving = false; });
     },
   },
 };

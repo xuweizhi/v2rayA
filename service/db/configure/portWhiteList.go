@@ -36,15 +36,27 @@ func (pwl *PortWhiteList) Compressed() (wl *PortWhiteList) {
 		r = make([]string, 0)
 		for _, p := range ps {
 			if r1.MatchString(p) {
-				p, _ := strconv.Atoi(p)
-				if p < 0 || p > 65535 {
+				port, err := strconv.Atoi(p)
+				if err != nil || port < 0 || port > 65535 {
 					continue
 				}
-				m[p] = true
+				m[port] = true
 			} else if r2.MatchString(p) {
 				arr := strings.Split(p, ":")
-				l, _ := strconv.Atoi(arr[0])
-				r, _ := strconv.Atoi(arr[1])
+				l, errL := strconv.Atoi(arr[0])
+				r, errR := strconv.Atoi(arr[1])
+				if errL != nil || errR != nil {
+					continue
+				}
+				if l < 0 {
+					l = 0
+				}
+				if r > 65535 {
+					r = 65535
+				}
+				if l > r || l > 65535 {
+					continue
+				}
 				for i := l; i <= r; i++ {
 					m[i] = true
 				}

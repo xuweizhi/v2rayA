@@ -26,6 +26,8 @@ func GetSetting() *configure.Setting {
 }
 
 func UpdateSetting(setting *configure.Setting) (err error) {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
 	if err := setting.Validate(); err != nil {
 		return err
 	}

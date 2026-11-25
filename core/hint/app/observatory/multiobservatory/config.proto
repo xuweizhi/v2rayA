@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package xray.core.app.observatory.multiobservatory;
+
+option go_package = "github.com/v2rayA/v2raya-core/hint/app/observatory/multiobservatory";
+
+message ObserverConfig {
+  string tag = 1;
+  string probe_url = 2;
+  int64 probe_interval = 3;
+  repeated string subject_selector = 4;
+  string connectivity = 5;
+  int32 sampling_count = 6;
+  int64 timeout = 7;
+  string http_method = 8;
+}
+
+message Config {
+  repeated ObserverConfig observers = 1;
+}

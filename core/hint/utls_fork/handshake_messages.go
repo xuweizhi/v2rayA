@@ -103,6 +103,7 @@ type clientHelloMsg struct {
 
 	// [uTLS]
 	nextProtoNeg bool
+	marshalHook  func([]byte)
 }
 
 func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
@@ -396,8 +397,14 @@ func (m *clientHelloMsg) marshalMsgReorderOuterExts(echInner bool, outerExts []u
 	})
 
 	ret, err := b.Bytes()
-	if !echInner && ClientHelloMarshalHook != nil {
-		ClientHelloMarshalHook(ret)
+	if !echInner {
+		hook := m.marshalHook
+		if hook == nil {
+			hook = ClientHelloMarshalHook
+		}
+		if hook != nil {
+			hook(ret)
+		}
 	}
 	return ret, err
 }

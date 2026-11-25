@@ -61,6 +61,9 @@ func NewPlugin(link string) (ServerObj, error) {
 }
 
 func (v *Plugin) Configuration(info PriorInfo) (c Configuration, err error) {
+	if info.PluginPort <= 0 {
+		return Configuration{}, fmt.Errorf("[PluginManager] invalid plugin port: %d", info.PluginPort)
+	}
 	if pm := conf.GetEnvironmentConfig().PluginManager; pm != "" {
 		b, err := exec.Command(pm,
 			"--stage=configuration",
@@ -91,8 +94,9 @@ func (v *Plugin) Configuration(info PriorInfo) (c Configuration, err error) {
 func (v *Plugin) ExportToURL() string {
 	if v.Link == "" {
 		log.Warn("You may need to re-import the node for PluginManager to take effect")
+		return ""
 	}
-	return v.Link
+	return updateLinkFragment(v.Link, v.Name)
 }
 
 func (v *Plugin) NeedPluginPort() bool {
@@ -122,4 +126,5 @@ func (v *Plugin) GetName() string {
 
 func (v *Plugin) SetName(name string) {
 	v.Name = name
+	v.Link = updateLinkFragment(v.Link, name)
 }

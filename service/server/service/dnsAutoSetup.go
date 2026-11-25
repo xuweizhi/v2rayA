@@ -50,12 +50,12 @@ type DnsLatencyItem struct {
 type DnsAutoSetupResult struct {
 	Direct []DnsLatencyItem `json:"direct"`
 	Proxy  []DnsLatencyItem `json:"proxy"`
-	// Rules is the resulting DNS rule set that has been persisted.
+	// Rules is the proposed DNS rule set.
 	Rules []configure.DnsRule `json:"rules"`
 }
 
 // DnsAutoSetup measures the built-in DNS servers (direct + via the proxy)
-// and persists an optimized DNS rule set: a direct UDP resolver for
+// and returns an optimized DNS rule set: a direct UDP resolver for
 // geosite:cn, a DoH resolver through the proxy as the fallback.
 func DnsAutoSetup(outbound string) (result DnsAutoSetupResult, err error) {
 	if outbound == "" {
@@ -84,9 +84,6 @@ func DnsAutoSetup(outbound string) (result DnsAutoSetupResult, err error) {
 	}
 	if fastestDirect == "" || fastestProxy == "" {
 		return result, fmt.Errorf("both direct and proxy DNS must pass; existing rules were preserved")
-	}
-	if err = configure.SetDnsRules(rules); err != nil {
-		return result, err
 	}
 	result.Rules = rules
 	return result, nil

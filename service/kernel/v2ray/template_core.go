@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/v2rayA/v2rayA/conf"
@@ -43,16 +44,28 @@ type Template struct {
 	Setting           *configure.Setting `json:"-"`
 	ProbePorts        map[string]int     `json:"-"`
 	ProbePaths        map[string]string  `json:"-"`
+	pluginManagers    []pluginManagerNode
+	outboundNames     []string
 	defaultProxyTag   string
 	internalRoutes    []coreObj.RoutingRule
 	probeReservations []net.Listener
 	serverInfoMap     map[string]*serverInfo `json:"-"` // outbound tag -> server info
+	closeOnce         sync.Once
 }
 
 func (t *Template) Close() error {
-	for _, f := range t.ApiCloses {
-		f()
+	if t == nil {
+		return nil
 	}
+	t.closeOnce.Do(func() {
+		closes := t.ApiCloses
+		t.ApiCloses = nil
+		for _, f := range closes {
+			if f != nil {
+				f()
+			}
+		}
+	})
 	return nil
 }
 
@@ -63,6 +76,7 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 	} else {
 		setting = configure.GetSettingNotNil()
 	}
+	serverData.registerReferencedEmptyGroups(setting)
 
 	var tmplJson Template
 	// read template json
@@ -113,6 +127,10 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 		return nil, err
 	}
 	t.OutboundTags = outboundTags
+	t.outboundNames = make([]string, len(serverData.ServerInfos))
+	for i, info := range serverData.ServerInfos {
+		t.outboundNames[i] = info.OutboundName
+	}
 	t.defaultProxyTag = configure.GetActiveOutbound()
 	if len(serverData.OutboundName2ServerObjs[t.defaultProxyTag]) == 0 {
 		// A refresh can empty the selected group. Never send its traffic via another exit.
@@ -188,6 +206,7 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 
 	// Internal routes must precede user rules and node-address direct rules.
 	t.Routing.Rules = append(t.internalRoutes, t.Routing.Rules...)
+	t.internalRoutes = nil
 	// Set group routing. This should be put in the end of routing setters.
 	t.setGroupRouting()
 
@@ -212,6 +231,10 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 }
 
 func (t *Template) ToConfigBytes() []byte {
+	if len(t.internalRoutes) > 0 {
+		t.Routing.Rules = append(t.internalRoutes, t.Routing.Rules...)
+		t.internalRoutes = nil
+	}
 	b, _ := jsoniter.Marshal(t)
 	return b
 }

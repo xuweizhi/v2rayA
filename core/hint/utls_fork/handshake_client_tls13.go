@@ -209,9 +209,10 @@ func (hs *clientHandshakeStateTLS13) checkServerHelloOrHRR() error {
 	}
 
 	if !bytes.Equal(hs.hello.sessionId, hs.serverHello.sessionId) {
-		if !SkipSessionIDEchoCheck.Load() {
+		skipCheck := (c.config != nil && c.config.SkipSessionIDEchoCheck) || SkipSessionIDEchoCheck.Load()
+		if !skipCheck {
 			c.sendAlert(alertIllegalParameter)
-			return errors.New("FORKED-CHECK-HIT")
+			return errors.New("tls: server did not echo the legacy session ID")
 		}
 	}
 

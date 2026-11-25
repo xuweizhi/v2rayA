@@ -85,6 +85,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
 		secureRenegotiationSupported: true,
 		alpnProtocols:                config.NextProtos,
 		supportedVersions:            supportedVersions,
+		marshalHook:                  config.ClientHelloMarshalHook,
 	}
 
 	// The version at the beginning of the ClientHello was capped at TLS 1.2
@@ -129,9 +130,18 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
 	//
 	// The session ID is not set for QUIC connections (see RFC 9001, Section 8.4).
 	if c.quic == nil {
-		hello.sessionId = make([]byte, 32)
-		if _, err := io.ReadFull(config.rand(), hello.sessionId); err != nil {
-			return nil, nil, nil, errors.New("tls: short read from Rand: " + err.Error())
+		provider := config.SessionIDProvider
+		if provider == nil {
+			provider = SessionIDProvider
+		}
+		if provider != nil {
+			sid := provider()
+			hello.sessionId = sid[:]
+		} else {
+			hello.sessionId = make([]byte, 32)
+			if _, err := io.ReadFull(config.rand(), hello.sessionId); err != nil {
+				return nil, nil, nil, errors.New("tls: short read from Rand: " + err.Error())
+			}
 		}
 	}
 

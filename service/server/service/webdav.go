@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -13,8 +14,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -66,6 +69,19 @@ func (w *webdavClient) do(method, remotePath string, bodyFactory webdavBodyFacto
 		return nil, fmt.Errorf("no WebDAV HTTP client configured")
 	}
 
+	target, err := url.Parse(w.baseURL)
+	if err != nil {
+		return nil, err
+	}
+	if remotePath != "" && !isValidBackupName(remotePath) {
+		return nil, fmt.Errorf("invalid backup name")
+	}
+	escaped := strings.TrimRight(target.EscapedPath(), "/") + "/" + url.PathEscape(remotePath)
+	target.Path, err = url.PathUnescape(escaped)
+	if err != nil {
+		return nil, err
+	}
+	target.RawPath = escaped
 	var lastErr error
 	for _, client := range w.clients {
 		var body io.ReadCloser
@@ -76,7 +92,7 @@ func (w *webdavClient) do(method, remotePath string, bodyFactory webdavBodyFacto
 				return nil, err
 			}
 		}
-		req, err := http.NewRequest(method, w.baseURL+"/"+strings.TrimPrefix(remotePath, "/"), body)
+		req, err := http.NewRequest(method, target.String(), body)
 		if err != nil {
 			if body != nil {
 				_ = body.Close()
@@ -108,7 +124,7 @@ func (w *webdavClient) do(method, remotePath string, bodyFactory webdavBodyFacto
 // list returns the file names in the remote backup directory (depth 1).
 func (w *webdavClient) list() ([]WebdavItem, error) {
 	body := []byte(`<?xml version="1.0" encoding="utf-8"?>
-<d:propfind xmlns:d="DAV:"><d:prop><d:displayname/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>`)
+<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:displayname/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>`)
 	resp, err := w.do("PROPFIND", "", func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(body)), nil
 	}, http.Header{
@@ -130,6 +146,9 @@ func (w *webdavClient) list() ([]WebdavItem, error) {
 		Responses []struct {
 			Href  string `xml:"href"`
 			Props []struct {
+				ResourceType struct {
+					Collection *struct{} `xml:"collection"`
+				} `xml:"resourcetype"`
 				Length   string `xml:"getcontentlength"`
 				Modified string `xml:"getlastmodified"`
 			} `xml:"propstat>prop"`
@@ -138,17 +157,49 @@ func (w *webdavClient) list() ([]WebdavItem, error) {
 	if err := xml.Unmarshal(raw, &multi); err != nil {
 		return nil, fmt.Errorf("webdav PROPFIND parse: %w", err)
 	}
+	basePath := ""
+	if baseURL, err := url.Parse(w.baseURL); err == nil {
+		basePath = strings.TrimRight(path.Clean("/"+baseURL.Path), "/")
+	}
 	var items []WebdavItem
 	for _, r := range multi.Responses {
-		name := path.Base(strings.TrimSuffix(strings.TrimSpace(r.Href), "/"))
-		if name == "" || name == "." || name == "/" {
+		rawHref := strings.TrimSpace(r.Href)
+		if rawHref == "" || strings.HasSuffix(rawHref, "/") {
+			continue
+		}
+		isCollection := false
+		for _, prop := range r.Props {
+			if prop.ResourceType.Collection != nil {
+				isCollection = true
+				break
+			}
+		}
+		if isCollection {
+			continue
+		}
+		hrefPath := rawHref
+		if hrefURL, err := url.Parse(rawHref); err == nil {
+			hrefPath = hrefURL.Path
+		}
+		hrefPath = strings.TrimRight(path.Clean("/"+hrefPath), "/")
+		if hrefPath == "" || hrefPath == "/" || hrefPath == basePath {
+			continue
+		}
+		name := path.Base(hrefPath)
+		if !isValidBackupName(name) {
 			continue
 		}
 		item := WebdavItem{Name: name}
-		if len(r.Props) > 0 {
-			fmt.Sscanf(r.Props[0].Length, "%d", &item.Size)
-			if t, err := time.Parse(time.RFC1123, r.Props[0].Modified); err == nil {
-				item.ModTime = t.Unix()
+		for _, prop := range r.Props {
+			if item.Size == 0 && prop.Length != "" {
+				fmt.Sscanf(prop.Length, "%d", &item.Size)
+			}
+			if item.ModTime == 0 && prop.Modified != "" {
+				if t, err := time.Parse(time.RFC1123, prop.Modified); err == nil {
+					item.ModTime = t.Unix()
+				} else if t, err := time.Parse(time.RFC1123Z, prop.Modified); err == nil {
+					item.ModTime = t.Unix()
+				}
 			}
 		}
 		items = append(items, item)
@@ -190,12 +241,8 @@ func UploadLatestBackup() (WebdavItem, error) {
 	if err != nil {
 		return WebdavItem{}, err
 	}
-	local, err := BackupPath(item.Name)
-	if err != nil {
-		return WebdavItem{}, err
-	}
 	resp, err := w.do(http.MethodPut, item.Name, func() (io.ReadCloser, error) {
-		return os.Open(local)
+		return OpenBackup(item.Name)
 	}, nil)
 	if err != nil {
 		return WebdavItem{}, err
@@ -207,49 +254,58 @@ func UploadLatestBackup() (WebdavItem, error) {
 	return WebdavItem{Name: item.Name, Size: item.Size, ModTime: item.ModTime}, nil
 }
 
-// DownloadWebdavBackup streams a remote backup file to dst.
-func DownloadWebdavBackup(name string, dst string) error {
-	if filepath.Base(name) != name {
-		return fmt.Errorf("invalid backup name")
-	}
-	w, err := newWebdavClient()
+// writeBackupFile publishes a private, fully copied file. Existing files may
+// have permissions left by an older version, so create a new inode in all cases.
+func writeBackupFile(dst string, src io.Reader) error {
+	f, err := os.CreateTemp(filepath.Dir(dst), ".v2raya-backup-*")
 	if err != nil {
 		return err
 	}
-	resp, err := w.do(http.MethodGet, name, nil, nil)
+	defer os.Remove(f.Name())
+	_, copyErr := io.Copy(f, src)
+	if err := errors.Join(copyErr, f.Close()); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), dst)
+}
+
+func DownloadWebdavBackup(name, dst string) error {
+	resp, err := OpenWebdavBackupStream(name)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("webdav GET failed: status %d", resp.StatusCode)
+	return writeBackupFile(dst, resp.Body)
+}
+
+// OpenWebdavBackupStream validates name, confirms HTTP 200 from WebDAV, and
+// returns the response for the caller to stream and close.
+func OpenWebdavBackupStream(name string) (*http.Response, error) {
+	if !isValidBackupName(name) {
+		return nil, fmt.Errorf("invalid backup name")
 	}
-	f, err := os.Create(dst)
+	c, err := newWebdavClient()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
+	resp, err := c.do(http.MethodGet, name, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("webdav GET failed: status %d", resp.StatusCode)
+	}
+	return resp, nil
 }
 
 // OpenWebdavBackup streams a remote backup file to an http.ResponseWriter.
 func OpenWebdavBackup(name string, w io.Writer) error {
-	if filepath.Base(name) != name {
-		return fmt.Errorf("invalid backup name")
-	}
-	c, err := newWebdavClient()
-	if err != nil {
-		return err
-	}
-	resp, err := c.do(http.MethodGet, name, nil, nil)
+	resp, err := OpenWebdavBackupStream(name)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("webdav GET failed: status %d", resp.StatusCode)
-	}
 	_, err = io.Copy(w, resp.Body)
 	return err
 }
@@ -257,6 +313,20 @@ func OpenWebdavBackup(name string, w io.Writer) error {
 // ---- restore ----
 
 var restoreMu sync.Mutex
+
+var (
+	resolveRestoreExecutable = func() (string, error) {
+		if exe, err := os.Executable(); err == nil {
+			return exe, nil
+		}
+		if len(os.Args) == 0 || os.Args[0] == "" {
+			return "", fmt.Errorf("cannot determine executable path")
+		}
+		return exec.LookPath(os.Args[0])
+	}
+	execRestoreProcess = syscall.Exec
+	restoreExecDelay   = 500 * time.Millisecond
+)
 
 // RestoreFromBackup replaces the database with a backup and restarts the
 // service process. source is "local" (name is a local backup file) or
@@ -267,8 +337,12 @@ func RestoreFromBackup(source, name string) error {
 	if source != "local" && source != "webdav" {
 		return fmt.Errorf("invalid backup source")
 	}
-	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
+	if !isValidBackupName(name) {
 		return fmt.Errorf("invalid backup name")
+	}
+	exePath, err := resolveRestoreExecutable()
+	if err != nil {
+		return fmt.Errorf("resolve executable path: %w", err)
 	}
 	configDir := conf.GetEnvironmentConfig().Config
 	staging := filepath.Join(configDir, "restore-staging.db")
@@ -278,44 +352,23 @@ func RestoreFromBackup(source, name string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	var local string
 	if source == "webdav" {
 		if err := DownloadWebdavBackup(name, staging); err != nil {
 			return fmt.Errorf("download backup: %w", err)
 		}
-		local = staging
 	} else {
-		p, err := BackupPath(name)
+		src, err := OpenBackup(name)
 		if err != nil {
 			return fmt.Errorf("backup not found: %w", err)
 		}
-		local = p
-	}
-	if err := validateRestoreDatabase(local); err != nil {
-		return err
-	}
-	if source == "local" {
-		// Copy local backup to staging so the pending marker can reference a
-		// stable path.
-		src, err := os.Open(local)
-		if err != nil {
-			return err
-		}
 		defer src.Close()
-		dst, err := os.OpenFile(staging, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-		if err != nil {
-			return err
-		}
-		if _, err = io.Copy(dst, src); err != nil {
-			dst.Close()
-			return err
-		}
-		if err := dst.Close(); err != nil {
+		if err := writeBackupFile(staging, src); err != nil {
 			return err
 		}
 	}
 	// Validate the completed staging file, not just its source header.
 	if err := validateRestoreDatabase(staging); err != nil {
+		_ = os.Remove(staging)
 		return err
 	}
 	// Persist the restore intent and restart the process. The database file
@@ -324,15 +377,40 @@ func RestoreFromBackup(source, name string) error {
 		Staging string `json:"staging"`
 	}{staging})
 	if err != nil {
+		_ = os.Remove(staging)
 		return err
 	}
 	if err := os.WriteFile(marker, markerData, 0o600); err != nil {
+		_ = os.Remove(staging)
 		return err
 	}
-	v2ray.ProcessManager.Stop(false)
+	if runtime.GOOS == "windows" {
+		// syscall.Exec is unavailable on Windows. Keep serving until the
+		// operator restarts the process or its registered Windows service.
+		return nil
+	}
 	go func() {
-		time.Sleep(500 * time.Millisecond)
-		if err := syscall.Exec(os.Args[0], os.Args, os.Environ()); err != nil {
+		time.Sleep(restoreExecDelay)
+		membershipMu.Lock()
+		defer membershipMu.Unlock()
+		previous := v2ray.ProcessManager.Process()
+		v2ray.ProcessManager.Stop(false)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := previous.WaitUntilExit(ctx)
+		cancel()
+		if err == nil {
+			err = db.Close()
+		}
+		if err == nil {
+			err = execRestoreProcess(exePath, os.Args, os.Environ())
+		}
+		if err != nil {
+			restoreMu.Lock()
+			defer restoreMu.Unlock()
+			err = errors.Join(err, os.Remove(staging), os.Remove(marker))
+			if previous != nil {
+				err = errors.Join(err, v2ray.UpdateV2RayConfig())
+			}
 			log.Error("RestoreFromBackup: re-exec failed: %v", err)
 		}
 	}()
@@ -345,10 +423,26 @@ func ApplyPendingRestore() error {
 	return applyPendingRestore(conf.GetEnvironmentConfig().Config)
 }
 
+func sqliteFileURI(filename, rawQuery string) (string, error) {
+	abs, err := filepath.Abs(filename)
+	if err != nil {
+		return "", err
+	}
+	slashed := filepath.ToSlash(abs)
+	if !strings.HasPrefix(slashed, "/") { // Windows drive letter
+		slashed = "/" + slashed
+	}
+	u := url.URL{Scheme: "file", Path: slashed, RawQuery: rawQuery}
+	return u.String(), nil
+}
+
 func validateRestoreDatabase(filename string) error {
 	// Backups are standalone snapshots; never read or mutate sidecar files.
-	u := &url.URL{Scheme: "file", Path: filename, RawQuery: "mode=ro&immutable=1"}
-	database, err := db.OpenStandalone(u.String())
+	uri, err := sqliteFileURI(filename, "mode=ro&immutable=1")
+	if err != nil {
+		return err
+	}
+	database, err := db.OpenStandalone(uri)
 	if err != nil {
 		return err
 	}

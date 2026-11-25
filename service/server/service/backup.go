@@ -47,12 +47,18 @@ func CreateBackup() (item BackupItem, err error) {
 	}
 	name := "v2raya-backup-" + time.Now().Format("20060102-150405.000000") + ".db"
 	path := filepath.Join(dir, name)
-	// VACUUM INTO refuses to overwrite an existing target file.
-	_ = os.Remove(path)
-	// VACUUM INTO does not support bound parameters; escape the single
-	// quotes of the (user-configurable) path ourselves.
-	escaped := strings.ReplaceAll(path, "'", "''")
-	if _, err = db.GetDB().Exec(`VACUUM INTO '` + escaped + `'`); err != nil {
+	// Reserve the destination with private permissions before SQLite opens
+	// it. VACUUM INTO accepts an existing empty file.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return item, err
+	}
+	if err = f.Close(); err != nil {
+		_ = os.Remove(path)
+		return item, err
+	}
+	if _, err = db.GetDB().Exec("VACUUM INTO ?", path); err != nil {
+		_ = os.Remove(path)
 		return item, fmt.Errorf("failed to backup database: %w", err)
 	}
 	info, err := os.Stat(path)
@@ -109,7 +115,7 @@ func ListBackups() (items []BackupItem, err error) {
 		return nil, err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if !entry.Type().IsRegular() {
 			continue
 		}
 		info, err := entry.Info()
@@ -126,15 +132,52 @@ func ListBackups() (items []BackupItem, err error) {
 	return items, nil
 }
 
-// BackupPath returns the full path of a backup by name, guarding against
-// path traversal.
-func BackupPath(name string) (string, error) {
-	if filepath.Base(name) != name {
-		return "", fmt.Errorf("invalid backup name")
+func isValidBackupName(name string) bool {
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
+		return false
 	}
-	path := filepath.Join(backupDir(), name)
-	if _, err := os.Stat(path); err != nil {
+	if strings.ContainsAny(name, "/\\\x00\r\n") {
+		return false
+	}
+	return true
+}
+
+// OpenBackup opens a regular file inside the backup directory. Keep using the
+// checked handle for the entire download or restore, even if the name changes.
+func OpenBackup(name string) (*os.File, error) {
+	if !isValidBackupName(name) {
+		return nil, fmt.Errorf("invalid backup name")
+	}
+	root, err := os.OpenRoot(backupDir())
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("invalid backup file")
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	stat, err := f.Stat()
+	if err != nil || !os.SameFile(info, stat) {
+		f.Close()
+		return nil, fmt.Errorf("backup changed while opening")
+	}
+	return f, nil
+}
+
+// BackupPath returns the path of a current regular backup. Consumers that
+// need its contents should use OpenBackup to retain the checked descriptor.
+func BackupPath(name string) (string, error) {
+	file, err := OpenBackup(name)
+	if err != nil {
 		return "", err
 	}
-	return path, nil
+	return filepath.Join(backupDir(), name), file.Close()
 }

@@ -69,6 +69,11 @@ func NormalizeNodeDNS(servers []string) ([]string, error) {
 }
 
 func (e *SubscriptionExtra) Validate() error {
+	switch e.DownloadStrategy {
+	case "", "onlyDirect", "onlyProxy", "preferDirect", "preferProxy":
+	default:
+		return fmt.Errorf("invalid download strategy %q", e.DownloadStrategy)
+	}
 	if e.FilterField != "" && e.FilterField != "name" && e.FilterField != "host" {
 		return fmt.Errorf("invalid filter field %q", e.FilterField)
 	}

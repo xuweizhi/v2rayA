@@ -133,13 +133,25 @@ func (m *DnsMetrics) RecordQuery(query *DnsQuery, upstream string) {
 
 // RecordResponse 记录一次响应
 func (m *DnsMetrics) RecordResponse(resp *DnsResponse, rtt time.Duration) {
+	upstream := ""
+	if resp != nil {
+		upstream = resp.UpstreamID
+		if upstream == "" {
+			upstream = resp.Upstream
+		}
+	}
+	m.RecordResponseForUpstream(upstream, resp, rtt)
+}
+
+// RecordResponseForUpstream records a response attributed to a specific
+// upstream key so Query, Response, and Error counters share a unified key.
+func (m *DnsMetrics) RecordResponseForUpstream(upstream string, resp *DnsResponse, rtt time.Duration) {
 	m.TotalResponses.Add(1)
 
 	// 记录延迟分布
 	m.recordLatency(rtt)
 
 	// 按上游记录 RTT
-	upstream := resp.Upstream
 	if upstream != "" {
 		um := m.getOrCreateUpstreamMetrics(upstream)
 		um.mu.Lock()
@@ -251,23 +263,31 @@ func (m *DnsMetrics) recordLatency(rtt time.Duration) {
 
 // Snapshot 返回当前指标的原子快照
 func (m *DnsMetrics) Snapshot() *MetricsSnapshot {
+	// 拷贝 startedAt 与延迟分布（均由 m.mu 保护）
+	m.mu.Lock()
+	startedAt := m.startedAt
+	latencyBuckets := make([]LatencyBucket, len(m.LatencyBuckets))
+	copy(latencyBuckets, m.LatencyBuckets)
+	m.mu.Unlock()
+
 	s := &MetricsSnapshot{
-		TotalQueries:     m.TotalQueries.Load(),
-		TotalResponses:   m.TotalResponses.Load(),
-		TotalErrors:      m.TotalErrors.Load(),
-		TotalTimeouts:    m.TotalTimeouts.Load(),
-		CacheHits:        m.CacheHits.Load(),
-		CacheMisses:      m.CacheMisses.Load(),
-		CacheEvictions:   m.CacheEvictions.Load(),
-		PrefetchCount:    m.PrefetchCount.Load(),
-		RoutedQueries:    m.RoutedQueries.Load(),
-		RejectedQueries:  m.RejectedQueries.Load(),
-		BypassedQueries:  m.BypassedQueries.Load(),
-		Uptime:           time.Since(m.startedAt).Round(time.Second).String(),
-		QueriesByType:    make(map[string]int64),
+		TotalQueries:      m.TotalQueries.Load(),
+		TotalResponses:    m.TotalResponses.Load(),
+		TotalErrors:       m.TotalErrors.Load(),
+		TotalTimeouts:     m.TotalTimeouts.Load(),
+		CacheHits:         m.CacheHits.Load(),
+		CacheMisses:       m.CacheMisses.Load(),
+		CacheEvictions:    m.CacheEvictions.Load(),
+		PrefetchCount:     m.PrefetchCount.Load(),
+		RoutedQueries:     m.RoutedQueries.Load(),
+		RejectedQueries:   m.RejectedQueries.Load(),
+		BypassedQueries:   m.BypassedQueries.Load(),
+		Uptime:            time.Since(startedAt).Round(time.Second).String(),
+		QueriesByType:     make(map[string]int64),
 		QueriesByUpstream: make(map[string]*UpstreamMetrics),
-		ErrorsByUpstream: make(map[string]int64),
-		HitsByRule:       make(map[string]int64),
+		ErrorsByUpstream:  make(map[string]int64),
+		HitsByRule:        make(map[string]int64),
+		LatencyBuckets:    latencyBuckets,
 	}
 
 	// 拷贝按类型统计（atomic.Int64 指针）
@@ -278,11 +298,22 @@ func (m *DnsMetrics) Snapshot() *MetricsSnapshot {
 		return true
 	})
 
-	// 拷贝按上游统计（使用指针避免复制 sync.Mutex）
+	// 深拷贝按上游统计（在 um.mu 锁下复制所有字段，避免暴露活跃指针导致数据竞争）
 	m.QueriesByUpstream.Range(func(key, val interface{}) bool {
 		upstream := key.(string)
 		um := val.(*UpstreamMetrics)
-		s.QueriesByUpstream[upstream] = um
+		um.mu.Lock()
+		cp := &UpstreamMetrics{
+			Queries:   um.Queries,
+			Successes: um.Successes,
+			Errors:    um.Errors,
+			AvgRTT:    um.AvgRTT,
+			MinRTT:    um.MinRTT,
+			MaxRTT:    um.MaxRTT,
+			LastQuery: um.LastQuery,
+		}
+		um.mu.Unlock()
+		s.QueriesByUpstream[upstream] = cp
 		return true
 	})
 
@@ -299,12 +330,6 @@ func (m *DnsMetrics) Snapshot() *MetricsSnapshot {
 		s.HitsByRule[key.(string)] = counter.Load()
 		return true
 	})
-
-	// 拷贝延迟分布
-	m.mu.Lock()
-	s.LatencyBuckets = make([]LatencyBucket, len(m.LatencyBuckets))
-	copy(s.LatencyBuckets, m.LatencyBuckets)
-	m.mu.Unlock()
 
 	return s
 }
@@ -344,9 +369,8 @@ func (m *DnsMetrics) Reset() {
 	for i := range m.LatencyBuckets {
 		m.LatencyBuckets[i].Count = 0
 	}
-	m.mu.Unlock()
-
 	m.startedAt = time.Now()
+	m.mu.Unlock()
 }
 
 // String 返回人类可读的指标概要

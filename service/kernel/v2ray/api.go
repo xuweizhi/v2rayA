@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/devfeel/mapper"
@@ -118,21 +119,26 @@ func getTrafficTotals(conn *grpc.ClientConn) (TrafficTotals, error) {
 // the embedded Xray module.
 func TrafficProducer(apiPort int) (closeFunc func()) {
 	closed := make(chan struct{})
+	var closeOnce sync.Once
 	go func() {
 		const product = "traffic"
 		var conn *grpc.ClientConn
+		defer func() {
+			if conn != nil {
+				_ = conn.Close()
+			}
+		}()
 		var previous TrafficTotals
 		var previousAt time.Time
 		hasPrevious := false
 
 		for {
+			timer := time.NewTimer(ApiFeedInterval)
 			select {
 			case <-closed:
-				if conn != nil {
-					_ = conn.Close()
-				}
+				timer.Stop()
 				return
-			case <-time.After(ApiFeedInterval):
+			case <-timer.C:
 			}
 
 			if ProcessManager.Process() == nil {
@@ -181,7 +187,9 @@ func TrafficProducer(apiPort int) (closeFunc func()) {
 		}
 	}()
 	return func() {
-		close(closed)
+		closeOnce.Do(func() {
+			close(closed)
+		})
 	}
 }
 
@@ -210,10 +218,26 @@ func getObservatoryResponses(conn *grpc.ClientConn, observatoryTags []string) (r
 // For xray-core, this function should not be called as it uses different gRPC services.
 func ObservatoryProducer(apiPort int, observatoryTags []string) (closeFunc func()) {
 	closed := make(chan struct{})
+	var closeOnce sync.Once
 	go func() {
 		const product = "observatory"
 		var conn *grpc.ClientConn
-	nextLoop:
+		defer func() {
+			if conn != nil {
+				_ = conn.Close()
+			}
+		}()
+		waitInterval := func() bool {
+			timer := time.NewTimer(ApiFeedInterval)
+			defer timer.Stop()
+			select {
+			case <-closed:
+				return false
+			case <-timer.C:
+				return true
+			}
+		}
+
 		for {
 			select {
 			case <-closed:
@@ -222,62 +246,76 @@ func ObservatoryProducer(apiPort int, observatoryTags []string) (closeFunc func(
 			}
 			p := ProcessManager.Process()
 			if p == nil {
-				time.Sleep(ApiFeedInterval)
+				if conn != nil {
+					_ = conn.Close()
+					conn = nil
+				}
+				if !waitInterval() {
+					return
+				}
 				continue
 			}
 			// Set up a connection to the server.
 			if conn == nil {
 				ctx, cancel := context.WithTimeout(context.Background(), ApiFeedInterval)
-				defer cancel()
 				c, err := grpc.DialContext(
 					ctx,
 					net.JoinHostPort("127.0.0.1", strconv.Itoa(apiPort)),
 					grpc.WithInsecure(),
 					grpc.WithBlock(),
 				)
+				cancel()
 				if err != nil {
 					log.Warn("ObservatoryProducer: did not connect: %v", err)
-					continue nextLoop
+					if !waitInterval() {
+						return
+					}
+					continue
 				}
-				defer c.Close()
 				conn = c
 			}
 			resps, err := getObservatoryResponses(conn, observatoryTags)
 			if err != nil {
 				if status.Code(err) == codes.Unavailable {
-					// the connection is reliable, and reconnect
+					// Reconnect cleanly on next tick without leaking the old connection.
+					_ = conn.Close()
 					conn = nil
-					continue nextLoop
+					if !waitInterval() {
+						return
+					}
+					continue
 				}
 				log.Warn("ObservatoryProducer: %v", err)
 			} else {
 				css := configure.GetConnectedServers()
 				for _, r := range resps {
 					outboundStatus := r.Resp.GetStatus().GetStatus()
-					os := make([]OutboundStatus, len(outboundStatus))
+					statuses := make([]OutboundStatus, 0, len(outboundStatus))
 					for i := range outboundStatus {
-						_ = mapper.AutoMapper(outboundStatus[i], &os[i])
-						index := p.tag2WhichIndex[os[i].OutboundTag]
-						if index >= css.Len() {
-							continue nextLoop
+						var item OutboundStatus
+						_ = mapper.AutoMapper(outboundStatus[i], &item)
+						index, ok := p.lookupWhichIndex(r.OutboundName, item.OutboundTag)
+						if !ok || index < 0 || index >= css.Len() {
+							continue
 						}
-						os[i].Which = css.Get()[index]
-						var w []configure.Which
-						for _, v := range css.Get() {
-							w = append(w, *v)
-						}
+						item.Which = css.Get()[index]
+						statuses = append(statuses, item)
 					}
 					msg := gin.H{
 						"outboundName":   r.OutboundName,
-						"outboundStatus": os,
+						"outboundStatus": statuses,
 					}
 					ApiFeed.ProductMessage(product, msg)
 				}
 			}
-			time.Sleep(ApiFeedInterval)
+			if !waitInterval() {
+				return
+			}
 		}
 	}()
 	return func() {
-		close(closed)
+		closeOnce.Do(func() {
+			close(closed)
+		})
 	}
 }

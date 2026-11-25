@@ -70,7 +70,12 @@ func Exists(bucket string, key string) (exists bool) {
 func GetBucketLen(bucket string) (length int, err error) {
 	db := GetDB()
 	prefix := bucket + ":"
-	err = db.QueryRow("SELECT COUNT(*) FROM system_config WHERE key LIKE ?", prefix+"%").Scan(&length)
+	query := "SELECT COUNT(*) FROM system_config WHERE substr(key, 1, length(?)) = ?"
+	if bucket == "accounts" {
+		// Backward compatibility: also include legacy unprefixed keys.
+		query = "SELECT COUNT(*) FROM system_config WHERE substr(key, 1, length(?)) = ? OR key NOT LIKE '%:%'"
+	}
+	err = db.QueryRow(query, prefix, prefix).Scan(&length)
 	return length, err
 }
 
@@ -78,13 +83,12 @@ func GetBucketLen(bucket string) (length int, err error) {
 func GetBucketKeys(bucket string) (keys []string, err error) {
 	db := GetDB()
 	prefix := bucket + ":"
-	query := "SELECT key FROM system_config WHERE key LIKE ? ORDER BY key"
-	args := []interface{}{prefix + "%"}
+	query := "SELECT key FROM system_config WHERE substr(key, 1, length(?)) = ? ORDER BY key"
 	if bucket == "accounts" {
 		// Backward compatibility: also include legacy unprefixed keys.
-		query = "SELECT key FROM system_config WHERE key LIKE ? OR key NOT LIKE '%:%' ORDER BY key"
+		query = "SELECT key FROM system_config WHERE substr(key, 1, length(?)) = ? OR key NOT LIKE '%:%' ORDER BY key"
 	}
-	rows, err := db.Query(query, args...)
+	rows, err := db.Query(query, prefix, prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +137,11 @@ func Delete(bucket string, key string) error {
 func BucketClear(bucket string) error {
 	db := GetDB()
 	prefix := bucket + ":"
-	_, err := db.Exec("DELETE FROM system_config WHERE key LIKE ?", prefix+"%")
+	query := "DELETE FROM system_config WHERE substr(key, 1, length(?)) = ?"
+	if bucket == "accounts" {
+		// Backward compatibility: also remove legacy unprefixed keys.
+		query = "DELETE FROM system_config WHERE substr(key, 1, length(?)) = ? OR key NOT LIKE '%:%'"
+	}
+	_, err := db.Exec(query, prefix, prefix)
 	return err
 }

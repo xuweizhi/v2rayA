@@ -8,6 +8,7 @@ import (
 
 	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
+	"github.com/v2rayA/v2rayA/server/service"
 )
 
 // defaultRouteFingerprint returns a fingerprint of the current default IPv4
@@ -54,10 +55,12 @@ func watchNetworkChanges() {
 			if cur != last {
 				log.Info("network change detected: default route %v -> %v", last, cur)
 				last = cur
-				if !v2ray.ProcessManager.Running() {
-					continue
-				}
-				if err := v2ray.UpdateV2RayConfig(); err != nil {
+				if err := service.WithMembershipLock(func() error {
+					if !v2ray.ProcessManager.Running() {
+						return nil
+					}
+					return v2ray.UpdateV2RayConfig()
+				}); err != nil {
 					log.Warn("failed to reload core after network change: %v", err)
 				}
 			}

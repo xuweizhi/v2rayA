@@ -671,11 +671,18 @@ func (uconn *UConn) MarshalClientHelloNoECH() error {
 	}
 
 	hello.Raw = helloBuffer.Bytes()
-	if ClientHelloMarshalHook != nil {
+	var hook func([]byte)
+	if uconn.config != nil {
+		hook = uconn.config.ClientHelloMarshalHook
+	}
+	if hook == nil {
+		hook = ClientHelloMarshalHook
+	}
+	if hook != nil {
 		// hello.Raw starts with the 4-byte handshake message header; the hook
 		// expects the full message layout so it can rewrite the legacy session
 		// ID before the ClientHello is hashed and written.
-		ClientHelloMarshalHook(hello.Raw)
+		hook(hello.Raw)
 	}
 	return nil
 }

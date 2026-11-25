@@ -5,8 +5,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	xrayjson "github.com/xtls/xray-core/infra/conf/json"
 	"log"
 	"os"
 	"sync"
@@ -49,21 +51,13 @@ func startDnsModuleWithXray(configFiles cmdarg.Arg, srv *xcore.Instance) error {
 
 	module := dns.NewDnsModule(cfg)
 
-	// 在 Start 之前设置 xray-core 路由调度器。
+	// 在 Start 之前设置 xray-core 路由调度器和 geosite 解析器，
+	// 确保监听器启动前所有 geosite: 规则已完成展开，消除启动竞态窗口。
 	module.SetDispatcher(adapter)
+	module.SetGeositeResolver(geositeResolver)
 
 	if err := module.Start(); err != nil {
 		return fmt.Errorf("dns module: start failed: %w", err)
-	}
-
-	// Start 后设置 geosite 解析器（Router 在 Start 中创建）。
-	// geositeResolver 使用 geosite.dat 展开分流规则中的 geosite: 标签，
-	// 使 geosite:cn → 具体域名列表，实现真正的分流。
-	if router := module.GetRouter(); router != nil {
-		router.SetGeositeResolver(geositeResolver)
-		// 重新加载规则以应用 geosite 解析器
-		router.Reload(module.Config())
-		log.Println("[dns module] geosite resolver set, rules reloaded with geosite expansion")
 	}
 
 	dnsMgr.mu.Lock()
@@ -97,43 +91,31 @@ func extractDnsModuleConfig(configFiles cmdarg.Arg) (*dns.DnsModuleConfig, error
 		return nil, nil
 	}
 
-	// Merge all config files into a single JSON object.
-	merged := make(map[string]interface{})
+	var raw json.RawMessage
 	for _, configFile := range configFiles {
 		if configFile == "stdin:" {
-			continue // skip stdin, unlikely to contain dns_module
+			continue
 		}
 		data, err := os.ReadFile(configFile)
 		if err != nil {
 			return nil, fmt.Errorf("read config %q: %w", configFile, err)
 		}
-
-		var cfg map[string]interface{}
-		if err := json.Unmarshal(data, &cfg); err != nil {
+		var ext struct {
+			Module json.RawMessage `json:"dns_module"`
+		}
+		if err := json.NewDecoder(&xrayjson.Reader{Reader: bytes.NewReader(data)}).Decode(&ext); err != nil {
 			log.Printf("[dns module] warning: cannot parse config %q as JSON: %v", configFile, err)
 			continue
 		}
-
-		// Merge into the combined config.
-		for k, v := range cfg {
-			merged[k] = v
+		if ext.Module != nil {
+			raw = ext.Module
 		}
 	}
-
-	// Check for dns_module key.
-	raw, ok := merged["dns_module"]
-	if !ok {
+	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
-
-	// Marshal the dns_module value back to JSON for unmarshaling into DnsModuleConfig.
-	jsonBytes, err := json.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("marshal dns_module config: %w", err)
-	}
-
 	var cfg dns.DnsModuleConfig
-	if err := json.Unmarshal(jsonBytes, &cfg); err != nil {
+	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal dns_module config: %w", err)
 	}
 

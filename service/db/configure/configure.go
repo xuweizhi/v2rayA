@@ -2,8 +2,10 @@ package configure
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -218,7 +220,7 @@ func GetSettingNotNil() *Setting {
 	// Restore TproxyExcludedInterfaces from DB if user explicitly cleared it
 	// FillEmpty replaces empty strings with defaults, but we need to preserve
 	// user's intent to clear this field
-	if e == nil && b != nil {
+	if e == nil && b != nil && isJSONFieldExists(b, "tproxyExcludedInterfaces") {
 		var raw Setting
 		if err := jsoniter.Unmarshal(b, &raw); err == nil {
 			// If user explicitly saved an empty string, keep it empty
@@ -285,7 +287,30 @@ func GetRoutingA() (r string) {
 func SetDomainsExcluded(domains string) (err error) {
 	return db.Set("system", "domainsExcluded", domains)
 }
+
+// ParseWhitelistNetwork accepts a single address or network. Existing backups
+// may contain either representation.
+func ParseWhitelistNetwork(value string) (netip.Prefix, error) {
+	value = strings.TrimSpace(value)
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix.Masked(), nil
+	}
+	ip, err := netip.ParseAddr(value)
+	if err != nil || ip.Zone() != "" {
+		return netip.Prefix{}, fmt.Errorf("invalid whitelist address or CIDR %q", value)
+	}
+	return netip.PrefixFrom(ip, ip.BitLen()), nil
+}
+
 func SetTproxyWhiteIpGroups(countryCodes []string, customIps []string) (err error) {
+	for _, entry := range customIps {
+		if strings.TrimSpace(entry) == "" {
+			continue
+		}
+		if _, err := ParseWhitelistNetwork(entry); err != nil {
+			return err
+		}
+	}
 	return db.Set("system", "tproxyWhiteIpGroups", TproxyWhiteIpGroups{
 		CountryCodes: countryCodes,
 		CustomIps:    customIps,
@@ -341,7 +366,8 @@ func GetLenSubscriptions() int {
 func GetLenSubscriptionServers(index int) int {
 	b, err := db.ListGet("touch", "subscriptions", index)
 	if err != nil {
-		log.Fatal("GetLenSubscriptionServers: %v", err)
+		log.Error("GetLenSubscriptionServers: %v", err)
+		return 0
 	}
 	return len(gjson.GetBytes(b, "servers").Array())
 }
@@ -471,24 +497,32 @@ func InitDefaultOutbound() error {
 }
 
 func AddOutbound(outbound string) (err error) {
-	if strings.TrimSpace(outbound) == "" || strings.HasPrefix(outbound, "v2raya-") {
+	outbound = strings.TrimSpace(outbound)
+	lower := strings.ToLower(outbound)
+	if outbound == "" || strings.HasPrefix(lower, "v2raya-") {
 		return fmt.Errorf("invalid or reserved outbound name")
 	}
+	if lower == "proxy" ||
+		lower == "direct" ||
+		lower == "block" {
+		return fmt.Errorf("cannot add %v as the outbound name", outbound)
+	}
 	for _, existing := range GetOutbounds() {
-		if existing == outbound {
+		if strings.EqualFold(existing, outbound) {
 			return fmt.Errorf("outbound %q already exists", outbound)
 		}
 	}
-	if outbound == "proxy" ||
-		outbound == "direct" ||
-		outbound == "block" {
-		return fmt.Errorf("cannot add %v as the outbound name", outbound)
-	}
-	if err = db.SetAdd("outbounds", "names", outbound); err != nil {
+	setting, err := jsoniter.MarshalToString(DefaultOutboundSetting())
+	if err != nil {
 		return err
 	}
-	// Apply default OutboundSetting for the new outbound group
-	return SetOutboundSetting(outbound, DefaultOutboundSetting())
+	return db.ReadModifyWrite(func(tx *sql.Tx) error {
+		if _, err := tx.Exec("INSERT INTO outbound_names (name, sort) SELECT ?, COALESCE(MAX(sort), -1) + 1 FROM outbound_names", outbound); err != nil {
+			return err
+		}
+		_, err := tx.Exec("INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)", "outbound."+outbound+":setting", setting)
+		return err
+	})
 }
 
 func SetOutboundSetting(outbound string, setting OutboundSetting) (err error) {
@@ -510,8 +544,12 @@ func ValidateOutboundSetting(outbound string, setting OutboundSetting) error {
 	if err := ValidatePreProxies(settings); err != nil {
 		return err
 	}
-	if _, err := time.ParseDuration(setting.ProbeInterval); err != nil {
+	d, err := time.ParseDuration(setting.ProbeInterval)
+	if err != nil {
 		return err
+	}
+	if d <= 0 {
+		return fmt.Errorf("probeInterval must be greater than 0")
 	}
 	return nil
 }
@@ -528,10 +566,17 @@ func RemoveOutbound(outbound string) (err error) {
 	if err := CheckOutboundDependencies(outbound); err != nil {
 		return err
 	}
-	if err = db.BucketClear(fmt.Sprintf("outbound.%v", outbound)); err != nil {
-		return err
+	if outbound == DefaultOutboundName {
+		return fmt.Errorf("the default outbound cannot be deleted")
 	}
-	return db.SetRemove("outbounds", "names", outbound)
+	return db.ReadModifyWrite(func(tx *sql.Tx) error {
+		bucket := "outbound." + outbound + ":"
+		if _, err := tx.Exec("DELETE FROM system_config WHERE key IN (?, ?)", bucket+"setting", bucket+"connectedServers"); err != nil {
+			return err
+		}
+		_, err := tx.Exec("DELETE FROM outbound_names WHERE name = ?", outbound)
+		return err
+	})
 }
 
 func SetAccount(username, password string) (err error) {

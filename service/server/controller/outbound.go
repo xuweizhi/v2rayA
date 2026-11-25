@@ -2,9 +2,11 @@ package controller
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/v2rayA/RoutingA"
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/db/configure"
 
@@ -27,7 +29,7 @@ func PostOutbound(ctx *gin.Context) {
 		common.ResponseError(ctx, logError("bad request"))
 		return
 	}
-	if err := configure.AddOutbound(data.Outbound); err != nil {
+	if err := service.WithMembershipLock(func() error { return configure.AddOutbound(data.Outbound) }); err != nil {
 		common.ResponseError(ctx, logError(err))
 		return
 	}
@@ -146,8 +148,8 @@ func DeleteOutbound(ctx *gin.Context) {
 		common.ResponseError(ctx, err)
 		return
 	}
-	// Check if any custom inbound is bound to this outbound group
-	boundInbounds := configure.GetCustomInboundsByOutbound(data.Outbound)
+	// Check if any custom inbound is bound to or references this outbound group in RoutingA rules
+	boundInbounds := findCustomInboundsReferencingOutbound(data.Outbound)
 	if len(boundInbounds) > 0 {
 		names := make([]string, len(boundInbounds))
 		for i, ci := range boundInbounds {
@@ -249,4 +251,44 @@ func PutOutboundConnections(ctx *gin.Context) {
 		return
 	}
 	getTouch(ctx)
+}
+
+func findCustomInboundsReferencingOutbound(outbound string) []configure.CustomInbound {
+	var result []configure.CustomInbound
+	for _, ci := range configure.GetCustomInbounds() {
+		if ci.Outbound == outbound || (ci.OutboundType == "routingA" && routingARulesReferenceOutbound(ci.RoutingARules, outbound)) {
+			result = append(result, ci)
+		}
+	}
+	return result
+}
+
+func routingARulesReferenceOutbound(rulesText, outbound string) bool {
+	if strings.TrimSpace(rulesText) == "" {
+		return false
+	}
+	lines := strings.Split(rulesText, "\n")
+	hardcodeReplacement := regexp.MustCompile(`\$\$.+?\$\$`)
+	for i := range lines {
+		lines[i] = hardcodeReplacement.ReplaceAllString(lines[i], "")
+	}
+	parsed, err := RoutingA.Parse(strings.Join(lines, "\n"))
+	if err != nil {
+		return false
+	}
+	for _, item := range parsed {
+		switch rule := item.(type) {
+		case RoutingA.Routing:
+			if rule.Out == outbound {
+				return true
+			}
+		case RoutingA.Define:
+			if rule.Name == "default" {
+				if v, ok := rule.Value.(string); ok && v == outbound {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

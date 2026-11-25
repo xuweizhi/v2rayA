@@ -15,8 +15,9 @@ import (
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
+	"encoding"
 	"encoding/binary"
-	"fmt"
+	"hash"
 	"io"
 	"net"
 	"sync"
@@ -90,6 +91,9 @@ func NewClient(ctx context.Context, config *ClientConfig) (*Client, error) {
 // Process implements proxy.Outbound.
 func (c *Client) Process(ctx context.Context, link *transport.Link, dialer internet.Dialer) error {
 	outbounds := session.OutboundsFromContext(ctx)
+	if len(outbounds) == 0 {
+		return errors.New("target not specified")
+	}
 	ob := outbounds[len(outbounds)-1]
 	if !ob.Target.IsValid() {
 		return errors.New("target not specified")
@@ -115,17 +119,17 @@ func (c *Client) Process(ctx context.Context, link *transport.Link, dialer inter
 		return errors.New("shadowtls: failed to dial server").Base(err)
 	}
 	defer conn.Close()
-	go func() {
-		<-ctx.Done()
+	stop := context.AfterFunc(ctx, func() {
 		_ = conn.Close()
-	}()
-	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
-	defer conn.SetDeadline(time.Time{})
+	})
+	defer stop()
 
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
 	stlsConn, err := c.handshake(ctx, conn, host)
 	if err != nil {
 		return errors.New("shadowtls: handshake failed").Base(err)
 	}
+	_ = conn.SetDeadline(time.Time{})
 	defer stlsConn.Close()
 
 	postRequest := func() error {
@@ -149,65 +153,62 @@ func (c *Client) handshake(ctx context.Context, conn net.Conn, host string) (net
 	if sni == "" {
 		sni = host
 	}
+
+	// Use a Chrome-shaped ClientHello with a custom legacy session id:
+	// 28 random bytes followed by the 4-byte HMAC slot (initially zero).
+	// The per-connection marshal hook fills the slot with the HMAC before the
+	// message is hashed into the transcript and written to the wire, so both agree.
+	password := c.config.Password
 	utlsConfig := &utls.Config{
 		ServerName:         sni,
 		InsecureSkipVerify: c.config.Insecure, // #nosec G402 -- user-configurable
 		MinVersion:         utls.VersionTLS13,
 		MaxVersion:         utls.VersionTLS13,
+		ClientHelloMarshalHook: func(marshaledHello []byte) {
+			if len(marshaledHello) < sessionIDStart+tlsSessionIDSize {
+				return
+			}
+			sid := marshaledHello[sessionIDStart : sessionIDStart+tlsSessionIDSize]
+			// Zero the HMAC slot first so repeated hook invocations on the same
+			// buffer stay idempotent.
+			for i := tlsSessionIDSize - hmacSize; i < tlsSessionIDSize; i++ {
+				sid[i] = 0
+			}
+			h := newHMACHash(password)
+			h.Write(marshaledHello[:sessionIDStart])
+			h.Write(sid)
+			h.Write(marshaledHello[sessionIDStart+tlsSessionIDSize:])
+			mac := h.Sum()[:hmacSize]
+			copy(sid[tlsSessionIDSize-hmacSize:], mac)
+		},
+		SessionIDProvider: func() [32]byte {
+			var sid [32]byte
+			if _, err := rand.Read(sid[:tlsSessionIDSize-hmacSize]); err != nil {
+				for i := range sid {
+					sid[i] = byte(time.Now().UnixNano() >> uint(8*i))
+				}
+			}
+			for i := tlsSessionIDSize - hmacSize; i < tlsSessionIDSize; i++ {
+				sid[i] = 0
+			}
+			return sid
+		},
+		// The shadowtls server relays a real web server's handshake, which echoes
+		// our HMAC-carrying session ID; the internal session ID differs, so skip
+		// the echo verification (handled by our own authentication instead).
+		SkipSessionIDEchoCheck: true,
 	}
 
-	hw := newHandshakeWrapper(conn, c.config.Password)
-
-	// Use a Chrome-shaped ClientHello with a custom legacy session id:
-	// 28 random bytes followed by the 4-byte HMAC slot (initially zero).
-	// The marshal hook fills the slot with the HMAC before the message is
-	// hashed into the transcript and written to the wire, so both agree.
-	password := c.config.Password
-	utls.ClientHelloMarshalHook = func(marshaledHello []byte) {
-		if len(marshaledHello) < sessionIDStart+tlsSessionIDSize {
-			return
-		}
-		sid := marshaledHello[sessionIDStart : sessionIDStart+tlsSessionIDSize]
-		// Zero the HMAC slot first so repeated hook invocations on the same
-		// buffer stay idempotent.
-		for i := tlsSessionIDSize - hmacSize; i < tlsSessionIDSize; i++ {
-			sid[i] = 0
-		}
-		h := newHMACHash(password)
-		h.Write(marshaledHello[:sessionIDStart])
-		h.Write(sid)
-		h.Write(marshaledHello[sessionIDStart+tlsSessionIDSize:])
-		mac := h.Sum()[:hmacSize]
-		copy(sid[tlsSessionIDSize-hmacSize:], mac)
-	}
-	defer func() { utls.ClientHelloMarshalHook = nil }()
+	hw := newHandshakeWrapper(conn, password)
 
 	spec, err := utls.UTLSIdToSpec(utls.HelloChrome_Auto)
 	if err != nil {
 		return nil, err
 	}
-	utls.SessionIDProvider = func() [32]byte {
-		var sid [32]byte
-		if _, err := rand.Read(sid[:tlsSessionIDSize-hmacSize]); err != nil {
-			for i := range sid {
-				sid[i] = byte(time.Now().UnixNano() >> uint(8*i))
-			}
-		}
-		for i := tlsSessionIDSize - hmacSize; i < tlsSessionIDSize; i++ {
-			sid[i] = 0
-		}
-		return sid
-	}
-	defer func() { utls.SessionIDProvider = nil }()
 	uconn := utls.UClient(hw, utlsConfig, utls.HelloCustom)
 	if err := uconn.ApplyPreset(&spec); err != nil {
 		return nil, err
 	}
-	// The shadowtls server relays a real web server's handshake, which echoes
-	// our HMAC-carrying session ID; the internal session ID differs, so skip
-	// the echo verification (handled by our own authentication instead).
-	utls.SkipSessionIDEchoCheck.Store(true)
-	defer utls.SkipSessionIDEchoCheck.Store(false)
 	if err := uconn.HandshakeContext(ctx); err != nil {
 		return nil, err
 	}
@@ -225,8 +226,9 @@ func (c *Client) handshake(ctx context.Context, conn net.Conn, host string) (net
 
 	// After the handshake the TLS layer is abandoned; application data flows
 	// through the raw connection framed with HMAC records. Stop intercepting
-	// so data records pass through untouched.
-	hw.finish()
+	// while preserving any unread buffered bytes so coalesced post-handshake
+	// records are never dropped.
+	hw.finish(uconn.UnreadRawInput())
 
 	return &verifiedConn{
 		Conn:       hw,
@@ -264,47 +266,64 @@ func (c *chainHMAC) verify(payload, mac []byte) bool {
 	return hmac.Equal(h.Sum()[:hmacSize], mac)
 }
 
-// hmacHash wraps hash.Hash with a clone function for verification.
+// hmacHash is a streaming, cloneable HMAC-SHA1 state using O(1) memory.
 type hmacHash struct {
-	key []byte
-	h   *sha1Buffer
+	inner hash.Hash
+	opad  [sha1.BlockSize]byte
 }
 
 func newHMACHash(password string) *hmacHash {
-	return &hmacHash{key: []byte(password), h: newSHA1Buffer()}
+	var keyBlock [sha1.BlockSize]byte
+	key := []byte(password)
+	if len(key) > sha1.BlockSize {
+		sum := sha1.Sum(key)
+		copy(keyBlock[:], sum[:])
+	} else {
+		copy(keyBlock[:], key)
+	}
+	var ipad [sha1.BlockSize]byte
+	h := &hmacHash{inner: sha1.New()}
+	for i := range sha1.BlockSize {
+		ipad[i] = keyBlock[i] ^ 0x36
+		h.opad[i] = keyBlock[i] ^ 0x5c
+	}
+	_, _ = h.inner.Write(ipad[:])
+	return h
 }
 
-// Write feeds data into the running chain.
+// Write feeds data into the running chain in O(1) memory.
 func (h *hmacHash) Write(p []byte) {
-	h.h.Write(p)
+	_, _ = h.inner.Write(p)
 }
 
-// Sum returns the current HMAC value.
+func (h *hmacHash) cloneInner() hash.Hash {
+	state, err := h.inner.(encoding.BinaryMarshaler).MarshalBinary()
+	if err != nil {
+		panic("shadowtls: sha1 MarshalBinary failed: " + err.Error())
+	}
+	cloned := sha1.New()
+	if err := cloned.(encoding.BinaryUnmarshaler).UnmarshalBinary(state); err != nil {
+		panic("shadowtls: sha1 UnmarshalBinary failed: " + err.Error())
+	}
+	return cloned
+}
+
+// Sum returns the current HMAC-SHA1 value without mutating the running state.
 func (h *hmacHash) Sum() []byte {
-	return hmacSHA1(h.key, h.h.bytes())
+	var innerSum [sha1.Size]byte
+	h.cloneInner().Sum(innerSum[:0])
+	outer := sha1.New()
+	_, _ = outer.Write(h.opad[:])
+	_, _ = outer.Write(innerSum[:])
+	return outer.Sum(nil)
 }
 
-// clone returns a copy of the current chain state.
+// clone returns an independent O(1) copy of the current chain state.
 func (h *hmacHash) clone() *hmacHash {
-	return &hmacHash{key: h.key, h: &sha1Buffer{data: append([]byte(nil), h.h.data...)}}
-}
-
-// sha1Buffer is a minimal running SHA-1 accumulator.
-type sha1Buffer struct {
-	data []byte
-}
-
-func newSHA1Buffer() *sha1Buffer { return &sha1Buffer{} }
-
-func (b *sha1Buffer) Write(p []byte) { b.data = append(b.data, p...) }
-
-func (b *sha1Buffer) bytes() []byte { return b.data }
-
-// hmacSHA1 computes HMAC-SHA1 over data.
-func hmacSHA1(key, data []byte) []byte {
-	mac := hmac.New(sha1.New, key)
-	mac.Write(data)
-	return mac.Sum(nil)
+	return &hmacHash{
+		inner: h.cloneInner(),
+		opad:  h.opad,
+	}
 }
 
 // verifiedConn frames application data with HMAC-protected TLS records.
@@ -412,15 +431,22 @@ func newHandshakeWrapper(conn net.Conn, password string) *handshakeWrapper {
 	return &handshakeWrapper{Conn: conn, password: password}
 }
 
-// finish switches the wrapper into pass-through mode after the handshake.
-func (w *handshakeWrapper) finish() {
+// finish switches the wrapper into pass-through mode after the handshake,
+// preserving any unread bytes already buffered by the TLS stack or wrapper.
+func (w *handshakeWrapper) finish(extra []byte) {
 	w.readMu.Lock()
 	defer w.readMu.Unlock()
+	if len(extra) > 0 {
+		combined := make([]byte, 0, len(extra)+len(w.readBuf))
+		combined = append(combined, extra...)
+		combined = append(combined, w.readBuf...)
+		w.readBuf = combined
+	}
 	w.done = true
 }
 
 // Write passes through; the ClientHello session ID is finalized by the
-// utls ClientHelloMarshalHook set up in handshake().
+// per-connection utls ClientHelloMarshalHook set up in handshake().
 func (w *handshakeWrapper) Write(p []byte) (int, error) {
 	w.writeMu.Lock()
 	defer w.writeMu.Unlock()
@@ -432,6 +458,14 @@ func (w *handshakeWrapper) Write(p []byte) (int, error) {
 func (w *handshakeWrapper) Read(p []byte) (int, error) {
 	w.readMu.Lock()
 	defer w.readMu.Unlock()
+	if len(w.readBuf) > 0 {
+		n := copy(p, w.readBuf)
+		w.readBuf = w.readBuf[n:]
+		if len(w.readBuf) == 0 {
+			w.readBuf = nil
+		}
+		return n, nil
+	}
 	if w.done {
 		return w.Conn.Read(p)
 	}
@@ -450,6 +484,9 @@ func (w *handshakeWrapper) Read(p []byte) (int, error) {
 	}
 	n := copy(p, w.readBuf)
 	w.readBuf = w.readBuf[n:]
+	if len(w.readBuf) == 0 {
+		w.readBuf = nil
+	}
 	return n, nil
 }
 
@@ -473,7 +510,6 @@ func (w *handshakeWrapper) processRecord(record []byte) []byte {
 			// hash-value reinsertion used by the data phase.
 			w.ignoreHMACChain.inner.Write(data)
 			sum := w.ignoreHMACChain.inner.Sum()[:hmacSize]
-			fmt.Printf("CLIENT appdata len=%d wiremac=%x computed=%x match=%v\n", len(record), mac, sum, hmac.Equal(sum, mac))
 			if hmac.Equal(sum, mac) {
 				// Authenticated ticket/auth record: XOR the payload with the
 				// kdf key and strip the HMAC so the TLS stack sees a plain
@@ -494,6 +530,8 @@ func (w *handshakeWrapper) processRecord(record []byte) []byte {
 }
 
 func (w *handshakeWrapper) serverRandom() ([]byte, bool) {
+	w.readMu.Lock()
+	defer w.readMu.Unlock()
 	if len(w.serverRandomBytes) == tlsRandomSize {
 		return w.serverRandomBytes, true
 	}
@@ -501,6 +539,8 @@ func (w *handshakeWrapper) serverRandom() ([]byte, bool) {
 }
 
 func (w *handshakeWrapper) ignoreHMAC() *chainHMAC {
+	w.readMu.Lock()
+	defer w.readMu.Unlock()
 	return w.ignoreHMACChain
 }
 

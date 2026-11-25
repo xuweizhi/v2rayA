@@ -19,11 +19,21 @@ import (
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 )
 
-func GetV2rayLocationAssetOverride() string {
+func getAssetLocationOverride() string {
 	if assetDir := conf.GetEnvironmentConfig().V2rayAssetsDirectory; assetDir != "" {
 		return assetDir
 	}
+	if assetDir := os.Getenv("XRAY_LOCATION_ASSET"); assetDir != "" {
+		return assetDir
+	}
 	if assetDir := os.Getenv("V2RAY_LOCATION_ASSET"); assetDir != "" {
+		return assetDir
+	}
+	return ""
+}
+
+func GetV2rayLocationAssetOverride() string {
+	if assetDir := getAssetLocationOverride(); assetDir != "" {
 		return assetDir
 	}
 	if runtime.GOOS != "windows" {
@@ -34,15 +44,15 @@ func GetV2rayLocationAssetOverride() string {
 }
 
 func GetV2rayLocationAsset(filename string) (string, error) {
-	// All variants use XRAY_LOCATION_ASSET; dat files are stored under
+	// Honor V2rayAssetsDirectory, XRAY_LOCATION_ASSET, and V2RAY_LOCATION_ASSET
+	// consistently with GetV2rayLocationAssetOverride; dat files are stored under
 	// v2raya's own XDG data subdirectory ("v2raya/"), not under "xray/".
-	const envKey = "XRAY_LOCATION_ASSET"
 	const folder = "v2raya"
 
-	location := os.Getenv(envKey)
-	// check if XRAY_LOCATION_ASSET is set
+	location := getAssetLocationOverride()
+	// check if an explicit asset location override is set
 	if location != "" {
-		// add XRAY_LOCATION_ASSET to search path
+		// add override location to search path
 		searchPaths := []string{
 			filepath.Join(location, filename),
 		}
@@ -61,7 +71,7 @@ func GetV2rayLocationAsset(filename string) (string, error) {
 			// return the first path that exists
 			return searchPath, nil
 		}
-		// or download asset into XRAY_LOCATION_ASSET
+		// or download asset into the override location
 		return searchPaths[0], nil
 	} else {
 		if runtime.GOOS != "windows" {

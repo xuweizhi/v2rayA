@@ -152,20 +152,27 @@ export default {
   },
   methods: {
     fetchInbounds() {
-      this.$axios({ url: apiRoot + "/customInbound" }).then((res) => {
-        if (res.data.code === "SUCCESS") {
-          this.inbounds = res.data.data.inbounds || [];
-        }
-      });
+      this.$axios({ url: apiRoot + "/customInbound" })
+        .then((res) => {
+          if (res.data.code === "SUCCESS") {
+            this.inbounds = res.data.data.inbounds || [];
+          }
+        })
+        .catch(() => {});
     },
     fetchOutbounds() {
-      this.$axios({ url: apiRoot + "/outbound" }).then((res) => {
-        if (res.data.code === "SUCCESS") {
-          this.outbounds = res.data.data.outbounds || [];
-        }
-      });
+      this.$axios({ url: apiRoot + "/outbounds" })
+        .then((res) => {
+          if (res.data.code === "SUCCESS") {
+            this.outbounds = res.data.data.outbounds || [];
+          }
+        })
+        .catch(() => {});
     },
     handleAdd() {
+      if (this.adding) {
+        return;
+      }
       if (!this.form.tag || !this.form.port) {
         this.$buefy.toast.open({
           message: this.$t("customInbound.fillAll"),
@@ -203,6 +210,7 @@ export default {
             this.form = { tag: "", protocol: "socks", port: "", outbound: "", outboundType: "direct", routingARules: "" };
           });
         })
+        .catch(() => {})
         .finally(() => {
           this.adding = false;
         });
@@ -218,11 +226,13 @@ export default {
             url: apiRoot + "/customInbound",
             method: "delete",
             data: { tag },
-          }).then((res) => {
-            handleResponse(res, this, () => {
-              this.inbounds = res.data.data.inbounds || [];
-            });
-          });
+          })
+            .then((res) => {
+              handleResponse(res, this, () => {
+                this.inbounds = res.data.data.inbounds || [];
+              });
+            })
+            .catch(() => {});
         },
       });
     },

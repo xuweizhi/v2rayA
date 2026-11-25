@@ -126,6 +126,18 @@ type Conn struct {
 	tmp [16]byte
 }
 
+// UnreadRawInput returns a copy of any raw bytes read from the underlying
+// connection into rawInput that have not yet been consumed by the TLS record
+// layer.
+func (c *Conn) UnreadRawInput() []byte {
+	c.in.Lock()
+	defer c.in.Unlock()
+	if c.rawInput.Len() == 0 {
+		return nil
+	}
+	return append([]byte(nil), c.rawInput.Bytes()...)
+}
+
 // Access to net.Conn methods.
 // Cannot just embed net.Conn because that would
 // export the struct field too.

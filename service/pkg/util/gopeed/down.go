@@ -8,9 +8,9 @@ import (
 	"mime"
 	"net/http"
 	"net/http/cookiejar"
-	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -47,12 +47,15 @@ func Resolve(request *Request) (*Response, error) {
 			ret.Name = filename
 		}
 	}
-	// Get file name by URL
+	// Get file name by URL (prefer final redirected request URL)
 	if ret.Name == "" {
-		parse, err := url.Parse(httpRequest.URL.String())
-		if err == nil {
+		reqURL := httpRequest.URL
+		if response.Request != nil && response.Request.URL != nil {
+			reqURL = response.Request.URL
+		}
+		if reqURL != nil {
 			// e.g. /files/test.txt => test.txt
-			ret.Name = subLastSlash(parse.Path)
+			ret.Name = subLastSlash(reqURL.Path)
 		}
 	}
 	// Unknow file name
@@ -62,9 +65,22 @@ func Resolve(request *Request) (*Response, error) {
 	ret.Name = filepath.Base(strings.ReplaceAll(ret.Name, "\\", "/"))
 	ret.Range = response.StatusCode == http.StatusPartialContent
 	if ret.Range {
+		contentRange := strings.TrimSpace(response.Header.Get("Content-Range"))
 		var start, end int64
-		if _, err := fmt.Sscanf(response.Header.Get("Content-Range"), "bytes %d-%d/%d", &start, &end, &ret.Size); err != nil || start != 0 || end != 0 || ret.Size <= 0 {
-			return nil, fmt.Errorf("invalid Content-Range: %q", response.Header.Get("Content-Range"))
+		var total string
+		if _, err := fmt.Sscanf(contentRange, "bytes %d-%d/%s", &start, &end, &total); err != nil || start != 0 || end != 0 {
+			return nil, fmt.Errorf("invalid Content-Range: %q", contentRange)
+		}
+		if total == "*" {
+			// RFC 9110: unknown complete length -> fall back to single-stream download.
+			ret.Range = false
+			ret.Size = -1
+		} else {
+			size, err := strconv.ParseInt(total, 10, 64)
+			if err != nil || size <= 0 {
+				return nil, fmt.Errorf("invalid Content-Range: %q", contentRange)
+			}
+			ret.Size = size
 		}
 	} else {
 		ret.Size = response.ContentLength

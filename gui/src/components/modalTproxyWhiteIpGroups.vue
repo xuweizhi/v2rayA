@@ -74,7 +74,7 @@ export default {
         }).then((res) => {
             handleResponse(res, this, () => {
                 if (res.data.data.countryCodes) {
-                    this.countryCodes = res.data.data.countryCodes;
+                    this.countryCodes = res.data.data.countryCodes.filter(code => code !== "NONE");
                 }
                 if (res.data.data.customIps) {
                     this.customIps = res.data.data.customIps.join("\n");
@@ -102,7 +102,8 @@ export default {
             return invalid.length === 0;
         },
         handleClickSubmit() {
-            if (!this.validateCIDRArray(this.customIps.split("\n").filter(line => line.trim() !== ''))) {
+            const customIps = this.customIps.split("\n").map(line => line.trim()).filter(Boolean);
+            if (!this.validateCIDRArray(customIps)) {
                 this.$buefy.toast.open({
                     message: this.$t("tproxyWhiteIpGroups.invalidCustomIps"),
                     type: "is-danger",
@@ -117,7 +118,7 @@ export default {
                 method: "put",
                 data: {
                     countryCodes: this.countryCodes.length ? this.countryCodes : ['NONE'],
-                    customIps: this.customIps.split("\n").filter(line => line.trim() !== ''),
+                    customIps,
                 },
             }).then((res) => {
                 handleResponse(res, this, () => {

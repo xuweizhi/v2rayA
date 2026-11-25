@@ -57,12 +57,12 @@
               </b-tooltip>
             </template>
             <b-select v-model="transparentType" expanded>
-              <option v-show="!lite && os === 'linux'" value="redirect">redirect</option>
-              <option v-show="!lite && os === 'linux'" value="tproxy">tproxy</option>
-              <option v-show="!lite" value="tun" :disabled="!tinytunSupported">
+              <option v-if="!lite && os === 'linux'" value="redirect">redirect</option>
+              <option v-if="!lite && os === 'linux'" value="tproxy">tproxy</option>
+              <option v-if="!lite" value="tun" :disabled="!tinytunSupported">
                 tun (TinyTun){{ !tinytunSupported ? " — " + $t("setting.options.notIntegrated") : "" }}
               </option>
-              <option v-show="!(isRoot && (os === 'linux' || os === 'darwin'))" value="system_proxy">system proxy</option>
+              <option v-if="!(isRoot && (os === 'linux' || os === 'darwin'))" value="system_proxy">system proxy</option>
             </b-select>
 
             <template v-if="transparentType == 'tproxy'">
@@ -183,7 +183,7 @@
               <option value="routingA">RoutingA</option>
             </b-select>
             <template v-if="pacMode === 'custom'">
-              <b-button class="va-attached-btn" @click="handleClickConfigurePac">
+              <b-button class="va-attached-btn" @click="handleClickRoutingRules">
                 {{ $t("operations.configure") }}
               </b-button>
             </template>
@@ -250,6 +250,7 @@
               type="number"
               min="1"
               max="1024"
+              required
               validation-icon="alert-circle-outline"
               style="flex: 1"
             />
@@ -320,6 +321,7 @@
               custom-class="no-shadow"
               type="number"
               min="1"
+              required
               validation-icon="alert-circle-outline"
               style="flex: 1"
             />
@@ -338,6 +340,7 @@
               custom-class="no-shadow"
               type="number"
               min="1"
+              required
               validation-icon="alert-circle-outline"
               style="flex: 1"
             />
@@ -403,7 +406,12 @@
         <button class="button" type="button" @click="$parent.close()">
           {{ $t("operations.cancel") }}
         </button>
-        <button class="button is-primary" @click="handleClickSubmit">
+        <button
+          class="button is-primary"
+          :class="{ 'is-loading': submitting }"
+          :disabled="!settingLoaded || submitting"
+          @click="handleClickSubmit"
+        >
           {{ $t("operations.saveApply") }}
         </button>
       </div>
@@ -414,7 +422,6 @@
 <script>
 import { handleResponse } from "@/assets/js/utils";
 import dayjs from "dayjs";
-import ModalCustomRouting from "@/components/modalCustomRouting";
 import ModalCustomRoutingA from "@/components/modalCustomRoutingA";
 import modalDomainsExcluded from "@/components/modalDomainsExcluded";
 import modalTproxyWhiteIpGroups from "@/components/modalTproxyWhiteIpGroups";
@@ -458,7 +465,9 @@ export default {
     tunBypassInterfaces: "",
     tunBypassInterfacesList: [],
     tunBypassCustom: "",
+    settingLoaded: false,
     availableInterfaces: [],
+    submitting: false,
     tunRouteShellType: "",
     tunRouteShellPath: "",
     tunSetupScript: "",
@@ -576,81 +585,105 @@ export default {
         hasModalCard: true,
         canCancel: true,
         events: {
-          close: () => {
+          read: () => {
             this.loadUnreadNotices();
+            this.$emit("notices-read");
           },
         },
       });
-      this.unreadNotices = 0;
     },
     dayjs() {
       return dayjs.apply(this, arguments);
     },
     fetchNetworkInterfaces() {
-      this.$axios({ url: apiRoot + '/networkInterfaces' }).then((res) => {
-        if (res.data && res.data.data && res.data.data.interfaces) {
-          this.availableInterfaces = res.data.data.interfaces;
-          // Re-apply the tunBypassInterfaces string now that we know available names
-          if (this.tunBypassInterfaces) {
-            this.tunBypassInterfacesComputed = this.tunBypassInterfaces;
+      this.$axios({ url: apiRoot + "/networkInterfaces" })
+        .then((res) => {
+          if (res.data && res.data.data && res.data.data.interfaces) {
+            const currentVal = this.settingLoaded
+              ? this.tunBypassInterfacesComputed
+              : this.tunBypassInterfaces || "";
+            this.availableInterfaces = res.data.data.interfaces;
+            if (currentVal || this.settingLoaded) {
+              this.tunBypassInterfacesComputed = currentVal;
+            }
           }
-        }
-      });
+        })
+        .catch(() => {});
+    },
+    refreshGFWListVersion() {
+      this.$axios({
+        url: apiRoot + "/setting",
+      })
+        .then((res) => {
+          if (res.data && res.data.code === "SUCCESS" && res.data.data) {
+            this.localGFWListVersion = res.data.data.localGFWListVersion;
+          }
+        })
+        .catch(() => {});
     },
     getSettingData() {
       this.$axios({
         url: apiRoot + "/remoteGFWListVersion",
-      }).then((res) => {
-        handleResponse(res, this, () => {
-          this.remoteGFWListVersion = res.data.data.remoteGFWListVersion;
-        });
-      });
+      })
+        .then((res) => {
+          handleResponse(res, this, () => {
+            this.remoteGFWListVersion = res.data.data.remoteGFWListVersion;
+          });
+        })
+        .catch(() => {});
       this.$axios({
         url: apiRoot + "/setting",
-      }).then((res) => {
-        handleResponse(res, this, () => {
-          Object.assign(this, res.data.data.setting);
-          delete res.data.data["setting"];
-          Object.assign(this, res.data.data);
-          this.subscriptionAutoUpdateTime = new Date(this.subscriptionAutoUpdateTime);
-          this.pacAutoUpdateTime = new Date(this.pacAutoUpdateTime);
-          // Get OS and isRoot info from version API
-          this.$axios({
-            url: apiRoot + "/version",
-          }).then((versionRes) => {
-            if (versionRes.data && versionRes.data.data) {
-              this.os = versionRes.data.data.os || "";
-              this.isRoot = versionRes.data.data.isRoot || false;
-              this.tinytunSupported = versionRes.data.data.tinytunSupported || false;
-            }
-            if (this.transparentType === 'tun' && this.tinytunSupported) {
-              this.fetchNetworkInterfaces();
+      })
+        .then((res) => {
+          handleResponse(res, this, () => {
+            Object.assign(this, res.data.data.setting);
+            delete res.data.data["setting"];
+            Object.assign(this, res.data.data);
+            this.tunBypassInterfacesComputed = this.tunBypassInterfaces || "";
+            this.settingLoaded = true;
+            this.subscriptionAutoUpdateTime = new Date(this.subscriptionAutoUpdateTime);
+            this.pacAutoUpdateTime = new Date(this.pacAutoUpdateTime);
+            // Get OS and isRoot info from version API
+            this.$axios({
+              url: apiRoot + "/version",
+            })
+              .then((versionRes) => {
+                if (versionRes.data && versionRes.data.data) {
+                  this.os = versionRes.data.data.os || "";
+                  this.isRoot = versionRes.data.data.isRoot || false;
+                  this.tinytunSupported = versionRes.data.data.tinytunSupported || false;
+                }
+                if (this.transparentType === "tun" && this.tinytunSupported) {
+                  this.fetchNetworkInterfaces();
+                }
+              })
+              .catch(() => {});
+            if (this.lite) {
+              this.transparentType = "system_proxy";
             }
           });
-          if (this.lite) {
-            this.transparentType = "system_proxy";
-          }
-        });
-      });
+        })
+        .catch(() => {});
     },
     requestUpdateSetting() {
+      if (!this.settingLoaded || this.submitting) return;
+      this.submitting = true;
       let loading = this.$buefy.loading.open();
       const cancelSource = axios.CancelToken.source();
       const editedSetting = {
         novice: this.novice,
         proxyModeWhenSubscribe: this.proxyModeWhenSubscribe,
         pacAutoUpdateMode: this.pacAutoUpdateMode,
-        pacAutoUpdateIntervalHour: parseInt(this.pacAutoUpdateIntervalHour),
+        pacAutoUpdateIntervalHour: parseInt(this.pacAutoUpdateIntervalHour, 10) || 0,
         subscriptionAutoUpdateMode: this.subscriptionAutoUpdateMode,
-        subscriptionAutoUpdateIntervalHour: parseInt(
-          this.subscriptionAutoUpdateIntervalHour
-        ),
+        subscriptionAutoUpdateIntervalHour:
+          parseInt(this.subscriptionAutoUpdateIntervalHour, 10) || 0,
         pacMode: this.pacMode,
         tcpFastOpen: this.tcpFastOpen,
         logLevel: this.logLevel,
         inboundSniffing: this.inboundSniffing,
         muxOn: this.muxOn,
-        mux: parseInt(this.mux),
+        mux: parseInt(this.mux, 10) || 8,
         transparent: this.transparent,
         transparentType: this.transparentType,
         ipforward: this.ipforward,
@@ -718,10 +751,14 @@ export default {
             duration: 5000,
           });
         })
-        .finally(() => loading.close());
+        .finally(() => {
+          this.submitting = false;
+          loading.close();
+        });
       waitingConnected(request, 3 * 1000, cancelSource.cancel);
     },
     handleClickSubmit() {
+      if (!this.settingLoaded || this.submitting) return;
       if (this.muxOn === "yes" && this.$refs.muxinput && !this.$refs.muxinput.checkHtml5Validity()) {
         this.activeTab = 1;
         return;
@@ -735,6 +772,7 @@ export default {
         return;
       }
       if (
+        (this.pacMode === "gfwlist" || this.transparent === "gfwlist") &&
         this.pacAutoUpdateMode === "auto_update_at_intervals" &&
         this.$refs.autoUpdatePacInput &&
         !this.$refs.autoUpdatePacInput.checkHtml5Validity()
@@ -744,14 +782,6 @@ export default {
       }
       console.log(apiRoot);
       this.requestUpdateSetting();
-    },
-    handleClickConfigurePac() {
-      this.$buefy.modal.open({
-        parent: this,
-        component: ModalCustomRouting,
-        hasModalCard: true,
-        canCancel: true,
-      });
     },
     handleClickConfigureRoutingA() {
       this.$buefy.modal.open({
@@ -765,7 +795,7 @@ export default {
       this.$buefy.modal.open({
         events: {
           close: () => {
-            this.getSettingData();
+            this.refreshGFWListVersion();
           },
         },
         parent: this,

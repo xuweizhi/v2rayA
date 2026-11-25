@@ -1,11 +1,14 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/db/configure"
+	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/server/service"
 )
 
@@ -19,9 +22,27 @@ type DnsConfigResponse struct {
 // PutDnsRules 处理 PUT /api/dns 请求，保存 DNS 规则配置。
 // 支持新格式和旧格式请求，向后兼容。
 func PutDnsRules(ctx *gin.Context) {
+	updatingMu.Lock()
+	if updating {
+		common.ResponseError(ctx, processingErr)
+		updatingMu.Unlock()
+		return
+	}
+	updating = true
+	updatingMu.Unlock()
+	defer func() {
+		updatingMu.Lock()
+		updating = false
+		updatingMu.Unlock()
+	}()
+
 	var rules []configure.DnsRule
 	if err := ctx.ShouldBindJSON(&rules); err != nil {
 		common.ResponseError(ctx, logError(fmt.Errorf("bad request: %w", err)))
+		return
+	}
+	if len(rules) == 0 {
+		common.ResponseError(ctx, fmt.Errorf("at least one DNS rule is required"))
 		return
 	}
 	for i, rule := range rules {
@@ -30,7 +51,7 @@ func PutDnsRules(ctx *gin.Context) {
 		if upstream == "" {
 			upstream = rule.Server
 		}
-		if upstream == "" {
+		if strings.TrimSpace(upstream) == "" && rule.Action != "reject" && rule.Outbound != "block" {
 			common.ResponseError(ctx, logError(fmt.Errorf("rule[%d]: server/upstream cannot be empty", i)))
 			return
 		}
@@ -57,11 +78,31 @@ func PutDnsRules(ctx *gin.Context) {
 	// 执行迁移以确保新字段有默认值
 	migrated := configure.MigrateDnsRules(rules)
 
-	if err := configure.SetDnsRules(migrated); err != nil {
+	if err := service.WithMembershipLock(func() error { return applyDNSRules(migrated) }); err != nil {
 		common.ResponseError(ctx, logError(err))
 		return
 	}
 	common.ResponseSuccess(ctx, nil)
+}
+
+// The caller holds the membership lock during persistence and core reload.
+func applyDNSRules(rules []configure.DnsRule) error {
+	old := configure.GetDnsRulesNotNil()
+	if err := configure.SetDnsRules(rules); err != nil {
+		return err
+	}
+	if v2ray.ProcessManager.Running() {
+		if err := v2ray.UpdateV2RayConfig(); err != nil {
+			if restoreErr := configure.SetDnsRules(old); restoreErr != nil {
+				return errors.Join(err, restoreErr)
+			}
+			if !v2ray.ProcessManager.Running() {
+				return errors.Join(err, v2ray.UpdateV2RayConfig())
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // GetDnsRules 处理 GET /api/dns 请求，返回 DNS 规则配置和状态。
@@ -75,7 +116,7 @@ func GetDnsRules(ctx *gin.Context) {
 
 	listener := ""
 	if setting != nil {
-		listener = setting.DnsListenAddr
+		listener = setting.DNSListenAddress()
 	}
 
 	common.ResponseSuccess(ctx, DnsConfigResponse{

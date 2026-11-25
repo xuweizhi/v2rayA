@@ -5,6 +5,8 @@ package multiobservatory
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -58,8 +60,8 @@ func (m *MultiObservatory) GetObservation(ctx context.Context) (proto.Message, e
 	defer m.mu.RUnlock()
 
 	var combined []*xray_obs.OutboundStatus
-	for _, child := range m.children {
-		result, err := child.GetObservation(ctx)
+	for _, tag := range slices.Sorted(maps.Keys(m.children)) {
+		result, err := m.children[tag].GetObservation(ctx)
 		if err != nil {
 			continue
 		}
@@ -71,14 +73,17 @@ func (m *MultiObservatory) GetObservation(ctx context.Context) (proto.Message, e
 }
 
 // GetObservationByTag returns the ObservationResult for a specific group tag.
-// If the tag is empty or not found, the aggregated result is returned.
+// An empty tag requests all groups. An unknown group has no observations.
 func (m *MultiObservatory) GetObservationByTag(tag string, ctx context.Context) (proto.Message, error) {
 	m.mu.RLock()
 	child, ok := m.children[tag]
 	m.mu.RUnlock()
 
-	if !ok || tag == "" {
+	if tag == "" {
 		return m.GetObservation(ctx)
+	}
+	if !ok {
+		return &xray_obs.ObservationResult{}, nil
 	}
 	return child.GetObservation(ctx)
 }
@@ -92,8 +97,12 @@ func New(ctx context.Context, config *Config) (*MultiObservatory, error) {
 
 	for _, obs := range config.GetObservers() {
 		pingCfg := &burst.HealthPingConfig{
-			Destination: obs.GetProbeUrl(),
-			Interval:    obs.GetProbeInterval(),
+			Destination:   obs.GetProbeUrl(),
+			Interval:      obs.GetProbeInterval(),
+			Connectivity:  obs.GetConnectivity(),
+			SamplingCount: obs.GetSamplingCount(),
+			Timeout:       obs.GetTimeout(),
+			HttpMethod:    obs.GetHttpMethod(),
 		}
 		// Keep legacy 10s probing behavior when interval isn't configured.
 		if pingCfg.Interval == 0 {

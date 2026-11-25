@@ -64,6 +64,9 @@ func PinnedPeerCertSha256Hex(pin string) (string, error) {
 		}
 		out = append(out, hex.EncodeToString(raw))
 	}
+	if len(out) == 0 {
+		return "", fmt.Errorf("unrecognized peer certificate pin: %q", pin)
+	}
 	return strings.Join(out, ","), nil
 }
 
@@ -368,15 +371,10 @@ type TCPHeader struct {
 	Response HTTPResponse `json:"response"`
 }
 type KcpSettings struct {
-	Mtu              int       `json:"mtu"`
-	Tti              int       `json:"tti"`
-	UplinkCapacity   int       `json:"uplinkCapacity"`
-	DownlinkCapacity int       `json:"downlinkCapacity"`
-	Congestion       bool      `json:"congestion"`
-	ReadBufferSize   int       `json:"readBufferSize"`
-	WriteBufferSize  int       `json:"writeBufferSize"`
-	Header           KcpHeader `json:"header"`
-	Seed             string    `json:"seed,omitempty"`
+	Mtu              int `json:"mtu"`
+	Tti              int `json:"tti"`
+	UplinkCapacity   int `json:"uplinkCapacity"`
+	DownlinkCapacity int `json:"downlinkCapacity"`
 }
 type KcpHeader struct {
 	Type     string      `json:"type"`
@@ -485,13 +483,12 @@ type XHTTPSettings struct {
 
 // WireGuard 出站配置
 type WireGuardSettings struct {
-	SecretKey  string          `json:"secretKey"`
-	Address    []string        `json:"address"`
-	Workers    int             `json:"workers,omitempty"`
-	Mtu        int             `json:"mtu,omitempty"`
-	Reserved   []int           `json:"reserved,omitempty"`
-	Peers      []WireGuardPeer `json:"peers"`
-	KernelMode bool            `json:"kernelMode,omitempty"`
+	SecretKey   string          `json:"secretKey"`
+	Address     []string        `json:"address,omitempty"`
+	Mtu         int             `json:"mtu,omitempty"`
+	Reserved    []int           `json:"reserved,omitempty"`
+	Peers       []WireGuardPeer `json:"peers"`
+	NoKernelTun bool            `json:"noKernelTun,omitempty"`
 }
 
 type WireGuardPeer struct {

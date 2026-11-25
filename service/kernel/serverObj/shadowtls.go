@@ -55,9 +55,14 @@ func ParseShadowTLSURL(link string) (data *ShadowTLS, err error) {
 			password += ":" + pw
 		}
 	}
+	q := u.Query()
 	version := 3
-	if v := u.Query().Get("version"); v != "" {
-		if n, e := strconv.Atoi(v); e == nil && n > 0 {
+	if v := q.Get("version"); v != "" {
+		n, e := strconv.Atoi(v)
+		if e != nil || (n != 0 && n != 3) {
+			return nil, fmt.Errorf("shadowtls: unsupported version %q (only version 3 is supported)", v)
+		}
+		if n != 0 {
 			version = n
 		}
 	}
@@ -67,8 +72,8 @@ func ParseShadowTLSURL(link string) (data *ShadowTLS, err error) {
 		Port:     port,
 		Password: password,
 		Version:  version,
-		Sni:      u.Query().Get("sni"),
-		Insecure: u.Query().Get("insecure") == "1" || u.Query().Get("allowInsecure") == "1",
+		Sni:      q.Get("sni"),
+		Insecure: isQueryTruthy(q.Get("insecure")) || isQueryTruthy(q.Get("allowInsecure")),
 		Protocol: "shadowtls",
 		Link:     link,
 	}, nil
@@ -90,6 +95,9 @@ func (s *ShadowTLS) Configuration(info PriorInfo) (c Configuration, err error) {
 	version := s.Version
 	if version == 0 {
 		version = 3
+	}
+	if version != 3 {
+		return c, fmt.Errorf("shadowtls: unsupported version %d (only version 3 is supported)", version)
 	}
 	settingsJSON, err := json.Marshal(shadowtlsSettings{
 		Address:  net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
@@ -113,7 +121,7 @@ func (s *ShadowTLS) Configuration(info PriorInfo) (c Configuration, err error) {
 
 func (s *ShadowTLS) ExportToURL() string {
 	if s.Link != "" {
-		return s.Link
+		return updateLinkFragment(s.Link, s.Name)
 	}
 	u := url.URL{
 		Scheme:   "shadowtls",
@@ -163,4 +171,5 @@ func (s *ShadowTLS) GetName() string {
 
 func (s *ShadowTLS) SetName(name string) {
 	s.Name = name
+	s.Link = updateLinkFragment(s.Link, name)
 }

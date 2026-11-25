@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/v2rayA/v2rayA/kernel/coreObj"
 )
 
 func init() {
@@ -44,8 +46,14 @@ func ParseHttpURL(u string) (data *HTTP, err error) {
 	if err != nil {
 		return nil, ErrInvalidParameter
 	}
-	port, err := strconv.Atoi(t.Port())
-	if err != nil {
+	var port int
+	if t.Port() != "" {
+		port, err = strconv.Atoi(t.Port())
+		if err != nil || port < 0 || port > 65535 {
+			return nil, ErrInvalidParameter
+		}
+	}
+	if t.Hostname() == "" {
 		return nil, ErrInvalidParameter
 	}
 	data = &HTTP{
@@ -75,25 +83,48 @@ func ParseHttpURL(u string) (data *HTTP, err error) {
 }
 
 func (h *HTTP) Configuration(info PriorInfo) (c Configuration, err error) {
-	socks5 := url.URL{
-		Scheme: "socks5",
-		Host:   net.JoinHostPort("127.0.0.1", strconv.Itoa(info.PluginPort)),
+	// http/https proxy is natively supported by xray's "http" outbound.
+	servers := []coreObj.Server{
+		{Address: h.Server, Port: h.Port},
 	}
-	chain := []string{socks5.String(), h.ExportToURL()}
+	if h.Username != "" {
+		servers[0].Users = []coreObj.OutboundUser{
+			{User: h.Username, Pass: h.Password},
+		}
+	}
+	var streamSettings *coreObj.StreamSettings
+	if strings.EqualFold(h.Protocol, "https") {
+		streamSettings = &coreObj.StreamSettings{
+			Security: "tls",
+			TLSSettings: &coreObj.TLSSettings{
+				ServerName: h.Server,
+			},
+		}
+	}
 	return Configuration{
-		CoreOutbound: info.PluginObj(),
-		PluginChain:  strings.Join(chain, ","),
-		UDPSupport:   false,
+		CoreOutbound: coreObj.OutboundObject{
+			Tag:      info.Tag,
+			Protocol: "http",
+			Settings: coreObj.Settings{
+				Servers: servers,
+			},
+			StreamSettings: streamSettings,
+		},
+		UDPSupport: false,
 	}, nil
 }
 
 func (h *HTTP) ExportToURL() string {
 	var user *url.Userinfo
-	if h.Username != "" && h.Password != "" {
-		user = url.UserPassword(h.Username, h.Password)
+	if h.Username != "" {
+		if h.Password != "" {
+			user = url.UserPassword(h.Username, h.Password)
+		} else {
+			user = url.User(h.Username)
+		}
 	}
 	u := &url.URL{
-		Scheme:   h.Protocol,
+		Scheme:   strings.TrimSuffix(h.Protocol, "-proxy") + "-proxy",
 		User:     user,
 		Host:     net.JoinHostPort(h.Server, strconv.Itoa(h.Port)),
 		Fragment: h.Name,
@@ -102,7 +133,7 @@ func (h *HTTP) ExportToURL() string {
 }
 
 func (h *HTTP) NeedPluginPort() bool {
-	return true
+	return false
 }
 
 func (h *HTTP) ProtoToShow() string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -22,8 +23,16 @@ type DnsHandler struct {
 func (h *DnsHandler) prefetchAsync(ctx context.Context, upstream *UpstreamInstance,
 	upstreamMgr *UpstreamManager, query *DnsQuery, key CacheKey) {
 
+	if h.module == nil {
+		return
+	}
+	cache := h.module.GetCache()
+	if cache == nil {
+		return
+	}
+
 	if upstream == nil || upstreamMgr == nil {
-		h.module.cache.SetPrefetching(key, false)
+		cache.SetPrefetching(key, false)
 		return
 	}
 
@@ -35,22 +44,49 @@ func (h *DnsHandler) prefetchAsync(ctx context.Context, upstream *UpstreamInstan
 	dnsLogf("[dns] prefetch: %s %s via %s (tag=%s)",
 		dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr, upstream.ProxyTag)
 
-	resp, err := upstreamMgr.Exchange(upstream, query)
+	timeout := h.timeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	prefetchCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	resp, err := upstreamMgr.ExchangeContext(prefetchCtx, upstream, query)
 	if err != nil {
 		log.Printf("[dns] prefetch error for %s %s: %v",
 			dns.Type(uint16(query.QType)).String(), query.Name, err)
-		h.module.cache.RecordPrefetchFailure(key)
+		cache.RecordPrefetchFailure(key)
 		return
 	}
 
 	if resp == nil {
-		h.module.cache.RecordPrefetchFailure(key)
+		cache.RecordPrefetchFailure(key)
+		return
+	}
+
+	// If the refreshed response is negative (NXDOMAIN/SERVFAIL/REFUSED/etc.),
+	// never call RecordPrefetchSuccess on an un-updated expiring entry (which
+	// would reset PrefetchFailCount=0 and cause an immediate prefetch storm).
+	if resp.Rcode != dns.RcodeSuccess {
+		if !cache.NegativeCacheEnabled() {
+			if resp.Rcode == dns.RcodeNameError {
+				cache.Remove(key)
+			} else {
+				cache.RecordPrefetchFailure(key)
+			}
+			return
+		}
+		cache.Set(key, resp, resp.TTL)
+		cache.RecordPrefetchFailure(key)
 		return
 	}
 
 	// 预取成功，更新缓存
-	h.module.cache.Set(key, resp, resp.TTL)
-	h.module.cache.RecordPrefetchSuccess(key)
+	cache.Set(key, resp, resp.TTL)
+	cache.RecordPrefetchSuccess(key)
 
 	dnsLogf("[dns] prefetch completed: %s %s via %s",
 		dns.Type(uint16(query.QType)).String(), query.Name, upstream.Addr)
@@ -71,13 +107,52 @@ func buildCacheKey(query *DnsQuery, upstream *UpstreamInstance) CacheKey {
 			upstreamAddr += "|fallback:" + upstream.ID + ":" + strings.Join(upstream.Fallback, ",")
 		}
 	}
+	qclass := query.QClass
+	if qclass == 0 {
+		qclass = dns.ClassINET
+	}
+	var clientSubnet netip.Prefix
+	if !isProxiedUpstream(upstream) {
+		clientSubnet = upstreamClientSubnet(query.ClientIP)
+	}
 	return CacheKey{
-		ClientSubnet: upstreamClientSubnet(query.ClientIP),
+		ClientSubnet: clientSubnet,
 		UpstreamAddr: upstreamAddr,
 		ProxyTag:     proxyTag,
-		Name:         query.Name,
+		Name:         normalizeDomain(query.Name),
 		QType:        query.QType,
+		QClass:       qclass,
+		DNSSECOK:     query.DNSSECOK,
 	}
+}
+
+func lookupUpstream(mgr *UpstreamManager, u UpstreamConfig) *UpstreamInstance {
+	if mgr == nil {
+		return nil
+	}
+	if u.ID != "" {
+		if inst, ok := mgr.GetUpstream(u.ID); ok && inst != nil {
+			return inst
+		}
+	}
+	if u.Addr != "" {
+		if inst, ok := mgr.GetUpstream(u.Addr); ok && inst != nil {
+			return inst
+		}
+	}
+	return nil
+}
+
+func upstreamMetricKey(upstream *UpstreamInstance, fallbackID string) string {
+	if upstream != nil {
+		if upstream.ID != "" {
+			return upstream.ID
+		}
+		if upstream.Addr != "" {
+			return upstream.Addr
+		}
+	}
+	return fallbackID
 }
 
 // NewDnsHandler creates a new DnsHandler with the given timeout and module reference.
@@ -146,11 +221,67 @@ func (h *DnsHandler) HandleQuery(ctx context.Context, query *DnsQuery) (*DnsResp
 		return h.handleReject(query, module, result)
 
 	case "bypass":
-		return h.handleBypass(query, module, result, upstreamMgr)
+		return h.handleBypass(ctx, query, module, result, upstreamMgr)
 
 	default: // "route"
-		return h.handleRoute(ctx, query, module, result, upstreamMgr)
+		return h.handleRoute(ctx, query, module, result, router, upstreamMgr)
 	}
+}
+
+func (h *DnsHandler) selectFallbackUpstream(module *DnsModule, router *Router, upstreamMgr *UpstreamManager, excludeID string) *UpstreamInstance {
+	if upstreamMgr == nil {
+		return nil
+	}
+
+	// 1. Prefer the router/config default upstream.
+	defaultID := ""
+	if router != nil {
+		defaultID = router.DefaultUpstream()
+	}
+	if defaultID == "" && module != nil {
+		defaultID = resolveDefaultUpstream(module.Config())
+	}
+	if defaultID != "" && defaultID != excludeID {
+		if u, ok := upstreamMgr.GetUpstream(defaultID); ok && u != nil {
+			return u
+		}
+	}
+
+	var cfgUpstreams []UpstreamConfig
+	if module != nil && module.Config() != nil {
+		cfgUpstreams = module.Config().Upstreams
+	}
+
+	// 2. Scan configured non-bootstrap upstreams (preferring last, matching default convention),
+	// skipping any entries whose GetUpstream lookup returns nil.
+	for i := len(cfgUpstreams) - 1; i >= 0; i-- {
+		if cfgUpstreams[i].Bootstrap {
+			continue
+		}
+		if inst := lookupUpstream(upstreamMgr, cfgUpstreams[i]); inst != nil && inst.ID != excludeID {
+			return inst
+		}
+	}
+
+	// 3. Scan any configured upstream, skipping nil lookup results.
+	for _, u := range cfgUpstreams {
+		if inst := lookupUpstream(upstreamMgr, u); inst != nil && inst.ID != excludeID {
+			return inst
+		}
+	}
+
+	// 4. Final fallback: any upstream registered directly in UpstreamManager.
+	for _, inst := range upstreamMgr.ListUpstreams() {
+		if inst != nil && !inst.Bootstrap && inst.ID != excludeID {
+			return inst
+		}
+	}
+	for _, inst := range upstreamMgr.ListUpstreams() {
+		if inst != nil && inst.ID != excludeID {
+			return inst
+		}
+	}
+	return nil
 }
 
 // handleRoute sends the query to the matched upstream server.
@@ -159,9 +290,9 @@ func (h *DnsHandler) HandleQuery(ctx context.Context, query *DnsQuery) (*DnsResp
 //  1. Route the query to determine upstream + proxy channel.
 //  2. Build full CacheKey (with upstream + proxy tag).
 //  3. Check cache. If hit: return cached response, optionally trigger prefetch.
-//  4. If miss: send query to upstream, store result in cache, return response.
+//  4. If miss: send query to upstream, apply post-response IP checks, store result in cache, return response.
 func (h *DnsHandler) handleRoute(ctx context.Context, query *DnsQuery, module *DnsModule,
-	result *RouteResult, upstreamMgr *UpstreamManager) (*DnsResponse, error) {
+	result *RouteResult, router *Router, upstreamMgr *UpstreamManager) (*DnsResponse, error) {
 
 	upstreamID := result.UpstreamID
 	var upstream *UpstreamInstance
@@ -169,31 +300,15 @@ func (h *DnsHandler) handleRoute(ctx context.Context, query *DnsQuery, module *D
 	if upstreamMgr != nil && upstreamID != "" {
 		var ok bool
 		upstream, ok = upstreamMgr.GetUpstream(upstreamID)
-		if !ok {
+		if !ok || upstream == nil {
 			log.Printf("[dns] upstream %q not found, using default", upstreamID)
+			upstream = nil
 		}
 	}
 
-	// If no upstream found, or no router matched, use first available upstream.
+	// If no upstream found, prefer defaultUpstream and skip nil GetUpstream results.
 	if upstream == nil && upstreamMgr != nil {
-		// Try to find a non-bootstrap upstream.
-		for _, u := range module.config.Upstreams {
-			if !u.Bootstrap {
-				upstream, _ = upstreamMgr.GetUpstream(u.ID)
-				if upstream == nil {
-					upstream, _ = upstreamMgr.GetUpstream(u.Addr)
-				}
-				break
-			}
-		}
-		// Fallback: use any upstream.
-		if upstream == nil && len(module.config.Upstreams) > 0 {
-			u := module.config.Upstreams[0]
-			upstream, _ = upstreamMgr.GetUpstream(u.ID)
-			if upstream == nil {
-				upstream, _ = upstreamMgr.GetUpstream(u.Addr)
-			}
-		}
+		upstream = h.selectFallbackUpstream(module, router, upstreamMgr, "")
 	}
 
 	if upstream == nil || upstreamMgr == nil {
@@ -201,12 +316,14 @@ func (h *DnsHandler) handleRoute(ctx context.Context, query *DnsQuery, module *D
 		return h.buildStubResponse(query), nil
 	}
 
+	metricKey := upstreamMetricKey(upstream, upstreamID)
+
 	// Build full CacheKey after routing (upstream + proxy tag known).
 	cacheKey := buildCacheKey(query, upstream)
 
 	// Record route metrics.
 	if module.metrics != nil {
-		module.metrics.RecordQuery(query, upstreamID)
+		module.metrics.RecordQuery(query, metricKey)
 		module.metrics.RecordAction("route")
 		if result.RuleID != "" {
 			module.metrics.RecordRuleHit(result.RuleID)
@@ -223,14 +340,12 @@ func (h *DnsHandler) handleRoute(ctx context.Context, query *DnsQuery, module *D
 		ruleInfo = fmt.Sprintf(" rule(%s)", result.RuleID)
 	}
 	dnsLogf("[dns] route: %s %s → %s(%s)%s action(route)",
-		QTypeToString(query.QType), query.Name, upstreamID, proxyInfo, ruleInfo)
+		QTypeToString(query.QType), query.Name, metricKey, proxyInfo, ruleInfo)
 
 	// Check cache (if enabled).
-	cache := module.cache
+	cache := module.GetCache()
 	if cache != nil {
 		if cached, ok := cache.Get(cacheKey); ok {
-			// Log cache hit.
-			_ = cached // DnsResponse, used below
 			dnsLogf("[dns] cache-hit: %s %s",
 				QTypeToString(query.QType), query.Name)
 
@@ -244,10 +359,13 @@ func (h *DnsHandler) handleRoute(ctx context.Context, query *DnsQuery, module *D
 				module.metrics.RecordCacheHit()
 			}
 
-			// Check if prefetch is needed (async refresh).
-			if cache.ShouldPrefetch(cacheKey) {
-				cache.SetPrefetching(cacheKey, true)
-				module.wg.Go(func() { h.prefetchAsync(ctx, upstream, upstreamMgr, query, cacheKey) })
+			// Atomically check & claim prefetch slot (eliminating TOCTOU race).
+			// Use module lifecycle context so client request completion doesn't cancel prefetch.
+			if cache.TryStartPrefetch(cacheKey) {
+				prefetchQuery := *query
+				module.wg.Go(func() {
+					h.prefetchAsync(module.lifecycleCtx(), upstream, upstreamMgr, &prefetchQuery, cacheKey)
+				})
 			}
 
 			return cached, nil
@@ -269,7 +387,7 @@ func (h *DnsHandler) handleRoute(ctx context.Context, query *DnsQuery, module *D
 
 	// Send query to upstream (cache miss or cache disabled).
 	start := time.Now()
-	resp, err := upstreamMgr.Exchange(upstream, query)
+	resp, err := upstreamMgr.ExchangeContext(ctx, upstream, query)
 	rtt := time.Since(start)
 
 	if err != nil {
@@ -277,12 +395,12 @@ func (h *DnsHandler) handleRoute(ctx context.Context, query *DnsQuery, module *D
 
 		// Track error in stats.
 		module.stats.mu.Lock()
-		module.stats.RoutedQueries[upstreamID]++
+		module.stats.RoutedQueries[metricKey]++
 		module.stats.mu.Unlock()
 
 		// Track error in metrics.
 		if module.metrics != nil {
-			module.metrics.RecordError(upstreamID, err)
+			module.metrics.RecordError(metricKey, err)
 		}
 
 		return nil, fmt.Errorf("dns handler: upstream error: %w", err)
@@ -291,6 +409,32 @@ func (h *DnsHandler) handleRoute(ctx context.Context, query *DnsQuery, module *D
 	if resp == nil {
 		log.Printf("[dns] empty response for %s %s", QTypeToString(query.QType), query.Name)
 		return h.buildStubResponse(query), nil
+	}
+
+	// Post-response IP verification (ExpectedIPs): if the rule specified expected
+	// response IP CIDRs and the answer contains A/AAAA records outside those CIDRs,
+	// fall back to the default upstream.
+	if len(result.ExpectedIPs) > 0 && responseHasAddressRecords(resp) && !matchAnyIPResponse(result.ExpectedIPs, resp) {
+		if fallback := h.selectFallbackUpstream(module, router, upstreamMgr, upstream.ID); fallback != nil {
+			dnsLogf("[dns] response IP mismatch for %s via %s (rule=%s), falling back to %s",
+				query.Name, metricKey, result.RuleID, fallback.ID)
+			fbStart := time.Now()
+			if fbResp, fbErr := upstreamMgr.ExchangeContext(ctx, fallback, query); fbErr == nil && fbResp != nil {
+				resp = fbResp
+				rtt = time.Since(fbStart)
+				proxyInfo = fallback.ProxyTag
+				if proxyInfo == "" {
+					proxyInfo = "direct"
+				}
+			}
+		}
+	}
+
+	// Post-response IP reject rules (IPRule with action=reject).
+	if router != nil {
+		if postReject := router.MatchResponse(query, resp); postReject != nil && postReject.Action == "reject" {
+			return h.handleReject(query, module, postReject)
+		}
 	}
 
 	// Log successful upstream response.
@@ -304,13 +448,13 @@ func (h *DnsHandler) handleRoute(ctx context.Context, query *DnsQuery, module *D
 
 	// Track statistics.
 	module.stats.mu.Lock()
-	module.stats.RoutedQueries[upstreamID]++
+	module.stats.RoutedQueries[metricKey]++
 	module.stats.AvgRTT = updateAvgRTT(module.stats.AvgRTT, rtt, module.stats.TotalQueries)
 	module.stats.mu.Unlock()
 
-	// Record response metrics.
+	// Record response metrics under the same unified upstream key as RecordQuery.
 	if module.metrics != nil {
-		module.metrics.RecordResponse(resp, rtt)
+		module.metrics.RecordResponseForUpstream(metricKey, resp, rtt)
 	}
 
 	return resp, nil
@@ -338,7 +482,7 @@ func (h *DnsHandler) handleReject(query *DnsQuery, module *DnsModule, result *Ro
 }
 
 // handleBypass handles bypass queries — sends directly without proxy routing.
-func (h *DnsHandler) handleBypass(query *DnsQuery, module *DnsModule, result *RouteResult,
+func (h *DnsHandler) handleBypass(ctx context.Context, query *DnsQuery, module *DnsModule, result *RouteResult,
 	upstreamMgr *UpstreamManager) (*DnsResponse, error) {
 
 	dnsLogf("[dns] bypass: %s %s (rule=%s)", QTypeToString(query.QType), query.Name, result.RuleID)
@@ -348,21 +492,68 @@ func (h *DnsHandler) handleBypass(query *DnsQuery, module *DnsModule, result *Ro
 	module.stats.BypassedQueries++
 	module.stats.mu.Unlock()
 
-	// For bypass, we still need an upstream. Find a direct upstream.
+	// For bypass, select a direct upstream or clone the chosen upstream as direct
+	// so action="bypass" genuinely bypasses proxy routing.
 	var upstream *UpstreamInstance
 	if upstreamMgr != nil {
-		upstreamID := result.UpstreamID
-		if upstreamID != "" {
-			upstream, _ = upstreamMgr.GetUpstream(upstreamID)
+		if result.UpstreamID != "" {
+			if u, ok := upstreamMgr.GetUpstream(result.UpstreamID); ok && u != nil {
+				upstream = u
+			}
 		}
-		// If no specific upstream for bypass, use first non-bootstrap upstream.
+
+		var cfgUpstreams []UpstreamConfig
+		if module != nil && module.Config() != nil {
+			cfgUpstreams = module.Config().Upstreams
+		}
+
+		// Prefer a direct non-bootstrap upstream if none was explicitly specified.
 		if upstream == nil {
-			for _, u := range module.config.Upstreams {
-				if !u.Bootstrap {
-					upstream, _ = upstreamMgr.GetUpstream(u.ID)
-					if upstream == nil {
-						upstream, _ = upstreamMgr.GetUpstream(u.Addr)
-					}
+			for _, u := range cfgUpstreams {
+				if u.Bootstrap || (u.ProxyTag != "" && u.ProxyTag != "direct") {
+					continue
+				}
+				if inst := lookupUpstream(upstreamMgr, u); inst != nil {
+					upstream = inst
+					break
+				}
+			}
+		}
+
+		// Next fall back to any available non-bootstrap upstream (will be cloned as direct).
+		if upstream == nil {
+			for _, u := range cfgUpstreams {
+				if u.Bootstrap {
+					continue
+				}
+				if inst := lookupUpstream(upstreamMgr, u); inst != nil {
+					upstream = inst
+					break
+				}
+			}
+		}
+
+		// Final fallback: any available upstream in config or manager.
+		if upstream == nil {
+			for _, u := range cfgUpstreams {
+				if inst := lookupUpstream(upstreamMgr, u); inst != nil {
+					upstream = inst
+					break
+				}
+			}
+		}
+		if upstream == nil {
+			for _, inst := range upstreamMgr.ListUpstreams() {
+				if inst != nil && !isProxiedUpstream(inst) {
+					upstream = inst
+					break
+				}
+			}
+		}
+		if upstream == nil {
+			for _, inst := range upstreamMgr.ListUpstreams() {
+				if inst != nil {
+					upstream = inst
 					break
 				}
 			}
@@ -373,9 +564,18 @@ func (h *DnsHandler) handleBypass(query *DnsQuery, module *DnsModule, result *Ro
 		return h.buildStubResponse(query), nil
 	}
 
+	// Ensure bypass truly uses a direct path even if the selected upstream has a proxy tag.
+	if isProxiedUpstream(upstream) {
+		directCopy := *upstream
+		directCopy.ProxyTag = "direct"
+		upstream = &directCopy
+	}
+
+	metricKey := upstreamMetricKey(upstream, result.UpstreamID)
+
 	// Record bypass metrics.
 	if module.metrics != nil {
-		module.metrics.RecordQuery(query, result.UpstreamID)
+		module.metrics.RecordQuery(query, metricKey)
 		module.metrics.RecordAction("bypass")
 		if result.RuleID != "" {
 			module.metrics.RecordRuleHit(result.RuleID)
@@ -383,13 +583,13 @@ func (h *DnsHandler) handleBypass(query *DnsQuery, module *DnsModule, result *Ro
 	}
 
 	start := time.Now()
-	resp, err := upstreamMgr.Exchange(upstream, query)
+	resp, err := upstreamMgr.ExchangeContext(ctx, upstream, query)
 	rtt := time.Since(start)
 
 	if err != nil {
 		log.Printf("[dns] error: %s %s: %v", upstream.Addr, query.Name, err)
 		if module.metrics != nil {
-			module.metrics.RecordError(result.UpstreamID, err)
+			module.metrics.RecordError(metricKey, err)
 		}
 		return nil, fmt.Errorf("dns handler: bypass upstream error: %w", err)
 	}
@@ -399,17 +599,17 @@ func (h *DnsHandler) handleBypass(query *DnsQuery, module *DnsModule, result *Ro
 	}
 
 	// Log successful bypass response.
-	dnsLogf("[dns] upstream: %s:53 direct (rtt=%dms)",
+	dnsLogf("[dns] upstream: %s direct (rtt=%dms)",
 		upstream.Addr, rtt.Milliseconds())
 
 	module.stats.mu.Lock()
-	module.stats.RoutedQueries[upstream.ID]++
+	module.stats.RoutedQueries[metricKey]++
 	module.stats.AvgRTT = updateAvgRTT(module.stats.AvgRTT, rtt, module.stats.TotalQueries)
 	module.stats.mu.Unlock()
 
-	// Record response metrics.
+	// Record response metrics under the same unified upstream key.
 	if module.metrics != nil {
-		module.metrics.RecordResponse(resp, rtt)
+		module.metrics.RecordResponseForUpstream(metricKey, resp, rtt)
 	}
 
 	return resp, nil
@@ -434,8 +634,13 @@ func (h *DnsHandler) buildStubResponse(query *DnsQuery) *DnsResponse {
 		Cached:   false,
 	}
 
+	qclass := query.QClass
+	if qclass == 0 {
+		qclass = dns.ClassINET
+	}
 	m := new(dns.Msg)
-	m.SetQuestion(query.Name, uint16(query.QType))
+	m.SetQuestion(dns.Fqdn(query.Name), uint16(query.QType))
+	m.Question[0].Qclass = qclass
 	m.Response = true
 	m.RecursionAvailable = true
 	m.Rcode = dns.RcodeSuccess
@@ -446,8 +651,13 @@ func (h *DnsHandler) buildStubResponse(query *DnsQuery) *DnsResponse {
 
 // buildRefused creates a REFUSED DNS response.
 func (h *DnsHandler) buildRefused(query *DnsQuery) *DnsResponse {
+	qclass := query.QClass
+	if qclass == 0 {
+		qclass = dns.ClassINET
+	}
 	m := new(dns.Msg)
-	m.SetQuestion(query.Name, uint16(query.QType))
+	m.SetQuestion(dns.Fqdn(query.Name), uint16(query.QType))
+	m.Question[0].Qclass = qclass
 	m.Response = true
 	m.Rcode = dns.RcodeRefused
 

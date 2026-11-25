@@ -1,3 +1,4 @@
+html.theme-dark,
 body.theme-dark {
   /* Unified v2rayA Design Tokens — Style A (Precision Dashboard Dark) */
   --va-bg: #0e1118;
@@ -96,8 +97,15 @@ body.theme-dark {
   --node-msg-danger-bg: #3d1c24;
   --node-msg-danger-border: #f87171;
   --node-msg-on-color: #edf1f8;
+}
 
+html.theme-dark {
   background-color: var(--va-bg);
+  color: var(--va-text);
+}
+
+body.theme-dark {
+  background-color: transparent;
   color: var(--va-text);
 
   #app,

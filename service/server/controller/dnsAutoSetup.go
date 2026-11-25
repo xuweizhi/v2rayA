@@ -1,11 +1,8 @@
 package controller
 
 import (
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/v2rayA/v2rayA/common"
-	"github.com/v2rayA/v2rayA/db/configure"
-	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/server/service"
 )
 
@@ -22,23 +19,18 @@ func PostDnsAutoSetup(ctx *gin.Context) {
 	updatingMu.Unlock()
 	defer func() { updatingMu.Lock(); updating = false; updatingMu.Unlock() }()
 
-	old := configure.GetDnsRulesNotNil()
-	result, err := service.DnsAutoSetup(ctx.Query("outbound"))
+	var result service.DnsAutoSetupResult
+	err := service.WithMembershipLock(func() error {
+		var err error
+		result, err = service.DnsAutoSetup(ctx.Query("outbound"))
+		if err != nil || ctx.Query("preview") == "true" {
+			return err
+		}
+		return applyDNSRules(result.Rules)
+	})
 	if err != nil {
 		common.ResponseError(ctx, logError(err))
 		return
-	}
-	if v2ray.ProcessManager.Running() {
-		if err := v2ray.UpdateV2RayConfig(); err != nil {
-			_ = configure.SetDnsRules(old)
-			if !v2ray.ProcessManager.Running() {
-				if restoreErr := v2ray.UpdateV2RayConfig(); restoreErr != nil {
-					err = fmt.Errorf("%w; restoring previous core failed: %v", err, restoreErr)
-				}
-			}
-			common.ResponseError(ctx, err)
-			return
-		}
 	}
 	common.ResponseSuccess(ctx, gin.H{
 		"dnsAutoSetup": result,

@@ -4,7 +4,6 @@ import (
 	"net"
 	"os/exec"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"github.com/v2rayA/v2rayA/common"
@@ -16,8 +15,10 @@ import (
 )
 
 func IPNet2CIDR(ipnet *net.IPNet) string {
-	ones, _ := ipnet.Mask.Size()
-	return ipnet.IP.String() + "/" + strconv.Itoa(ones)
+	return (&net.IPNet{
+		IP:   ipnet.IP.Mask(ipnet.Mask),
+		Mask: ipnet.Mask,
+	}).String()
 }
 
 func GetLocalCIDR() ([]string, error) {
@@ -136,10 +137,14 @@ func GetWhiteListIPs() ([]string, []string) {
 		ipv6List = append(ipv6List, ipv6s...)
 	}
 	for _, v := range dataModal.CustomIps {
-		if strings.Contains(v, ":") {
-			ipv6List = append(ipv6List, v)
+		prefix, err := configure.ParseWhitelistNetwork(v)
+		if err != nil {
+			continue
+		}
+		if prefix.Addr().Is4() {
+			ipv4List = append(ipv4List, prefix.String())
 		} else {
-			ipv4List = append(ipv4List, v)
+			ipv6List = append(ipv6List, prefix.String())
 		}
 	}
 	return ipv4List, ipv6List
@@ -159,7 +164,7 @@ func GetExcludedInterfaces() []string {
 	var res []string
 	for _, v := range ifs {
 		v = strings.TrimSpace(v)
-		if v != "" {
+		if v != "" && !strings.ContainsAny(v, "\r\n\x00") {
 			res = append(res, v)
 		}
 	}

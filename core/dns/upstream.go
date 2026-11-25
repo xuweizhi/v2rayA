@@ -1,8 +1,10 @@
 package dns
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,17 +12,42 @@ import (
 )
 
 // BuildUpstreamKey builds a composite key for an upstream instance,
-// combining the address and proxy channel tag.
-// This ensures that the same DNS server queried through different
-// proxy channels is treated as separate instances.
+// combining address, proxy channel tag, and optional protocol / fallback
+// signature so different protocols or fallback chains sharing (addr, proxyTag)
+// never collide.
 //
-// Examples:
+// Default UDP instances without fallbacks retain the canonical "addr|proxyTag"
+// format for backward compatibility:
 //
-//	BuildUpstreamKey("8.8.8.8:53", "")       → "8.8.8.8:53|"
-//	BuildUpstreamKey("8.8.8.8:53", "direct") → "8.8.8.8:53|direct"
-//	BuildUpstreamKey("8.8.8.8:53", "proxy")  → "8.8.8.8:53|proxy"
-func BuildUpstreamKey(addr, proxyTag string) string {
-	return fmt.Sprintf("%s|%s", addr, proxyTag)
+//	BuildUpstreamKey("8.8.8.8:53", "")                  → "8.8.8.8:53|"
+//	BuildUpstreamKey("8.8.8.8:53", "direct")            → "8.8.8.8:53|direct"
+//	BuildUpstreamKey("8.8.8.8:53", "proxy")             → "8.8.8.8:53|proxy"
+//	BuildUpstreamKey("8.8.8.8:53", "direct", "tcp")     → "8.8.8.8:53|direct|tcp"
+//	BuildUpstreamKey("8.8.8.8:53", "direct", "udp", "b") → "8.8.8.8:53|direct|udp|fallback:b"
+func BuildUpstreamKey(addr, proxyTag string, extra ...string) string {
+	protocol := ""
+	if len(extra) > 0 {
+		protocol = strings.ToLower(strings.TrimSpace(extra[0]))
+	}
+	var fallbacks []string
+	if len(extra) > 1 {
+		for _, fb := range extra[1:] {
+			if fb != "" {
+				fallbacks = append(fallbacks, fb)
+			}
+		}
+	}
+	base := fmt.Sprintf("%s|%s", addr, proxyTag)
+	if len(fallbacks) > 0 {
+		if protocol == "" {
+			protocol = "udp"
+		}
+		return fmt.Sprintf("%s|%s|fallback:%s", base, protocol, strings.Join(fallbacks, ","))
+	}
+	if protocol != "" && protocol != "udp" {
+		return fmt.Sprintf("%s|%s", base, protocol)
+	}
+	return base
 }
 
 // UpstreamInstance represents a single DNS upstream server instance.
@@ -32,7 +59,7 @@ type UpstreamInstance struct {
 	ID string
 	// Addr is the upstream server address (e.g., "8.8.8.8:53").
 	Addr string
-	// Protocol is the transport protocol: udp, tcp, dot, doh.
+	// Protocol is the transport protocol: udp, tcp, dot, doh, quic.
 	Protocol string
 	// ProxyTag is the proxy channel tag for routing.
 	ProxyTag string
@@ -46,7 +73,10 @@ type UpstreamInstance struct {
 
 // CompositeKey returns the composite key for this instance.
 func (u *UpstreamInstance) CompositeKey() string {
-	return BuildUpstreamKey(u.Addr, u.ProxyTag)
+	args := make([]string, 0, 1+len(u.Fallback))
+	args = append(args, u.Protocol)
+	args = append(args, u.Fallback...)
+	return BuildUpstreamKey(u.Addr, u.ProxyTag, args...)
 }
 
 // UpstreamManager manages a collection of DNS upstream servers.
@@ -78,9 +108,9 @@ func NewUpstreamManager(configs []UpstreamConfig) *UpstreamManager {
 			id = cfg.Addr
 		}
 
-		net := cfg.Protocol
-		if net == "" {
-			net = "udp"
+		netProto := strings.ToLower(strings.TrimSpace(cfg.Protocol))
+		if netProto == "" {
+			netProto = "udp"
 		}
 
 		proxyTag := cfg.ProxyTag
@@ -88,16 +118,21 @@ func NewUpstreamManager(configs []UpstreamConfig) *UpstreamManager {
 			proxyTag = "direct"
 		}
 
+		clientNet := netProto
+		if isEncryptedDNS(netProto) {
+			clientNet = "tcp"
+		}
+
 		instance := &UpstreamInstance{
 			ID:          id,
 			DialAddress: cfg.DialAddress,
 			Fallback:    cfg.Fallback,
 			Addr:        cfg.Addr,
-			Protocol:    net,
+			Protocol:    netProto,
 			ProxyTag:    proxyTag,
 			Healthy:     true,
 			Bootstrap:   cfg.Bootstrap,
-			Client:      newMarkedDnsClient(net),
+			Client:      newMarkedDnsClient(clientNet),
 		}
 
 		compositeKey := instance.CompositeKey()
@@ -148,7 +183,15 @@ func (m *UpstreamManager) GetOrCreateUpstream(config UpstreamConfig) *UpstreamIn
 		proxyTag = "direct"
 	}
 
-	compositeKey := BuildUpstreamKey(config.Addr, proxyTag)
+	netProto := strings.ToLower(strings.TrimSpace(config.Protocol))
+	if netProto == "" {
+		netProto = "udp"
+	}
+
+	keyArgs := make([]string, 0, 1+len(config.Fallback))
+	keyArgs = append(keyArgs, netProto)
+	keyArgs = append(keyArgs, config.Fallback...)
+	compositeKey := BuildUpstreamKey(config.Addr, proxyTag, keyArgs...)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -164,9 +207,9 @@ func (m *UpstreamManager) GetOrCreateUpstream(config UpstreamConfig) *UpstreamIn
 		id = config.Addr
 	}
 
-	net := config.Protocol
-	if net == "" {
-		net = "udp"
+	clientNet := netProto
+	if isEncryptedDNS(netProto) {
+		clientNet = "tcp"
 	}
 
 	instance := &UpstreamInstance{
@@ -174,11 +217,11 @@ func (m *UpstreamManager) GetOrCreateUpstream(config UpstreamConfig) *UpstreamIn
 		DialAddress: config.DialAddress,
 		Fallback:    config.Fallback,
 		Addr:        config.Addr,
-		Protocol:    net,
+		Protocol:    netProto,
 		ProxyTag:    proxyTag,
 		Healthy:     true,
 		Bootstrap:   config.Bootstrap,
-		Client:      newMarkedDnsClient(net),
+		Client:      newMarkedDnsClient(clientNet),
 	}
 
 	m.upstreams[compositeKey] = instance
@@ -232,8 +275,10 @@ func (m *UpstreamManager) healthCheck(proxyTag string) map[string]bool {
 }
 
 func (m *UpstreamManager) pingUpstream(upstream *UpstreamInstance) bool {
-	// Probe the configured transport and route, including DoH/DoT and proxies.
-	response, err := m.exchangeOne(upstream, &DnsQuery{Name: ".", QType: QueryType(dns.TypeSOA)})
+	// Probe the configured transport and route, including DoH/DoT/DoQ and proxies.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	response, err := m.exchangeOne(ctx, upstream, &DnsQuery{Name: ".", QType: QueryType(dns.TypeSOA)})
 	return err == nil && response != nil && response.Rcode == dns.RcodeSuccess
 }
 

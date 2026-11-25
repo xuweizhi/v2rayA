@@ -2,12 +2,15 @@ import CONST from "./const.js";
 import URI from "urijs";
 
 function _locateServer(touch, whichServer) {
+  if (!touch || !whichServer) {
+    return null;
+  }
   let ind = whichServer.id - 1;
   let sub = whichServer.sub;
   if (whichServer._type === CONST.ServerType) {
-    return touch.servers[ind];
+    return touch.servers?.[ind] || null;
   } else if (whichServer._type === CONST.SubscriptionServerType) {
-    return touch.subscriptions[sub].servers[ind];
+    return touch.subscriptions?.[sub]?.servers?.[ind] || null;
   }
   return null;
 }
@@ -70,70 +73,31 @@ myURL.protocol; // = 'http'
 myURL.source;   // = 'http://user:pass@abc.com:8080/dir/index.html?id=255&m=hello#top'
 */
 function parseURL(u) {
-  let url = u;
-  let protocol = "";
-  let fakeProto = false;
-  if (url.indexOf("://") === -1) {
-    url = "http://" + url;
-  } else {
-    protocol = url.substr(0, url.indexOf("://"));
-    switch (protocol) {
-      case "http":
-      case "https":
-      case "ws":
-      case "wss":
-        break;
-      default:
-        url = "http" + url.substr(url.indexOf("://"));
-        fakeProto = true;
-    }
+  const source = u.includes("://") || u.startsWith("/") ? u : "http://" + u;
+  const a = new URL(source, window.location.origin);
+  const protocol = a.protocol.slice(0, -1);
+  const defaultPort = ["https", "https-proxy", "wss", "hy2", "hysteria2"].includes(protocol) ? 443 : 80;
+  const params = Object.create(null);
+  for (const [key, value] of a.searchParams) {
+    if (params[key] === undefined) params[key] = value;
+    else if (Array.isArray(params[key])) params[key].push(value);
+    else params[key] = [params[key], value];
   }
-  const a = document.createElement("a");
-  a.href = url;
   const r = {
     source: u,
     username: a.username,
     password: a.password,
-    protocol: fakeProto ? protocol : a.protocol.replace(":", ""),
+    protocol,
     host: a.hostname,
-    port: a.port
-      ? parseInt(a.port)
-      : protocol === "https" || protocol === "wss"
-      ? 443
-      : 80,
+    port: a.port ? Number(a.port) : defaultPort,
     query: a.search,
-    params: (function () {
-      var ret = {},
-        seg = a.search.replace(/^\?/, "").split("&"),
-        len = seg.length,
-        i = 0,
-        s;
-      for (; i < len; i++) {
-        if (!seg[i]) {
-          continue;
-        }
-        s = seg[i].split("=");
-        let key = s[0];
-        let val = decodeURIComponent(s[1]);
-        if (ret[key]) {
-          if (Array.isArray(ret[key])) {
-            ret[key].push(val);
-          } else {
-            ret[key] = [ret[key], val];
-          }
-        } else {
-          ret[key] = val;
-        }
-      }
-      return ret;
-    })(),
+    params,
     file: (a.pathname.match(/\/([^/?#]+)$/i) || [null, ""])[1],
     hash: a.hash.replace("#", ""),
     path: a.pathname.replace(/^([^/])/, "/$1"),
-    relative: (a.href.match(/tps?:\/\/[^/]+(.+)/) || [null, ""])[1],
+    relative: a.pathname + a.search + a.hash,
     segments: a.pathname.replace(/^\//, "").split("/"),
   };
-  a.remove();
   return r;
 }
 
@@ -160,7 +124,7 @@ function generateURL({
     .port(port || 80)
     .path(path || "")
     .query(params || {})
-    .hash(hash || "");
+    .hash(hash ? encodeURIComponent(hash) : "");
   const res = uri.toString();
   return res;
 }

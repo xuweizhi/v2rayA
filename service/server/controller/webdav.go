@@ -1,6 +1,13 @@
 package controller
 
 import (
+	"bufio"
+	"io"
+	"mime"
+	"net/http"
+	"runtime"
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/server/service"
@@ -33,9 +40,26 @@ func PostWebdavBackup(ctx *gin.Context) {
 // GetWebdavBackupDownload streams a remote backup file.
 func GetWebdavBackupDownload(ctx *gin.Context) {
 	name := ctx.Query("filename")
-	ctx.Header("Content-Disposition", "attachment; filename="+name)
-	if err := service.OpenWebdavBackup(name, ctx.Writer); err != nil {
-		// Headers are already sent at this point; log and stop.
+	resp, err := service.OpenWebdavBackupStream(name)
+	if err != nil {
+		ctx.JSON(http.StatusBadGateway, gin.H{"code": common.FAIL, "message": logError(err).Error()})
+		return
+	}
+	defer resp.Body.Close()
+	body := bufio.NewReader(resp.Body)
+	if _, err := body.Peek(1); err != nil {
+		ctx.JSON(http.StatusBadGateway, gin.H{"code": common.FAIL, "message": logError(err).Error()})
+		return
+	}
+	if resp.ContentLength >= 0 {
+		ctx.Header("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+	}
+	ctx.Header("Content-Type", "application/octet-stream")
+	if cd := mime.FormatMediaType("attachment", map[string]string{"filename": name}); cd != "" {
+		ctx.Header("Content-Disposition", cd)
+	}
+	ctx.Status(http.StatusOK)
+	if _, err := io.Copy(ctx.Writer, body); err != nil {
 		logError(err)
 	}
 }
@@ -56,5 +80,5 @@ func PostBackupRestore(ctx *gin.Context) {
 		return
 	}
 	// RestoreFromBackup schedules re-exec only after staging has succeeded.
-	common.ResponseSuccess(ctx, nil)
+	common.ResponseSuccess(ctx, gin.H{"restartRequired": runtime.GOOS == "windows"})
 }

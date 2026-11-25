@@ -1,7 +1,7 @@
 //go:build linux
 // +build linux
 
-package httpClient
+package netTools
 
 import (
 	"syscall"
@@ -11,7 +11,7 @@ import (
 
 const directBypassMark = 0x80
 
-func directSocketControl(_, _ string, connection syscall.RawConn) error {
+func DirectSocketControl(_, _ string, connection syscall.RawConn) error {
 	var socketErr error
 	if err := connection.Control(func(fd uintptr) {
 		socketErr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_MARK, directBypassMark)

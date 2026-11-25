@@ -79,6 +79,7 @@
               <option value="tcp">TCP</option>
               <option value="kcp">mKCP</option>
               <option value="ws">WebSocket</option>
+              <option value="httpupgrade">HTTPUpgrade</option>
               <option value="h2">HTTP/2</option>
               <option value="grpc">gRPC</option>
               <option value="quic">QUIC</option>
@@ -101,10 +102,10 @@
               <option value="wireguard">{{ $t("configureServer.wireguardObfuscation") }}</option>
             </b-select>
           </b-field>
-          <b-field v-show="v2ray.net === 'ws' || v2ray.net === 'h2' || v2ray.net === 'xhttp' || v2ray.tls === 'tls' || (v2ray.net === 'tcp' && v2ray.type === 'http')" label="Host" label-position="on-border">
+          <b-field v-show="['ws', 'httpupgrade', 'h2'].includes(v2ray.net) || v2ray.net === 'xhttp' || v2ray.tls === 'tls' || (v2ray.net === 'tcp' && v2ray.type === 'http')" label="Host" label-position="on-border">
             <b-input v-model="v2ray.host" :placeholder="$t('configureServer.hostObfuscation')" expanded />
           </b-field>
-          <b-field v-show="v2ray.net === 'ws' || v2ray.net === 'h2' || (v2ray.net === 'tcp' && v2ray.type === 'http')" label="Path" label-position="on-border">
+          <b-field v-show="['ws', 'httpupgrade', 'h2'].includes(v2ray.net) || (v2ray.net === 'tcp' && v2ray.type === 'http')" label="Path" label-position="on-border">
             <b-input v-model="v2ray.path" :placeholder="$t('configureServer.pathObfuscation')" expanded />
           </b-field>
           <b-field v-show="v2ray.net === 'ws'" label="Max Early Data" label-position="on-border">
@@ -290,6 +291,7 @@
               <option value="tcp">TCP</option>
               <option value="kcp">mKCP</option>
               <option value="ws">WebSocket</option>
+              <option value="httpupgrade">HTTPUpgrade</option>
               <option value="h2">HTTP/2</option>
               <option value="grpc">gRPC</option>
               <option value="quic">QUIC</option>
@@ -312,10 +314,10 @@
               <option value="wireguard">{{ $t("configureServer.wireguardObfuscation") }}</option>
             </b-select>
           </b-field>
-          <b-field v-show="v2ray.net === 'ws' || v2ray.net === 'h2' || v2ray.net === 'xhttp' || v2ray.tls === 'tls' || v2ray.tls === 'reality' || (v2ray.net === 'tcp' && v2ray.type === 'http')" label="Host" label-position="on-border">
+          <b-field v-show="['ws', 'httpupgrade', 'h2'].includes(v2ray.net) || v2ray.net === 'xhttp' || v2ray.tls === 'tls' || v2ray.tls === 'reality' || (v2ray.net === 'tcp' && v2ray.type === 'http')" label="Host" label-position="on-border">
             <b-input v-model="v2ray.host" :placeholder="$t('configureServer.hostObfuscation')" expanded />
           </b-field>
-          <b-field v-show="v2ray.net === 'ws' || v2ray.net === 'h2' || (v2ray.net === 'tcp' && v2ray.type === 'http')" label="Path" label-position="on-border">
+          <b-field v-show="['ws', 'httpupgrade', 'h2'].includes(v2ray.net) || (v2ray.net === 'tcp' && v2ray.type === 'http')" label="Path" label-position="on-border">
             <b-input v-model="v2ray.path" :placeholder="$t('configureServer.pathObfuscation')" expanded />
           </b-field>
           <b-field v-show="v2ray.net === 'ws'" label="Max Early Data" label-position="on-border">
@@ -458,9 +460,6 @@
           <b-field label="Address (Local)" label-position="on-border">
             <b-input ref="wireguard_local_address" v-model="wireguard.localAddress" placeholder="CIDR, e.g. 10.0.0.1/24" expanded />
           </b-field>
-          <b-field label="DNS" label-position="on-border">
-            <b-input ref="wireguard_dns" v-model="wireguard.dns" placeholder="DNS Server" expanded />
-          </b-field>
           <b-field label="MTU" label-position="on-border">
             <b-input ref="wireguard_mtu" v-model="wireguard.mtu" type="number" placeholder="MTU" expanded />
           </b-field>
@@ -473,8 +472,11 @@
           <b-field label="Pre-shared Key" label-position="on-border">
             <b-input ref="wireguard_pre_shared_key" v-model="wireguard.preSharedKey" placeholder="Pre-shared Key" expanded />
           </b-field>
-          <b-field label="Endpoint" label-position="on-border">
-            <b-input ref="wireguard_endpoint" v-model="wireguard.endpoint" placeholder="Endpoint (optional, default same as Address:Port)" expanded />
+          <b-field label="Reserved" label-position="on-border">
+            <b-input ref="wireguard_reserved" v-model="wireguard.reserved" placeholder="0,0,0" expanded />
+          </b-field>
+          <b-field>
+            <b-switch v-model="wireguard.kernelMode">Kernel mode</b-switch>
           </b-field>
         </b-tab-item>
 
@@ -685,7 +687,7 @@
             <b-input v-model="trojan.peer" placeholder="SNI(Peer)" expanded />
           </b-field>
           <b-field label="Network" label-position="on-border">
-            <b-select ref="trojan_net" v-model="trojan.net" expanded required @input="handleNetworkChange">
+            <b-select ref="trojan_net" v-model="trojan.net" expanded required>
               <option value="tcp">TCP</option>
               <option value="kcp">mKCP</option>
               <option value="ws">WebSocket</option>
@@ -710,7 +712,7 @@
           <b-field v-show="trojan.net === 'ws' || trojan.net === 'h2'" label="Host" label-position="on-border">
             <b-input v-model="trojan.host" :placeholder="$t('configureServer.hostObfuscation')" expanded />
           </b-field>
-          <b-field v-show="trojan.tls === 'tls'" label="Alpn" label-position="on-border">
+          <b-field label="Alpn" label-position="on-border">
             <b-input v-model="trojan.alpn" placeholder="h2,http/1.1" expanded />
           </b-field>
           <b-field v-show="trojan.net === 'ws' || trojan.net === 'h2'" label="Path" label-position="on-border">
@@ -923,6 +925,12 @@
             <b-input v-model="anytls.verifyPeerCertByName" :placeholder="$t('verifyPeerCertByName')" expanded />
           </b-field>
         </b-tab-item>
+        <b-tab-item label="Mieru / ShadowTLS">
+          <b-field :label="$t('configureServer.nodeLink')" label-position="on-border">
+            <b-input ref="link_url" v-model="nodeLink" type="text" required
+              pattern="(mieru|shadowtls)://.+" placeholder="mieru://… / shadowtls://…" expanded />
+          </b-field>
+        </b-tab-item>
       </b-tabs>
       </fieldset>
     </section>
@@ -934,7 +942,12 @@
         <button class="button" type="button" @click="$parent.close()">
           {{ $t("operations.cancel") }}
         </button>
-        <button class="button is-primary" @click="handleClickSubmit">
+        <button
+          class="button is-primary"
+          :class="{ 'is-loading': submitting }"
+          :disabled="submitting || (which && !loaded)"
+          @click="handleClickSubmit"
+        >
           {{ $t("operations.saveApply") }}
         </button>
       </template>
@@ -945,6 +958,25 @@
 <script>
 import { generateURL, handleResponse, parseURL } from "@/assets/js/utils";
 import { Base64 } from "js-base64";
+
+// The editor writes one canonical spelling for each of these query aliases.
+const queryAliases = {
+  anytls: ["peer", "pinned_peer_cert_sha256", "verify_peer_cert_by_name", "insecure", "allowInsecure"],
+  hysteria2: ["pinSha256", "pin_sha256", "pinned_peer_cert_sha256", "pinnedPeerCertSha256", "verifyPeerCertByName", "ports", "hop-ports", "hop-interval", "hop_interval"],
+  juicity: ["pinnedCertchainSha256", "allowInsecure", "congestionControl"],
+  trojan: ["peer"],
+  tuic: ["pinned_peer_cert_sha256", "verify_peer_cert_by_name", "insecure", "allowInsecure"],
+  wireguard: ["privateKey", "localAddress", "persistentKeepalive"],
+};
+
+function transportName(value) {
+  const aliases = { websocket: "ws", mkcp: "kcp", raw: "tcp", splithttp: "xhttp", http: "h2" };
+  return Object.prototype.hasOwnProperty.call(aliases, value) ? aliases[value] : value || "tcp";
+}
+
+function queryFlag(...values) {
+  return values.some(value => /^(1|true)$/i.test(value));
+}
 
 export default {
   name: "ModalServer",
@@ -1053,6 +1085,7 @@ export default {
       peer: "" /* tls sni */,
       host: "" /* websocket host */,
       path: "" /* websocket path */,
+      alpn: "",
       pinnedPeerCertSha256: "",
       verifyPeerCertByName: "",
       port: "",
@@ -1074,6 +1107,7 @@ export default {
       uuid: "",
       password: "",
       pinnedCertchainSha256: "",
+      allowInsecure: false,
       protocol: "juicity",
     },
     tuic: {
@@ -1087,6 +1121,7 @@ export default {
       pinnedPeerCertSha256: "",
       verifyPeerCertByName: "",
       disableSni: false,
+      allowInsecure: false,
       alpn: "h3",
       udpRelayMode: "native",
       protocol: "tuic",
@@ -1101,6 +1136,10 @@ export default {
       obfsPassword: "",
       pinnedPeerCertSha256: "",
       verifyPeerCertByName: "",
+      mport: "",
+      hopInterval: "",
+      up: "",
+      down: "",
       protocol: "hysteria2",
     },
     http: {
@@ -1127,6 +1166,8 @@ export default {
       sni: "",
       pinnedPeerCertSha256: "",
       verifyPeerCertByName: "",
+      allowInsecure: false,
+      minIdleSession: "",
       protocol: "anytls",
     },
     wireguard: {
@@ -1136,16 +1177,22 @@ export default {
       publicKey: "",
       privateKey: "",
       localAddress: "",
-      dns: "",
       mtu: "",
       allowedIPs: "",
       persistentKeepalive: "",
       preSharedKey: "",
-      endpoint: "",
+      workers: "",
+      reserved: "",
+      kernelMode: false,
+      protocol: "wireguard",
     },
     tabChoice: 0,
+    nodeLink: "",
+    loaded: false,
+    submitting: false,
   }),
   mounted() {
+    this.submitting = false;
     if (this.which !== null) {
       this.$axios({
         url: apiRoot + "/sharingAddress",
@@ -1155,74 +1202,62 @@ export default {
         },
       }).then((res) => {
         handleResponse(res, this, () => {
-          if (
-            res.data.data.sharingAddress.toLowerCase().startsWith("vmess://")
-          ) {
+          const lower = (res.data.data.sharingAddress || "").toLowerCase();
+          if (lower.startsWith("vmess://")) {
             this.v2ray = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 0;
-          } else if (
-            res.data.data.sharingAddress.toLowerCase().startsWith("vless://")
-          ) {
+          } else if (lower.startsWith("vless://")) {
             this.v2ray = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 1;
-          } else if (
-            res.data.data.sharingAddress.toLowerCase().startsWith("wireguard://")
-          ) {
+          } else if (lower.startsWith("wireguard://")) {
             this.wireguard = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 2;
-          } else if (
-            res.data.data.sharingAddress.toLowerCase().startsWith("ss://")
-          ) {
+          } else if (lower.startsWith("ss://")) {
             this.ss = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 3;
-          } else if (
-            res.data.data.sharingAddress.toLowerCase().startsWith("ssr://")
-          ) {
+          } else if (lower.startsWith("ssr://")) {
             this.ssr = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 4;
           } else if (
-            res.data.data.sharingAddress
-              .toLowerCase()
-              .startsWith("trojan://") ||
-            res.data.data.sharingAddress
-              .toLowerCase()
-              .startsWith("trojan-go://")
+            lower.startsWith("trojan://") ||
+            lower.startsWith("trojan-go://")
           ) {
             this.trojan = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 5;
-          } else if (
-            res.data.data.sharingAddress.toLowerCase().startsWith("juicity://")
-          ) {
+          } else if (lower.startsWith("juicity://")) {
             this.juicity = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 6;
-          } else if (
-            res.data.data.sharingAddress.toLowerCase().startsWith("tuic://")
-          ) {
+          } else if (lower.startsWith("tuic://")) {
             this.tuic = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 7;
           } else if (
-            res.data.data.sharingAddress.toLowerCase().startsWith("hysteria2://") ||
-            res.data.data.sharingAddress.toLowerCase().startsWith("hy2://")
+            lower.startsWith("hysteria2://") ||
+            lower.startsWith("hy2://")
           ) {
             this.hysteria2 = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 8;
           } else if (
-            res.data.data.sharingAddress.toLowerCase().startsWith("http://") ||
-            res.data.data.sharingAddress.toLowerCase().startsWith("https://")
+            lower.startsWith("http://") ||
+            lower.startsWith("https://") ||
+            lower.startsWith("http-proxy://") ||
+            lower.startsWith("https-proxy://")
           ) {
             this.http = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 9;
-          } else if (
-            res.data.data.sharingAddress.toLowerCase().startsWith("socks5://")
-          ) {
+          } else if (lower.startsWith("socks5://")) {
             this.socks5 = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 10;
-          } else if (
-            res.data.data.sharingAddress.toLowerCase().startsWith("anytls://")
-          ) {
+          } else if (lower.startsWith("anytls://")) {
             this.anytls = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 11;
+          } else if (/^(mieru|shadowtls):\/\//.test(lower)) {
+            this.nodeLink = res.data.data.sharingAddress;
+            this.tabChoice = 12;
+          } else {
+            this.$buefy.toast.open({ message: this.$t("configureServer.unsupportedLink"), type: "is-warning" });
+            return;
           }
+          this.loaded = true;
           this.$nextTick(() => {
             if (this.readonly && this.$refs.section) {
               this.$refs.section
@@ -1233,7 +1268,7 @@ export default {
             }
           });
         });
-      });
+      }).catch(() => {});
     }
   },
   watch: {
@@ -1241,8 +1276,19 @@ export default {
       if (val === 0) this.v2ray.protocol = "vmess";
       if (val === 1) this.v2ray.protocol = "vless";
     },
+    which() {
+      this.submitting = false;
+    },
   },
   methods: {
+    safeDecode(val) {
+      if (!val) return "";
+      try {
+        return decodeURIComponent(val);
+      } catch (_) {
+        return val;
+      }
+    },
     variant() {
       const v = (localStorage["variant"] || "v2ray").toLowerCase();
       // v2raya_core is the merged xray-based core; treat it as the revised "xray" variant.
@@ -1252,15 +1298,39 @@ export default {
       // protocol is now driven by tab selection
     },
     resolveURL(url) {
-      if (url.toLowerCase().startsWith("vmess://")) {
+      const model = this.decodeFormURL(url);
+      if (!model || model.protocol === "vmess" || model.protocol === "ssr") return model;
+      const original = new URL(url);
+      if (!original.search) return model;
+      const modeled = new URL(this.encodeFormURL(model)).searchParams;
+      const aliases = queryAliases[model.protocol] || [];
+      const additional = Array.from(original.searchParams).filter(([key]) =>
+        !modeled.has(key) && !aliases.includes(key) &&
+        !(model.protocol === "vless" && model.net === "xhttp" && key === "mode")
+      );
+      if (additional.length) model.additionalQuery = additional;
+      return model;
+    },
+    decodeFormURL(url) {
+      const lower = (url || "").toLowerCase();
+      if (lower.startsWith("vmess://")) {
         let obj = JSON.parse(
           Base64.decode(url.substring(url.indexOf("://") + 3))
         );
-        // console.log(obj);
-        obj.ps = decodeURIComponent(obj.ps);
+        // Raw VMess JSON stores ps as plain text (do not double-decode).
+        obj.ps = obj.ps || "";
         obj.tls = obj.tls || "none";
         obj.type = obj.type || "none";
+        obj.net = transportName(obj.net);
         obj.scy = obj.scy || "auto";
+        obj.fp = obj.fingerprint || obj.fp || "";
+        obj.sni = obj.sni || "";
+        obj.alpn = obj.alpn || "";
+        obj.pinnedPeerCertSha256 = obj.pinnedPeerCertSha256 || "";
+        obj.verifyPeerCertByName = obj.verifyPeerCertByName || "";
+        obj.quicSecurity = obj.quicSecurity || "none";
+        obj.key = obj.key || "";
+        obj.xhttpMode = obj.xhttpMode || "auto";
         obj.protocol = obj.protocol || "vmess";
         // xhttpHeaders arrives as a JSON-encoded string; convert it to the
         // array model used by the GUI so the editor round-trips correctly.
@@ -1278,15 +1348,16 @@ export default {
         if (typeof obj.multiMode === "string") obj.multiMode = obj.multiMode === "true" || obj.multiMode === "1";
         if (typeof obj.permitWithoutStream === "string") obj.permitWithoutStream = obj.permitWithoutStream === "true" || obj.permitWithoutStream === "1";
         return obj;
-      } else if (url.toLowerCase().startsWith("vless://")) {
+      } else if (lower.startsWith("vless://")) {
         let u = parseURL(url);
+        const network = transportName(u.params.type);
         const o = {
-          ps: decodeURIComponent(u.hash),
+          ps: this.safeDecode(u.hash),
           add: u.host,
           port: u.port,
-          id: decodeURIComponent(u.username),
+          id: this.safeDecode(u.username),
           flow: u.params.flow || "",
-          net: u.params.type || "tcp",
+          net: network,
           type: u.params.headerType || "none",
           host: u.params.host || "",
           path: u.params.path || u.params.serviceName || "",
@@ -1301,7 +1372,7 @@ export default {
           pinnedPeerCertSha256: u.params.pinnedPeerCertSha256 || "",
           verifyPeerCertByName: u.params.verifyPeerCertByName || "",
           key: u.params.key,
-          xhttpMode: u.params.xhttpMode || "auto",
+          xhttpMode: u.params.xhttpMode || (network === "xhttp" && u.params.mode) || "auto",
           noGRPCHeader: u.params.noGRPCHeader === "true",
           noSSEHeader: u.params.noSSEHeader === "true",
           uplinkHTTPMethod: u.params.uplinkHTTPMethod || "",
@@ -1342,218 +1413,320 @@ export default {
           initialWindowsSize: u.params.initialWindowsSize || "",
           protocol: "vless",
         };
-        if (o.alpn !== "") {
-          o.alpn = decodeURIComponent(o.alpn);
-        }
         if (o.net === "mkcp" || o.net === "kcp") {
-          o.path = u.params.seed;
+          o.path = u.params.seed || o.path;
         }
-        console.log(o);
+        if (o.net === "grpc") o.path = u.params.serviceName || o.path;
         return o;
-      } else if (url.toLowerCase().startsWith("ss://")) {
+      } else if (lower.startsWith("ss://")) {
         let u = parseURL(url);
-        let userinfo = u.username;
-        // Handle SIP002 format: ss://BASE64URL@host:port vs legacy ss://BASE64
-        let method = "", password = "";
-        try {
-          let decoded = Base64.decode(userinfo);
-          let idx = decoded.indexOf(":");
-          if (idx > -1) {
-            method = decoded.substring(0, idx);
-            password = decoded.substring(idx + 1);
+        let method = "";
+        let password = "";
+        if (u.password) {
+          method = this.safeDecode(u.username);
+          password = this.safeDecode(u.password);
+        } else {
+          let userinfo = this.safeDecode(u.username);
+          try {
+            let decoded = Base64.decode(userinfo);
+            let idx = decoded.indexOf(":");
+            if (idx > -1) {
+              method = decoded.substring(0, idx);
+              password = decoded.substring(idx + 1);
+            } else {
+              method = userinfo;
+            }
+          } catch (e) {
+            method = userinfo;
           }
-        } catch (e) {
-          method = userinfo;
         }
         const ssPlugin = u.params.plugin || "";
+        const pluginParts = ssPlugin ? ssPlugin.split(";") : [];
+        let pluginName = pluginParts[0] || "";
+        if (pluginName === "obfs-local" || pluginName === "simpleobfs") {
+          pluginName = "simple-obfs";
+        }
+        let impl = "";
+        let obfs = "http";
+        let mode = "websocket";
+        let tls = "";
+        let host = "";
+        let path = "/";
+        for (const opt of pluginParts.slice(1)) {
+          if (!opt) continue;
+          const eqIdx = opt.indexOf("=");
+          const k = eqIdx === -1 ? opt : opt.slice(0, eqIdx);
+          const v = eqIdx === -1 ? "" : opt.slice(eqIdx + 1);
+          if (k === "tls") {
+            tls = "tls";
+          } else if (k === "obfs") {
+            obfs = v || "http";
+          } else if (k === "mode") {
+            mode = v || "websocket";
+            if (pluginName === "simple-obfs") {
+              obfs = v || "http";
+            }
+          } else if (k === "obfs-host" || k === "host") {
+            host = v;
+          } else if (k === "obfs-path" || k === "obfs-uri" || k === "path") {
+            path = v || "/";
+          } else if (k === "impl") {
+            impl = v;
+          }
+        }
         return {
-          method: method,
-          password: password,
+          method,
+          password,
           server: u.host,
           port: u.port,
-          name: decodeURIComponent(u.hash || ""),
-          plugin: ssPlugin.split(";")[0] || "",
-          plugin_opts: ssPlugin.split(";").slice(1).join(";") || "",
+          name: this.safeDecode(u.hash),
+          plugin: pluginName,
+          impl,
+          obfs,
+          mode,
+          tls,
+          host,
+          path,
           protocol: "ss",
           backend: u.params["v2raya-backend"] || "",
         };
-      } else if (url.toLowerCase().startsWith("ssr://")) {
-        url = Base64.decode(url.substr(6));
-        let arr = url.split("/?");
-        let query = arr[1].split("&");
+      } else if (lower.startsWith("ssr://")) {
+        let decoded = Base64.decode(url.substr(6));
+        let arr = decoded.split("/?");
+        let query = arr[1] ? arr[1].split("&") : [];
         let m = {};
         for (let param of query) {
-          let [key, val] = param.split("=", 2);
-          val = Base64.decode(val);
-          m[key] = val;
+          if (!param) continue;
+          const eqIdx = param.indexOf("=");
+          let key = eqIdx === -1 ? param : param.slice(0, eqIdx);
+          let val = eqIdx === -1 ? "" : param.slice(eqIdx + 1);
+          m[key] = val ? Base64.decode(val) : "";
         }
         let pre = arr[0].split(":");
         if (pre.length > 6) {
-          //如果长度多于6，说明host中包含字符:，重新合并前几个分组到host去
+          // 如果长度多于6，说明host中包含字符:，重新合并前几个分组到host去
           pre[pre.length - 6] = pre.slice(0, pre.length - 5).join(":");
           pre = pre.slice(pre.length - 6);
         }
-        pre[5] = Base64.decode(pre[5]);
+        pre[5] = pre[5] ? Base64.decode(pre[5]) : "";
         return {
-          method: pre[3],
-          password: pre[5],
-          server: pre[0],
-          port: pre[1],
-          name: m["remarks"],
-          proto: pre[2],
-          protoParam: m["protoparam"],
-          obfs: pre[4],
-          obfsParam: m["obfsparam"],
+          method: pre[3] || "aes-128-cfb",
+          password: pre[5] || "",
+          server: pre[0] || "",
+          port: pre[1] || "",
+          name: m["remarks"] || "",
+          proto: pre[2] || "origin",
+          protoParam: m["protoparam"] || "",
+          obfs: pre[4] || "plain",
+          obfsParam: m["obfsparam"] || "",
           protocol: "ssr",
         };
       } else if (
-        url.toLowerCase().startsWith("trojan://") ||
-        url.toLowerCase().startsWith("trojan-go://")
+        lower.startsWith("trojan://") ||
+        lower.startsWith("trojan-go://")
       ) {
         let u = parseURL(url);
+        const netType = transportName(u.params.type);
         const o = {
-          password: decodeURIComponent(u.username),
+          password: this.safeDecode(u.username) + (u.password ? ":" + this.safeDecode(u.password) : ""),
           server: u.host,
           port: u.port,
-          name: decodeURIComponent(u.hash),
+          name: this.safeDecode(u.hash),
           peer: u.params.peer || u.params.sni || "",
+          host: u.params.host || "",
+          alpn: u.params.alpn || "",
           pinnedPeerCertSha256: u.params.pinnedPeerCertSha256 || "",
           verifyPeerCertByName: u.params.verifyPeerCertByName || "",
           method: "origin",
-          net: u.params.type || "tcp",
+          net: netType === "original" ? "tcp" : netType,
           obfs: "none",
-          ssCipher: "2022-blake3-aes-128-gcm",
-          path: u.params.path || u.params.serviceName || "",
+          ssCipher: "aes-128-gcm",
+          ssPassword: "",
+          path:
+            netType === "kcp" || netType === "mkcp"
+              ? u.params.seed || u.params.path || ""
+              : u.params.path || u.params.serviceName || "",
           protocol: "trojan",
           backend: u.params["v2raya-backend"] || "",
         };
-        if (url.toLowerCase().startsWith("trojan-go://")) {
-          console.log(u.params.encryption);
+        if (lower.startsWith("trojan-go://")) {
           if (u.params.encryption?.startsWith("ss;")) {
             o.method = "shadowsocks";
             const fields = u.params.encryption.split(";");
-            o.ssCipher = fields[1];
-            o.ssPassword = fields[2];
+            o.ssCipher = fields[1] || "aes-128-gcm";
+            o.ssPassword = fields.slice(2).join(";");
           }
-          if (u.params.type === "ws") {
+          if (netType === "ws") {
             o.obfs = "websocket";
             o.host = u.params.host || "";
             o.path = u.params.path || "/";
           }
         }
         return o;
-      } else if (url.toLowerCase().startsWith("juicity://")) {
+      } else if (lower.startsWith("juicity://")) {
         let u = parseURL(url);
         return {
-          name: decodeURIComponent(u.hash),
-          uuid: decodeURIComponent(u.username),
-          password: decodeURIComponent(u.password),
+          name: this.safeDecode(u.hash),
+          uuid: this.safeDecode(u.username),
+          password: this.safeDecode(u.password),
           server: u.host,
           port: u.port,
           sni: u.params.sni || "",
-          pinnedCertchainSha256: u.params.pinned_certchain_sha256 || "",
-          cc: u.params.congestion_control || "bbr",
+          pinnedCertchainSha256: u.params.pinned_certchain_sha256 || u.params.pinnedCertchainSha256 || "",
+          allowInsecure:
+            queryFlag(u.params.allow_insecure, u.params.allowInsecure),
+          cc: u.params.congestion_control || u.params.congestionControl || "bbr",
           protocol: "juicity",
         };
-      } else if (url.toLowerCase().startsWith("tuic://")) {
+      } else if (lower.startsWith("tuic://")) {
         let u = parseURL(url);
         return {
-          name: decodeURIComponent(u.hash),
-          uuid: decodeURIComponent(u.username),
-          password: decodeURIComponent(u.password),
+          name: this.safeDecode(u.hash),
+          uuid: this.safeDecode(u.username),
+          password: this.safeDecode(u.password),
           server: u.host,
           port: u.port,
           sni: u.params.sni || "",
-          pinnedPeerCertSha256: u.params.pinnedPeerCertSha256 || u.params.pinned_peer_cert_sha256 || "",
-          verifyPeerCertByName: u.params.verifyPeerCertByName || u.params.verify_peer_cert_by_name || "",
+          pinnedPeerCertSha256:
+            u.params.pinnedPeerCertSha256 ||
+            u.params.pinned_peer_cert_sha256 ||
+            "",
+          verifyPeerCertByName:
+            u.params.verifyPeerCertByName ||
+            u.params.verify_peer_cert_by_name ||
+            "",
           disableSni:
             u.params.disable_sni === "true" || u.params.disable_sni === "1",
-          alpn: u.params.alpn,
+          allowInsecure:
+            queryFlag(u.params.allow_insecure, u.params.insecure, u.params.allowInsecure),
+          alpn: Array.isArray(u.params.alpn) ? u.params.alpn.join(",") : u.params.alpn || "h3",
           cc: u.params.congestion_control || "bbr",
           udpRelayMode: u.params.udp_relay_mode || "native",
           protocol: "tuic",
         };
       } else if (
-        url.toLowerCase().startsWith("hysteria2://") ||
-        url.toLowerCase().startsWith("hy2://")
+        lower.startsWith("hysteria2://") ||
+        lower.startsWith("hy2://")
       ) {
         let u = parseURL(url);
+        const rawUser = this.safeDecode(u.username);
+        const rawPass = this.safeDecode(u.password);
+        const combinedPassword = rawPass ? `${rawUser}:${rawPass}` : rawUser;
         return {
-          name: decodeURIComponent(u.hash),
-          password: decodeURIComponent(u.username),
+          name: this.safeDecode(u.hash),
+          password: combinedPassword,
           server: u.host,
           port: u.port,
           sni: u.params.sni || "",
           pinnedPeerCertSha256:
-            u.params.pinSHA256 || u.params.pinSha256 || u.params.pin_sha256 || u.params.pinned_peer_cert_sha256 || u.params.pinnedPeerCertSha256 || "",
-          verifyPeerCertByName: u.params.verifyPeerCertByName || u.params.verify_peer_cert_by_name || "",
+            u.params.pinSHA256 ||
+            u.params.pinSha256 ||
+            u.params.pin_sha256 ||
+            u.params.pinned_peer_cert_sha256 ||
+            u.params.pinnedPeerCertSha256 ||
+            "",
+          verifyPeerCertByName:
+            u.params.verifyPeerCertByName ||
+            u.params.verify_peer_cert_by_name ||
+            "",
           obfs: u.params.obfs || "none",
           obfsPassword: u.params["obfs-password"] || "",
+          mport: u.params.mport || u.params.ports || u.params["hop-ports"] || "",
+          hopInterval:
+            u.params.hopInterval ||
+            u.params["hop-interval"] ||
+            u.params.hop_interval ||
+            "",
+          up: u.params.up || "",
+          down: u.params.down || "",
           protocol: "hysteria2",
         };
       } else if (
-        url.toLowerCase().startsWith("http://") ||
-        url.toLowerCase().startsWith("https://")
+        lower.startsWith("http://") ||
+        lower.startsWith("https://") ||
+        lower.startsWith("http-proxy://") ||
+        lower.startsWith("https-proxy://")
       ) {
         let u = parseURL(url);
         return {
-          username: decodeURIComponent(u.username),
-          password: decodeURIComponent(u.password),
+          username: this.safeDecode(u.username),
+          password: this.safeDecode(u.password),
+          host: u.host,
+          port: u.port,
+          protocol: u.protocol.replace(/-proxy$/, ""),
+          name: this.safeDecode(u.hash),
+        };
+      } else if (lower.startsWith("socks5://")) {
+        let u = parseURL(url);
+        return {
+          username: this.safeDecode(u.username),
+          password: this.safeDecode(u.password),
           host: u.host,
           port: u.port,
           protocol: u.protocol,
-          name: decodeURIComponent(u.hash),
+          name: this.safeDecode(u.hash),
         };
-      } else if (url.toLowerCase().startsWith("socks5://")) {
+      } else if (lower.startsWith("anytls://")) {
         let u = parseURL(url);
+        const auth = this.safeDecode(u.username) + (u.password ? ":" + this.safeDecode(u.password) : "");
+        let sni = u.params.sni || u.params.peer || "";
         return {
-          username: decodeURIComponent(u.username),
-          password: decodeURIComponent(u.password),
-          host: u.host,
-          port: u.port,
-          protocol: u.protocol,
-          name: decodeURIComponent(u.hash),
-        };
-      } else if (url.toLowerCase().startsWith("anytls://")) {
-        let u = parseURL(url);
-        let auth = u.username ? decodeURIComponent(u.username) : "";
-        let sni = u.params.peer || u.params.sni || "";
-        return {
-          name: decodeURIComponent(u.hash),
+          name: this.safeDecode(u.hash),
           host: u.host,
           port: u.port,
           auth: auth,
           sni: sni,
-          pinnedPeerCertSha256: u.params.pinnedPeerCertSha256 || u.params.pinned_peer_cert_sha256 || "",
-          verifyPeerCertByName: u.params.verifyPeerCertByName || u.params.verify_peer_cert_by_name || "",
+          pinnedPeerCertSha256:
+            u.params.pinnedPeerCertSha256 ||
+            u.params.pinned_peer_cert_sha256 ||
+            "",
+          verifyPeerCertByName:
+            u.params.verifyPeerCertByName ||
+            u.params.verify_peer_cert_by_name ||
+            "",
+          allowInsecure:
+            queryFlag(u.params.allow_insecure, u.params.insecure, u.params.allowInsecure),
+          minIdleSession: u.params.minIdleSession || "",
           protocol: "anytls",
         };
-      } else if (url.toLowerCase().startsWith("wireguard://")) {
+      } else if (lower.startsWith("wireguard://")) {
         let u = parseURL(url);
         return {
-          name: decodeURIComponent(u.hash),
+          name: this.safeDecode(u.hash),
           address: u.host,
           port: u.port,
-          publicKey: decodeURIComponent(u.username),
-          privateKey: u.params.privateKey || "",
-          localAddress: u.params.localAddress || "",
-          dns: u.params.dns || "",
+          privateKey: this.safeDecode(u.username) || u.params.privateKey || "",
+          publicKey: u.params.publicKey || "",
+          localAddress: u.params.address || u.params.localAddress || "",
           mtu: u.params.mtu || "",
           allowedIPs: u.params.allowedIPs || "",
-          persistentKeepalive: u.params.persistentKeepalive || "",
+          persistentKeepalive:
+            u.params.keepAlive || u.params.persistentKeepalive || "",
           preSharedKey: u.params.preSharedKey || "",
-          endpoint: u.params.endpoint || "",
+          workers: u.params.workers || "",
+          reserved: u.params.reserved || "",
+          kernelMode: u.params.kernelMode === "true",
+          protocol: "wireguard",
         };
       }
       return null;
     },
     generateURL(srcObj) {
+      const encoded = this.encodeFormURL(srcObj);
+      if (!srcObj.additionalQuery?.length || srcObj.protocol === "vmess") return encoded;
+      const link = new URL(encoded);
+      const modeled = new Set(link.searchParams.keys());
+      for (const [key, value] of srcObj.additionalQuery) {
+        if (!modeled.has(key)) link.searchParams.append(key, value);
+      }
+      return link.href;
+    },
+    encodeFormURL(srcObj) {
       let query = {};
       let obj = {};
       let tmp;
       switch (srcObj.protocol) {
         case "vless":
-          // todo: support reality and xhttp
           // https://github.com/XTLS/Xray-core/discussions/716
           query = {
             type: srcObj.net,
@@ -1648,8 +1821,16 @@ export default {
             params: query,
           });
         case "vmess":
-          //https://github.com/2dust/v2rayN/wiki/%E5%88%86%E4%BA%AB%E9%93%BE%E6%8E%A5%E6%A0%BC%E5%BC%8F%E8%AF%B4%E6%98%8E(ver-2)
+          // https://github.com/2dust/v2rayN/wiki/%E5%88%86%E4%BA%AB%E9%93%BE%E6%8E%A5%E6%A0%BC%E5%BC%8F%E8%AF%B4%E6%98%8E(ver-2)
           obj = Object.assign({}, srcObj);
+          delete obj.additionalQuery;
+          // Backend V2Ray struct uses json tag "fingerprint" for uTLS fingerprint.
+          if (obj.fp) {
+            obj.fingerprint = obj.fp;
+          } else {
+            delete obj.fingerprint;
+          }
+          delete obj.fp;
           // xhttpHeaders is stored on the backend as a JSON-encoded string; the
           // GUI model uses an array of {key,value}. Serialize as a string so the
           // vmess payload can round-trip through the backend parser.
@@ -1674,12 +1855,14 @@ export default {
           }
           switch (obj.net) {
             case "ws":
+            case "httpupgrade":
             case "h2":
             case "http":
             case "quic":
             case "grpc":
             case "kcp":
             case "mkcp":
+            case "xhttp":
               break;
             default:
               if (obj.net === "tcp" && obj.type === "http") {
@@ -1688,88 +1871,114 @@ export default {
               obj.path = "";
           }
           return "vmess://" + Base64.encode(JSON.stringify(obj));
-        case "ss":
-          /* ss://BASE64(method:password)@server:port#name */
-          tmp = `ss://${Base64.encode(`${srcObj.method}:${srcObj.password}`)}@${srcObj.server
-            }:${srcObj.port}/`;
+        case "ss": {
+          /* ss://BASE64URL(method:password)@server:port?plugin=...&v2raya-backend=...#name */
+          const hostStr =
+            srcObj.server &&
+            srcObj.server.includes(":") &&
+            !srcObj.server.startsWith("[")
+              ? `[${srcObj.server}]`
+              : srcObj.server;
+          tmp = `ss://${Base64.encodeURI(
+            `${srcObj.method}:${srcObj.password}`
+          )}@${hostStr}:${srcObj.port}`;
+          const ssParams = [];
           if (srcObj.plugin) {
             const plugin = [srcObj.plugin];
             if (srcObj.plugin === "v2ray-plugin") {
               if (srcObj.tls) {
                 plugin.push("tls");
               }
-              if (srcObj.mode !== "websocket") {
+              if (srcObj.mode && srcObj.mode !== "websocket") {
                 plugin.push("mode=" + srcObj.mode);
               }
               if (srcObj.host) {
                 plugin.push("host=" + srcObj.host);
               }
               if (srcObj.path) {
-                if (!srcObj.path.startsWith("/")) {
-                  srcObj.path = "/" + srcObj.path;
-                }
-                plugin.push("path=" + srcObj.path);
+                const p = srcObj.path.startsWith("/")
+                  ? srcObj.path
+                  : "/" + srcObj.path;
+                plugin.push("path=" + p);
               }
               if (srcObj.impl) {
                 plugin.push("impl=" + srcObj.impl);
               }
             } else {
-              plugin.push("obfs=" + srcObj.obfs);
-              plugin.push("obfs-host=" + srcObj.host);
-              if (srcObj.obfs === "http") {
+              plugin.push("obfs=" + (srcObj.obfs || "http"));
+              if (srcObj.host) {
+                plugin.push("obfs-host=" + srcObj.host);
+              }
+              if ((srcObj.obfs || "http") === "http" && srcObj.path) {
                 plugin.push("obfs-path=" + srcObj.path);
               }
               if (srcObj.impl) {
                 plugin.push("impl=" + srcObj.impl);
               }
             }
-            tmp += `?plugin=${encodeURIComponent(plugin.join(";"))}`;
+            ssParams.push(`plugin=${encodeURIComponent(plugin.join(";"))}`);
           }
-          tmp += srcObj.name.length
-            ? `#${encodeURIComponent(srcObj.name)}`
-            : "";
+          if (srcObj.backend) {
+            ssParams.push(`v2raya-backend=${encodeURIComponent(srcObj.backend)}`);
+          }
+          if (ssParams.length) {
+            tmp += `/?${ssParams.join("&")}`;
+          }
+          if (srcObj.name) {
+            tmp += `#${encodeURIComponent(srcObj.name)}`;
+          }
           return tmp;
-
+        }
         case "ssr":
-          /* ssr://server:port:proto:method:obfs:URLBASE64(password)/?remarks=URLBASE64(remarks)&protoparam=URLBASE64(protoparam)&obfsparam=URLBASE64(obfsparam)) */
-          return `ssr://${Base64.encode(
-            `${srcObj.server}:${srcObj.port}:${srcObj.proto}:${srcObj.method}:${srcObj.obfs
-            }:${Base64.encodeURI(srcObj.password)}/?remarks=${Base64.encodeURI(
-              srcObj.name
+          /* ssr://URLBASE64(server:port:proto:method:obfs:URLBASE64(password)/?remarks=URLBASE64(remarks)&protoparam=URLBASE64(protoparam)&obfsparam=URLBASE64(obfsparam)) */
+          return `ssr://${Base64.encodeURI(
+            `${srcObj.server}:${srcObj.port}:${srcObj.proto}:${srcObj.method}:${
+              srcObj.obfs
+            }:${Base64.encodeURI(srcObj.password || "")}/?remarks=${Base64.encodeURI(
+              srcObj.name || ""
             )}&protoparam=${Base64.encodeURI(
-              srcObj.protoParam
-            )}&obfsparam=${Base64.encodeURI(srcObj.obfsParam)}`
+              srcObj.protoParam || ""
+            )}&obfsparam=${Base64.encodeURI(srcObj.obfsParam || "")}`
           )}`;
         case "trojan":
-          /* trojan://password@server:port?allowInsecure=1&sni=sni#URIESCAPE(name) */
-          query = {
-            type: srcObj.net,
-            pinnedPeerCertSha256: srcObj.pinnedPeerCertSha256,
-            verifyPeerCertByName: srcObj.verifyPeerCertByName,
-          };
-          if (srcObj.peer !== "") {
+          query = {};
+          if (srcObj.pinnedPeerCertSha256) {
+            query.pinnedPeerCertSha256 = srcObj.pinnedPeerCertSha256;
+          }
+          if (srcObj.verifyPeerCertByName) {
+            query.verifyPeerCertByName = srcObj.verifyPeerCertByName;
+          }
+          if (srcObj.peer) {
             query.sni = srcObj.peer;
+          }
+          if (srcObj.alpn) {
+            query.alpn = srcObj.alpn;
+          }
+          if (srcObj.backend) {
+            query["v2raya-backend"] = srcObj.backend;
           }
           tmp = "trojan";
           if (srcObj.method !== "origin" || srcObj.obfs !== "none") {
             tmp = "trojan-go";
-            query.type = srcObj.obfs === "none" ? "original" : "ws";
+            query.type = srcObj.obfs === "websocket" ? "ws" : srcObj.net || "original";
             if (srcObj.method === "shadowsocks") {
               query.encryption = `ss;${srcObj.ssCipher};${srcObj.ssPassword}`;
             }
             if (query.type === "ws") {
-              query.host = srcObj.host || "";
+              if (srcObj.host) query.host = srcObj.host;
               query.path = srcObj.path || "/";
             }
+          } else {
+            query.type = srcObj.net || "tcp";
+            if (srcObj.net === "ws" || srcObj.net === "h2") {
+              if (srcObj.host) query.host = srcObj.host;
+              if (srcObj.path) query.path = srcObj.path;
+            }
           }
-
-          if (srcObj.alpn !== "") {
-            query.alpn = srcObj.alpn;
-          }
-          if (srcObj.net === "grpc") {
+          if (srcObj.net === "grpc" && srcObj.path) {
             query.serviceName = srcObj.path;
           }
-          if (srcObj.net === "mkcp" || srcObj.net === "kcp") {
+          if ((srcObj.net === "mkcp" || srcObj.net === "kcp") && srcObj.path) {
             query.seed = srcObj.path;
           }
           return generateURL({
@@ -1781,14 +1990,18 @@ export default {
             params: query,
           });
         case "juicity":
-          query = {
-            congestion_control: srcObj.cc,
-          };
-          if (srcObj.sni !== "") {
+          query = {};
+          if (srcObj.cc) {
+            query.congestion_control = srcObj.cc;
+          }
+          if (srcObj.sni) {
             query.sni = srcObj.sni;
           }
-          if (srcObj.pinnedCertchainSha256 !== "") {
+          if (srcObj.pinnedCertchainSha256) {
             query.pinned_certchain_sha256 = srcObj.pinnedCertchainSha256;
+          }
+          if (srcObj.allowInsecure) {
+            query.allow_insecure = "true";
           }
           return generateURL({
             protocol: "juicity",
@@ -1800,16 +2013,29 @@ export default {
             params: query,
           });
         case "tuic":
-          query = {
-            pinned_peer_cert_sha256: srcObj.pinnedPeerCertSha256,
-            verify_peer_cert_by_name: srcObj.verifyPeerCertByName,
-            congestion_control: srcObj.cc,
-            disable_sni: srcObj.disableSni,
-            alpn: srcObj.alpn,
-            udp_relay_mode: srcObj.udpRelayMode,
-          };
-          if (srcObj.sni !== "") {
+          query = {};
+          if (srcObj.pinnedPeerCertSha256) {
+            query.pinnedPeerCertSha256 = srcObj.pinnedPeerCertSha256;
+          }
+          if (srcObj.verifyPeerCertByName) {
+            query.verifyPeerCertByName = srcObj.verifyPeerCertByName;
+          }
+          if (srcObj.cc) {
+            query.congestion_control = srcObj.cc;
+          }
+          if (srcObj.disableSni) {
+            query.disable_sni = "true";
+          } else if (srcObj.sni) {
             query.sni = srcObj.sni;
+          }
+          if (srcObj.allowInsecure) {
+            query.allow_insecure = "true";
+          }
+          if (srcObj.alpn) {
+            query.alpn = srcObj.alpn;
+          }
+          if (srcObj.udpRelayMode) {
+            query.udp_relay_mode = srcObj.udpRelayMode;
           }
           return generateURL({
             protocol: "tuic",
@@ -1821,16 +2047,33 @@ export default {
             params: query,
           });
         case "hysteria2":
-          query = {
-            pinned_peer_cert_sha256: srcObj.pinnedPeerCertSha256,
-            verify_peer_cert_by_name: srcObj.verifyPeerCertByName,
-          };
-          if (srcObj.sni !== "") {
+          query = {};
+          if (srcObj.pinnedPeerCertSha256) {
+            query.pinSHA256 = srcObj.pinnedPeerCertSha256;
+          }
+          if (srcObj.verifyPeerCertByName) {
+            query.verify_peer_cert_by_name = srcObj.verifyPeerCertByName;
+          }
+          if (srcObj.sni) {
             query.sni = srcObj.sni;
           }
-          if (srcObj.obfs !== "none") {
+          if (srcObj.obfs && srcObj.obfs !== "none") {
             query.obfs = srcObj.obfs;
-            query["obfs-password"] = srcObj.obfsPassword;
+            if (srcObj.obfsPassword) {
+              query["obfs-password"] = srcObj.obfsPassword;
+            }
+          }
+          if (srcObj.mport) {
+            query.mport = srcObj.mport;
+          }
+          if (srcObj.hopInterval) {
+            query.hopInterval = srcObj.hopInterval;
+          }
+          if (srcObj.up) {
+            query.up = srcObj.up;
+          }
+          if (srcObj.down) {
+            query.down = srcObj.down;
           }
           return generateURL({
             protocol: "hysteria2",
@@ -1848,7 +2091,7 @@ export default {
             port: srcObj.port,
             hash: srcObj.name,
           };
-          if (srcObj.username && srcObj.password) {
+          if (srcObj.username) {
             Object.assign(tmp, {
               username: srcObj.username,
               password: srcObj.password,
@@ -1862,7 +2105,7 @@ export default {
             port: srcObj.port,
             hash: srcObj.name,
           };
-          if (srcObj.username && srcObj.password) {
+          if (srcObj.username) {
             Object.assign(tmp, {
               username: srcObj.username,
               password: srcObj.password,
@@ -1870,14 +2113,21 @@ export default {
           }
           return generateURL(tmp);
         case "anytls":
+          query = {};
           if (srcObj.sni) {
-            query.peer = srcObj.sni;
+            query.sni = srcObj.sni;
           }
           if (srcObj.pinnedPeerCertSha256) {
             query.pinnedPeerCertSha256 = srcObj.pinnedPeerCertSha256;
           }
           if (srcObj.verifyPeerCertByName) {
             query.verifyPeerCertByName = srcObj.verifyPeerCertByName;
+          }
+          if (srcObj.allowInsecure) {
+            query.allow_insecure = "true";
+          }
+          if (srcObj.minIdleSession) {
+            query.minIdleSession = srcObj.minIdleSession;
           }
           return generateURL({
             protocol: "anytls",
@@ -1889,33 +2139,36 @@ export default {
           });
         case "wireguard":
           query = {};
-          if (srcObj.privateKey) {
-            query.privateKey = srcObj.privateKey;
+          if (srcObj.publicKey) {
+            query.publicKey = srcObj.publicKey;
           }
           if (srcObj.localAddress) {
-            query.localAddress = srcObj.localAddress;
+            query.address = srcObj.localAddress;
           }
-          if (srcObj.dns) {
-            query.dns = srcObj.dns;
-          }
-          if (srcObj.mtu) {
-            query.mtu = srcObj.mtu;
+          if (srcObj.preSharedKey) {
+            query.preSharedKey = srcObj.preSharedKey;
           }
           if (srcObj.allowedIPs) {
             query.allowedIPs = srcObj.allowedIPs;
           }
           if (srcObj.persistentKeepalive) {
-            query.persistentKeepalive = srcObj.persistentKeepalive;
+            query.keepAlive = srcObj.persistentKeepalive;
           }
-          if (srcObj.preSharedKey) {
-            query.preSharedKey = srcObj.preSharedKey;
+          if (srcObj.mtu) {
+            query.mtu = srcObj.mtu;
           }
-          if (srcObj.endpoint) {
-            query.endpoint = srcObj.endpoint;
+          if (srcObj.workers) {
+            query.workers = srcObj.workers;
+          }
+          if (srcObj.reserved) {
+            query.reserved = srcObj.reserved;
+          }
+          if (srcObj.kernelMode) {
+            query.kernelMode = "true";
           }
           return generateURL({
             protocol: "wireguard",
-            username: srcObj.publicKey,
+            username: srcObj.privateKey,
             host: srcObj.address,
             port: srcObj.port,
             hash: srcObj.name,
@@ -1940,6 +2193,9 @@ export default {
       }
     },
     async handleClickSubmit() {
+      if (this.readonly || this.submitting || (this.which && !this.loaded)) {
+        return;
+      }
       let valid = true;
       for (let k in this.$refs) {
         if (!Object.prototype.hasOwnProperty.call(this.$refs, k)) {
@@ -1981,6 +2237,7 @@ export default {
         if (this.tabChoice === 11 && !k.startsWith("anytls_")) {
           continue;
         }
+        if (this.tabChoice === 12 && k !== "link_url") continue;
         let x = this.$refs[k];
         if (!x) {
           continue;
@@ -2000,112 +2257,38 @@ export default {
       let coded = "";
       // 0: vmess, 1: vless, 2: wireguard, 3: ss, 4: ssr, 5: trojan, 6: juicity, 7: tuic, 8: hysteria2, 9: http, 10: socks5, 11: anytls
       if (this.tabChoice === 0) {
+        this.v2ray.protocol = "vmess";
         coded = this.generateURL(this.v2ray);
       } else if (this.tabChoice === 1) {
+        this.v2ray.protocol = "vless";
         coded = this.generateURL(this.v2ray);
       } else if (this.tabChoice === 2) {
-        // wireguard://address:port?key=value#name
         coded = this.generateURL(this.wireguard);
       } else if (this.tabChoice === 3) {
-        // ss://BASE64(method:password)@server:port?plugin=...&v2raya-backend=...#name
-        const { method, password, server, port, name, plugin, plugin_opts, backend } = this.ss;
-        let userinfo = btoa(`${method}:${password}`);
-        let params = [];
-        if (plugin) {
-          params.push(`plugin=${encodeURIComponent(plugin + (plugin_opts ? `;${plugin_opts}` : ""))}`);
-        }
-        if (backend) {
-          params.push(`v2raya-backend=${encodeURIComponent(backend)}`);
-        }
-        let url = `ss://${userinfo}@${server}:${port}`;
-        if (params.length) url += `?${params.join("&")}`;
-        if (name) url += `#${encodeURIComponent(name)}`;
-        coded = url;
+        coded = this.generateURL(this.ss);
       } else if (this.tabChoice === 4) {
-        // ssr://server:port:proto:method:obfs:base64(password)/?remarks=base64(remarks)
-        const { server, port, proto, method, obfs, password, name, protoParam, obfsParam } = this.ssr;
-        let pwdB64 = btoa(password);
-        let remarksB64 = name ? btoa(name) : "";
-        let protoParamB64 = protoParam ? btoa(protoParam) : "";
-        let obfsParamB64 = obfsParam ? btoa(obfsParam) : "";
-        let url = `ssr://${btoa(`${server}:${port}:${proto}:${method}:${obfs}:${pwdB64}/?remarks=${remarksB64}&protoparam=${protoParamB64}&obfsparam=${obfsParamB64}`)}`;
-        coded = url;
+        coded = this.generateURL(this.ssr);
       } else if (this.tabChoice === 5) {
-        // trojan://password@server:port?pinnedPeerCertSha256=&verifyPeerCertByName=&sni=sni&v2raya-backend=...#name
-        const { password, server, port, pinnedPeerCertSha256, verifyPeerCertByName, peer, name, backend } = this.trojan;
-        let params = [];
-        if (pinnedPeerCertSha256) params.push("pinnedPeerCertSha256=" + encodeURIComponent(pinnedPeerCertSha256));
-        if (verifyPeerCertByName) params.push("verifyPeerCertByName=" + encodeURIComponent(verifyPeerCertByName));
-        if (peer) params.push(`sni=${encodeURIComponent(peer)}`);
-        if (backend) params.push(`v2raya-backend=${encodeURIComponent(backend)}`);
-        let url = `trojan://${encodeURIComponent(password)}@${server}:${port}`;
-        if (params.length) url += `?${params.join("&")}`;
-        if (name) url += `#${encodeURIComponent(name)}`;
-        coded = url;
+        coded = this.generateURL(this.trojan);
       } else if (this.tabChoice === 6) {
-        // juicity://uuid:password@server:port?cc=xxx#name
-        const { uuid, password, server, port, cc, sni, name } = this.juicity;
-        let params = [];
-        if (cc) params.push(`congestion_control=${encodeURIComponent(cc)}`);
-        if (sni) params.push(`sni=${encodeURIComponent(sni)}`);
-        let url = `juicity://${uuid}:${password}@${server}:${port}`;
-        if (params.length) url += `?${params.join("&")}`;
-        if (name) url += `#${encodeURIComponent(name)}`;
-        coded = url;
+        coded = this.generateURL(this.juicity);
       } else if (this.tabChoice === 7) {
-        // tuic://uuid:password@server:port?pinned_peer_cert_sha256=&verify_peer_cert_by_name=&cc=xxx#name
-        const { uuid, password, server, port, pinnedPeerCertSha256, verifyPeerCertByName, cc, sni, name } = this.tuic;
-        let params = [];
-        if (pinnedPeerCertSha256) params.push("pinned_peer_cert_sha256=" + encodeURIComponent(pinnedPeerCertSha256));
-        if (verifyPeerCertByName) params.push("verify_peer_cert_by_name=" + encodeURIComponent(verifyPeerCertByName));
-        if (cc) params.push(`congestion_control=${encodeURIComponent(cc)}`);
-        if (sni) params.push(`sni=${encodeURIComponent(sni)}`);
-        let url = `tuic://${uuid}:${password}@${server}:${port}`;
-        if (params.length) url += `?${params.join("&")}`;
-        if (name) url += `#${encodeURIComponent(name)}`;
-        coded = url;
+        coded = this.generateURL(this.tuic);
       } else if (this.tabChoice === 8) {
-        // hysteria2://password@server:port?pinSHA256=&obfs=xxx#name
-        const { password, server, port, pinnedPeerCertSha256, verifyPeerCertByName, obfs, obfsPassword, sni, name } = this.hysteria2;
-        let params = [];
-        if (pinnedPeerCertSha256) params.push("pinSHA256=" + encodeURIComponent(pinnedPeerCertSha256));
-        if (verifyPeerCertByName) params.push("verify_peer_cert_by_name=" + encodeURIComponent(verifyPeerCertByName));
-        if (obfs) params.push(`obfs=${encodeURIComponent(obfs)}`);
-        if (obfsPassword) params.push(`obfs-password=${encodeURIComponent(obfsPassword)}`);
-        if (sni) params.push(`sni=${encodeURIComponent(sni)}`);
-        let url = `hysteria2://${encodeURIComponent(password)}@${server}:${port}`;
-        if (params.length) url += `?${params.join("&")}`;
-        if (name) url += `#${encodeURIComponent(name)}`;
-        coded = url;
+        coded = this.generateURL(this.hysteria2);
       } else if (this.tabChoice === 9) {
-        // http(s)://username:password@server:port#name
-        const { protocol, username, password, host, port, name } = this.http;
-        let url = `${protocol}://`;
-        if (username && password) url += `${encodeURIComponent(username)}:${encodeURIComponent(password)}@`;
-        url += `${host}:${port}`;
-        if (name) url += `#${encodeURIComponent(name)}`;
-        coded = url;
+        coded = this.generateURL(this.http);
       } else if (this.tabChoice === 10) {
-        // socks5://username:password@server:port#name
-        const { username, password, host, port, name } = this.socks5;
-        let url = `socks5://`;
-        if (username && password) url += `${encodeURIComponent(username)}:${encodeURIComponent(password)}@`;
-        url += `${host}:${port}`;
-        if (name) url += `#${encodeURIComponent(name)}`;
-        coded = url;
+        coded = this.generateURL(this.socks5);
       } else if (this.tabChoice === 11) {
-        // anytls://auth@host:port?peer=sni&pinnedPeerCertSha256=&verifyPeerCertByName=#name
-        const { auth, host, port, sni, pinnedPeerCertSha256, verifyPeerCertByName, name } = this.anytls;
-        let params = [];
-        if (sni) params.push(`peer=${encodeURIComponent(sni)}`);
-        if (pinnedPeerCertSha256) params.push("pinnedPeerCertSha256=" + encodeURIComponent(pinnedPeerCertSha256));
-        if (verifyPeerCertByName) params.push("verifyPeerCertByName=" + encodeURIComponent(verifyPeerCertByName));
-        let url = `anytls://${encodeURIComponent(auth)}@${host}:${port}`;
-        if (params.length) url += `?${params.join("&")}`;
-        if (name) url += `#${encodeURIComponent(name)}`;
-        coded = url;
+        coded = this.generateURL(this.anytls);
+      } else if (this.tabChoice === 12) {
+        coded = this.nodeLink.trim();
       }
-      this.$emit("submit", coded);
+      this.submitting = true;
+      this.$emit("submit", coded, () => {
+        this.submitting = false;
+      });
     },
   },
 };

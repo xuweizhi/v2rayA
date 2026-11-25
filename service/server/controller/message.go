@@ -2,7 +2,6 @@ package controller
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -20,18 +19,14 @@ var upgrader = websocket.Upgrader{
 	EnableCompression: true,
 }
 
+func extractWsToken(ctx *gin.Context) string {
+	token, _ := jwt.RequestToken(ctx.Request)
+	return token
+}
+
 func WsMessage(ctx *gin.Context) {
 	// Validate token from query parameter or Authorization header
-	token := ctx.Query("token")
-	if token == "" {
-		token = ctx.Query("Authorization")
-	}
-	if token == "" {
-		token = ctx.GetHeader("Authorization")
-		if strings.HasPrefix(token, "Bearer ") {
-			token = token[7:]
-		}
-	}
+	token := extractWsToken(ctx)
 	if token == "" || !jwt.ValidateToken(token) {
 		common.Response(ctx, common.UNAUTHORIZED, "unauthorized")
 		return

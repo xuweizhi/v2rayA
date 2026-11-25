@@ -38,26 +38,30 @@ func ParseAnyTLSURL(link string) (data *AnyTLS, err error) {
 	if err != nil {
 		return nil, err
 	}
+	q := u.Query()
+	allowInsecure := isQueryTruthy(q.Get("insecure")) ||
+		isQueryTruthy(q.Get("allow_insecure")) ||
+		isQueryTruthy(q.Get("allowInsecure"))
 	return &AnyTLS{
 		Name:          u.Fragment,
 		Server:        u.Hostname(),
 		Port:          port,
 		Protocol:      "anytls",
 		Link:          link,
-		AllowInsecure: u.Query().Get("allow_insecure") == "true" || u.Query().Get("allow_insecure") == "1",
+		AllowInsecure: allowInsecure,
 	}, nil
 }
 
 // anytlsSettings holds the settings serialized into the hybrid-core xray config.
 type anytlsSettings struct {
-	Address                          string `json:"address"`
-	Port                             int    `json:"port"`
-	Password                         string `json:"password"`
-	SNI                              string `json:"sni,omitempty"`
-	MinIdleSessions                  int    `json:"min_idle_sessions,omitempty"`
-	AllowInsecure                    bool   `json:"allow_insecure,omitempty"`
-	PinnedPeerCertificateChainSha256 string `json:"pinned_peer_certificate_chain_sha256,omitempty"`
-	VerifyPeerCertByName             string `json:"verifyPeerCertByName,omitempty"`
+	Address              string `json:"address"`
+	Port                 int    `json:"port"`
+	Password             string `json:"password"`
+	SNI                  string `json:"sni,omitempty"`
+	MinIdleSessions      int    `json:"min_idle_sessions,omitempty"`
+	AllowInsecure        bool   `json:"allow_insecure,omitempty"`
+	PinnedPeerCertSha256 string `json:"pinned_peer_cert_sha256,omitempty"`
+	VerifyPeerCertByName string `json:"verify_peer_cert_by_name,omitempty"`
 }
 
 func (s *AnyTLS) Configuration(info PriorInfo) (c Configuration, err error) {
@@ -69,20 +73,26 @@ func (s *AnyTLS) Configuration(info PriorInfo) (c Configuration, err error) {
 	password := ""
 	if u.User != nil {
 		password = u.User.Username()
+		if pw, ok := u.User.Password(); ok {
+			password += ":" + pw
+		}
 	}
 	q := u.Query()
 	sni := q.Get("sni")
 	minIdle, _ := strconv.Atoi(q.Get("minIdleSession"))
+	if minIdle < 0 {
+		minIdle = 0
+	}
 
 	settingsJSON, err := json.Marshal(anytlsSettings{
-		Address:                          s.Server,
-		Port:                             s.Port,
-		Password:                         password,
-		SNI:                              sni,
-		MinIdleSessions:                  minIdle,
-		AllowInsecure:                    s.AllowInsecure,
-		PinnedPeerCertificateChainSha256: q.Get("pinnedPeerCertSha256"),
-		VerifyPeerCertByName:             q.Get("verifyPeerCertByName"),
+		Address:              s.Server,
+		Port:                 s.Port,
+		Password:             password,
+		SNI:                  sni,
+		MinIdleSessions:      minIdle,
+		AllowInsecure:        s.AllowInsecure,
+		PinnedPeerCertSha256: q.Get("pinnedPeerCertSha256"),
+		VerifyPeerCertByName: q.Get("verifyPeerCertByName"),
 	})
 	if err != nil {
 		return c, fmt.Errorf("anytls: marshal settings: %w", err)
@@ -99,7 +109,7 @@ func (s *AnyTLS) Configuration(info PriorInfo) (c Configuration, err error) {
 }
 
 func (s *AnyTLS) ExportToURL() string {
-	return s.Link
+	return updateLinkFragment(s.Link, s.Name)
 }
 
 func (s *AnyTLS) NeedPluginPort() bool {
@@ -128,4 +138,5 @@ func (s *AnyTLS) GetName() string {
 
 func (s *AnyTLS) SetName(name string) {
 	s.Name = name
+	s.Link = updateLinkFragment(s.Link, name)
 }

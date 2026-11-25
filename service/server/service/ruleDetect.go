@@ -62,17 +62,22 @@ func DetectRuleOnTemplate(tmpl *v2ray.Template, domain, port, network, inbound s
 	// Resolve the domain lazily; only needed for IP rules.
 	var ips []net.IP
 	ipResolved := false
-	resolveIPs := func() {
+	resolveIPs := func() []net.IP {
 		if ipResolved {
-			return
+			return ips
 		}
 		ipResolved = true
 		if domain != "" {
+			if ip := net.ParseIP(domain); ip != nil {
+				ips = []net.IP{ip}
+				return ips
+			}
 			addrs, err := net.LookupIP(domain)
 			if err == nil {
 				ips = addrs
 			}
 		}
+		return ips
 	}
 	assetNote := false
 	for i, rule := range tmpl.Routing.Rules {
@@ -86,12 +91,13 @@ func DetectRuleOnTemplate(tmpl *v2ray.Template, domain, port, network, inbound s
 			Network:    rule.Network,
 			InboundTag: rule.InboundTag,
 		}
-		if len(rule.Domain) == 0 && len(rule.IP) == 0 && rule.Port == "" && rule.Network == "" && len(rule.InboundTag) == 0 {
+		if len(rule.Domain) == 0 && len(rule.IP) == 0 && rule.Port == "" && rule.Network == "" && len(rule.InboundTag) == 0 &&
+			len(rule.Protocol) == 0 && len(rule.Source) == 0 && rule.SourcePort == "" && len(rule.User) == 0 {
 			// catch-all rule
 			hit.Matched = true
 			hit.Reason = "catch-all rule"
 		} else {
-			matched, asset, reason := matchRuleConditions(rule, domain, port, network, inbound, resolveIPs, ips)
+			matched, asset, reason := matchRuleConditions(rule, domain, port, network, inbound, resolveIPs)
 			hit.Matched = matched
 			hit.AssetBased = asset
 			hit.Reason = reason
@@ -113,7 +119,7 @@ func DetectRuleOnTemplate(tmpl *v2ray.Template, domain, port, network, inbound s
 
 // matchRuleConditions evaluates a single rule. It returns whether the rule
 // matches, whether it relies on geo assets, and a human-readable reason.
-func matchRuleConditions(rule coreObj.RoutingRule, domain, port, network, inbound string, resolveIPs func(), ips []net.IP) (matched, asset bool, reason string) {
+func matchRuleConditions(rule coreObj.RoutingRule, domain, port, network, inbound string, resolveIPs func() []net.IP) (matched, asset bool, reason string) {
 	// Inbound tag
 	if len(rule.InboundTag) > 0 {
 		if inbound == "" || !containsStr(rule.InboundTag, inbound) {
@@ -122,7 +128,7 @@ func matchRuleConditions(rule coreObj.RoutingRule, domain, port, network, inboun
 	}
 	// Network
 	if rule.Network != "" {
-		if network == "" || !strings.Contains(rule.Network, network) {
+		if network == "" || !strings.Contains(strings.ToLower(rule.Network), strings.ToLower(network)) {
 			return false, false, fmt.Sprintf("network %q 不匹配 %q", rule.Network, network)
 		}
 	}
@@ -147,7 +153,7 @@ func matchRuleConditions(rule coreObj.RoutingRule, domain, port, network, inboun
 		if domain == "" {
 			return false, false, "规则要求 IP，但查询未提供域名"
 		}
-		resolveIPs()
+		ips := resolveIPs()
 		if len(ips) == 0 {
 			return false, true, fmt.Sprintf("域名 %q 解析失败，无法判定 IP 规则 %v", domain, rule.IP)
 		}
@@ -155,6 +161,10 @@ func matchRuleConditions(rule coreObj.RoutingRule, domain, port, network, inboun
 		if !im {
 			return false, iasset, fmt.Sprintf("IP %v 不匹配 %v", ips, rule.IP)
 		}
+	}
+	// Protocol / Source / SourcePort / User constraints cannot be evaluated from target-only query parameters.
+	if len(rule.Protocol) > 0 || len(rule.Source) > 0 || rule.SourcePort != "" || len(rule.User) > 0 {
+		return false, false, "规则包含 protocol/source/sourcePort/user 条件，无法仅凭目标参数判定"
 	}
 	return true, false, "所有条件匹配"
 }

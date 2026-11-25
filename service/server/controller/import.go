@@ -23,6 +23,20 @@ func PostImportLink(ctx *gin.Context) {
 }
 
 func PostImport(ctx *gin.Context) {
+	updatingMu.Lock()
+	if updating {
+		common.ResponseError(ctx, processingErr)
+		updatingMu.Unlock()
+		return
+	}
+	updating = true
+	updatingMu.Unlock()
+	defer func() {
+		updatingMu.Lock()
+		updating = false
+		updatingMu.Unlock()
+	}()
+
 	var req service.ImportRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		common.ResponseError(ctx, logError("invalid import request"))

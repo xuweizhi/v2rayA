@@ -7,7 +7,7 @@
       :disabled="disabled"
       :placeholder="placeholder"
       :aria-label="$t('subscription.ageCredential')"
-      :rows="value.includes('\n') ? 3 : 1"
+      :rows="(value || '').includes('\n') ? 3 : 1"
       autocomplete="off"
       autocorrect="off"
       autocapitalize="off"

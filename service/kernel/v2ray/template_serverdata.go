@@ -34,22 +34,24 @@ func NewServerData(serverInfos []serverInfo) (serverData *ServerData) {
 	copy(rawServerInfos, serverInfos)
 	link2ServerInfos := make(map[string][]*serverInfo)
 	link2ServerObj := make(map[string]serverObj.ServerObj)
+	var links []string
 	for i, info := range serverInfos {
 		link := info.Info.ExportToURL()
+		if _, exists := link2ServerObj[link]; !exists {
+			links = append(links, link)
+		}
 		link2ServerObj[link] = info.Info
 		link2ServerInfos[link] = append(link2ServerInfos[link], &serverInfos[i])
 	}
 	// make ps unique
-	link2ServerInfosAfter := make(map[string][]*serverInfo)
 	mPsRenaming := make(map[string]struct{})
-	for link, ois := range link2ServerInfos {
+	for _, link := range links {
 		ps := link2ServerObj[link].GetName()
 		cnt := 2
 		for {
 			if _, ok := mPsRenaming[ps]; !ok {
 				mPsRenaming[ps] = struct{}{}
 				link2ServerObj[link].SetName(ps)
-				link2ServerInfosAfter[link] = ois
 				break
 			}
 			ps = fmt.Sprintf("%v(%v)", link2ServerObj[link].GetName(), strconv.Itoa(cnt))
@@ -58,8 +60,8 @@ func NewServerData(serverInfos []serverInfo) (serverData *ServerData) {
 	}
 
 	outboundName2ServerObjs := make(map[string][]serverObj.ServerObj)
-	for link, ois := range link2ServerInfosAfter {
-		for _, oi := range ois {
+	for _, link := range links {
+		for _, oi := range link2ServerInfos[link] {
 			outboundName2ServerObjs[oi.OutboundName] = append(outboundName2ServerObjs[oi.OutboundName], link2ServerObj[link])
 		}
 	}
@@ -80,13 +82,47 @@ func NewServerData(serverInfos []serverInfo) (serverData *ServerData) {
 		}
 	}
 
-	return &ServerData{
+	sd := &ServerData{
 		RawServerInfos:          rawServerInfos,
 		ServerInfos:             serverInfos,
-		Link2ServerInfos:        link2ServerInfosAfter,
+		Link2ServerInfos:        link2ServerInfos,
 		Link2ServerObj:          link2ServerObj,
 		OutboundName2ServerObjs: outboundName2ServerObjs,
 		OutboundName2Setting:    settings,
+	}
+	sd.registerReferencedEmptyGroups(configure.GetSettingNotNil())
+	return sd
+}
+
+func (sd *ServerData) registerEmptyAutoGroup(name string) {
+	if name == "" || name == "direct" || name == "block" {
+		return
+	}
+	if _, exists := sd.OutboundName2Setting[name]; exists {
+		return
+	}
+	if rule := configure.GetOutboundSetting(name).MemberRule; rule != nil {
+		// An empty automatic group is still a configured destination. Registering
+		// it lets applyPreProxies emit a blackhole outbound so dependent routes
+		// fail closed instead of being dropped or falling through.
+		sd.OutboundName2Setting[name] = configure.OutboundSetting{MemberRule: rule}
+	}
+}
+
+func (sd *ServerData) registerReferencedEmptyGroups(setting *configure.Setting) {
+	if sd == nil {
+		return
+	}
+	if sd.OutboundName2Setting == nil {
+		sd.OutboundName2Setting = make(map[string]configure.OutboundSetting)
+	}
+	if setting != nil {
+		for _, r := range setting.RoutingRules {
+			sd.registerEmptyAutoGroup(r.Outbound)
+		}
+	}
+	for _, ci := range configure.GetCustomInbounds() {
+		sd.registerEmptyAutoGroup(ci.Outbound)
 	}
 }
 

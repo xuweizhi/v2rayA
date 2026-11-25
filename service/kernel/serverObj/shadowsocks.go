@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/v2rayA/v2rayA/common"
+	"github.com/v2rayA/v2rayA/conf"
 	"github.com/v2rayA/v2rayA/kernel/coreObj"
 )
 
@@ -42,18 +43,41 @@ func ParseSSURL(u string) (data *Shadowsocks, err error) {
 	// parse attempts to parse ss:// links
 	parse := func(content string) (v *Shadowsocks, ok bool) {
 		// try to parse in the format of ss://BASE64(method:password)@server:port/?plugin=xxxx#name
+		// or plain SS-2022 ss://method:password@server:port/?plugin=xxxx#name
+		// A standard-base64 slash in SIP002 userinfo would be parsed as a path.
+		authority, _, _ := strings.Cut(strings.TrimPrefix(content, "ss://"), "#")
+		authority, _, _ = strings.Cut(authority, "?")
+		if user, _, ok := strings.Cut(authority, "@"); ok && strings.Contains(user, "/") && !strings.Contains(user, ":") {
+			content = "ss://" + strings.ReplaceAll(user, "/", "%2F") + content[len("ss://")+len(user):]
+		}
 		u, err := url.Parse(content)
-		if err != nil {
+		if err != nil || u.User == nil {
 			return nil, false
 		}
-		username := u.User.String()
-		username, _ = common.Base64URLDecode(username)
-		arr := strings.SplitN(username, ":", 2)
-		if len(arr) != 2 {
+		var cipher, password string
+		if pw, hasPass := u.User.Password(); hasPass {
+			// Plain user:pass form (SS-2022 or decoded legacy URI)
+			cipher = u.User.Username()
+			password = pw
+		} else {
+			rawUser := u.User.Username()
+			decoded, decErr := common.Base64URLDecode(rawUser)
+			if decErr != nil {
+				decoded, decErr = common.Base64StdDecode(rawUser)
+				if decErr != nil {
+					return nil, false
+				}
+			}
+			arr := strings.SplitN(decoded, ":", 2)
+			if len(arr) != 2 {
+				return nil, false
+			}
+			cipher = arr[0]
+			password = arr[1]
+		}
+		if cipher == "" {
 			return nil, false
 		}
-		cipher := arr[0]
-		password := arr[1]
 		var sip003 Sip003
 		plugin := u.Query().Get("plugin")
 		if len(plugin) > 0 {
@@ -79,6 +103,9 @@ func ParseSSURL(u string) (data *Shadowsocks, err error) {
 		ok bool
 	)
 	content := u
+	if !strings.HasPrefix(content, "ss://") {
+		return nil, fmt.Errorf("%w: unrecognized ss address", ErrInvalidParameter)
+	}
 	// try to parse the ss:// link, if it fails, base64 decode first
 	if v, ok = parse(content); !ok {
 		// 进行base64解码，并unmarshal到VmessInfo上
@@ -122,6 +149,9 @@ func (s *Shadowsocks) ConfigurationMC(info PriorInfo) (c Configuration, err erro
 	var chain []string
 	switch s.Plugin.Name {
 	case "simple-obfs":
+		if info.PluginPort <= 0 {
+			return c, fmt.Errorf("simple-obfs requires a valid plugin port (got %d)", info.PluginPort)
+		}
 		v2rayServer.Address = "127.0.0.1"
 		v2rayServer.Port = info.PluginPort
 
@@ -268,10 +298,7 @@ func (s *Shadowsocks) ConfigurationMT(info PriorInfo) (c Configuration, err erro
 			v2StreamSettings.Network = "tcp"
 			v2StreamSettings.TCPSettings = &tcpSettings
 		case "tls":
-			v2StreamSettings.Security = "tls"
-			v2StreamSettings.TLSSettings = &coreObj.TLSSettings{}
-			// SNI
-			v2StreamSettings.TLSSettings.ServerName = host
+			return c, fmt.Errorf("simple-obfs with obfs=tls requires an external plugin manager with fake-TLS support")
 		default:
 			return c, fmt.Errorf("unsupported obfs %v of plugin %v", s.Plugin.Opts.Obfs, s.Plugin.Name)
 		}
@@ -332,6 +359,9 @@ func (s *Shadowsocks) GetBackend() string {
 }
 
 func (s *Shadowsocks) Configuration(info PriorInfo) (c Configuration, err error) {
+	if s.NeedPluginPort() {
+		return (&Plugin{Link: s.ExportToURL()}).Configuration(info)
+	}
 	return s.ConfigurationMT(info)
 }
 
@@ -339,7 +369,7 @@ func (s *Shadowsocks) Configuration(info PriorInfo) (c Configuration, err error)
 func (s *Shadowsocks) exportToChainURL() string {
 	u := &url.URL{
 		Scheme:   "ss",
-		User:     url.User(strings.TrimSuffix(base64.URLEncoding.EncodeToString([]byte(s.Cipher+":"+s.Password)), "=")),
+		User:     url.User(base64.RawURLEncoding.EncodeToString([]byte(s.Cipher + ":" + s.Password))),
 		Host:     net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
 		Fragment: s.Name,
 	}
@@ -354,7 +384,7 @@ func (s *Shadowsocks) exportToChainURL() string {
 func (s *Shadowsocks) ExportToURL() string {
 	u := &url.URL{
 		Scheme:   "ss",
-		User:     url.User(strings.TrimSuffix(base64.URLEncoding.EncodeToString([]byte(s.Cipher+":"+s.Password)), "=")),
+		User:     url.User(base64.RawURLEncoding.EncodeToString([]byte(s.Cipher + ":" + s.Password))),
 		Host:     net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
 		Fragment: s.Name,
 	}
@@ -372,7 +402,7 @@ func (s *Shadowsocks) ExportToURL() string {
 }
 
 func (s *Shadowsocks) NeedPluginPort() bool {
-	return false
+	return s.Plugin.Name == "simple-obfs" && s.Plugin.Opts.Obfs == "tls" && conf.GetEnvironmentConfig().PluginManager != ""
 }
 
 func (s *Shadowsocks) GetProtocol() string {
@@ -425,7 +455,7 @@ func ParseSip003Opts(opts string) Sip003Opts {
 	var sip003Opts Sip003Opts
 	fields := strings.Split(opts, ";")
 	for i := range fields {
-		a := strings.Split(fields[i], "=")
+		a := strings.SplitN(fields[i], "=", 2)
 		if len(a) == 1 {
 			// to avoid panic
 			a = append(a, "")
@@ -437,7 +467,7 @@ func ParseSip003Opts(opts string) Sip003Opts {
 			sip003Opts.Obfs = a[1]
 		case "obfs-path", "obfs-uri", "path":
 			if !strings.HasPrefix(a[1], "/") {
-				a[1] += "/"
+				a[1] = "/" + a[1]
 			}
 			sip003Opts.Path = a[1]
 		case "obfs-host", "host":
@@ -457,7 +487,9 @@ func ParseSip003(plugin string) Sip003 {
 	default:
 		sip003.Name = fields[0]
 	}
-	sip003.Opts = ParseSip003Opts(fields[1])
+	if len(fields) > 1 {
+		sip003.Opts = ParseSip003Opts(fields[1])
+	}
 	return sip003
 }
 

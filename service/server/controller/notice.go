@@ -22,6 +22,7 @@ func GetNotices(ctx *gin.Context) {
 	common.ResponseSuccess(ctx, gin.H{
 		"notices": notices,
 		"unread":  unread,
+		"readIds": read,
 	})
 }
 

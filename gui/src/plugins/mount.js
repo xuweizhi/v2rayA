@@ -22,6 +22,9 @@ Vue.prototype.$remount = () => {
     }
   }
   f(vue);
+  if (vue) {
+    vue.$destroy();
+  }
   vue = new Vue({
     i18n,
     store,

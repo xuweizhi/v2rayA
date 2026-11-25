@@ -309,53 +309,83 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 		return list, rows.Err()
 
 	case "touch/subscriptions":
-		rows, err := db.Query("SELECT id, address, remarks, status, info, auto_select, decrypt_password, extra_json FROM subscriptions ORDER BY sort")
+		tx, err := db.Begin()
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer tx.Rollback()
 
+		type subMeta struct {
+			id              int64
+			address         string
+			remarks         string
+			status          string
+			info            string
+			autoSelectInt   int
+			decryptPassword string
+			extraJSON       string
+		}
+		rows, err := tx.Query("SELECT id, address, remarks, status, info, auto_select, decrypt_password, extra_json FROM subscriptions ORDER BY sort")
+		if err != nil {
+			return nil, err
+		}
+		var metas []subMeta
 		for rows.Next() {
-			var id int64
-			var address, remarks, status, info, decryptPassword, extraJSON string
-			var autoSelectInt int
-			if err := rows.Scan(&id, &address, &remarks, &status, &info, &autoSelectInt, &decryptPassword, &extraJSON); err != nil {
+			var m subMeta
+			if err := rows.Scan(&m.id, &m.address, &m.remarks, &m.status, &m.info, &m.autoSelectInt, &m.decryptPassword, &m.extraJSON); err != nil {
+				rows.Close()
 				return nil, err
 			}
+			metas = append(metas, m)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
 
-			serverRows, err := db.Query(
-				"SELECT config_json FROM servers WHERE type = 'subscription_server' AND sub_id = ? ORDER BY sort",
-				id,
-			)
+		serversBySub := make(map[int64][]string, len(metas))
+		if len(metas) > 0 {
+			serverRows, err := tx.Query("SELECT sub_id, config_json FROM servers WHERE type = 'subscription_server' ORDER BY sub_id, sort")
 			if err != nil {
 				return nil, err
 			}
-
-			var servers []string
 			for serverRows.Next() {
+				var subID int64
 				var s string
-				if err := serverRows.Scan(&s); err != nil {
+				if err := serverRows.Scan(&subID, &s); err != nil {
 					serverRows.Close()
 					return nil, err
 				}
-				servers = append(servers, s)
+				serversBySub[subID] = append(serversBySub[subID], s)
 			}
-			serverRows.Close()
+			if err := serverRows.Err(); err != nil {
+				serverRows.Close()
+				return nil, err
+			}
+			if err := serverRows.Close(); err != nil {
+				return nil, err
+			}
+		}
 
-			serversJSON := "[" + strings.Join(servers, ",") + "]"
-			autoSelect := autoSelectInt != 0
+		for _, m := range metas {
+			serversJSON := "[" + strings.Join(serversBySub[m.id], ",") + "]"
+			autoSelect := m.autoSelectInt != 0
+			extraJSON := m.extraJSON
 			if extraJSON == "" {
 				extraJSON = "{}"
 			}
 			result := subRowJSON{
-				DatabaseID:      id,
-				Remarks:         remarks,
-				Address:         address,
-				Status:          status,
-				Info:            info,
+				DatabaseID:      m.id,
+				Remarks:         m.remarks,
+				Address:         m.address,
+				Status:          m.status,
+				Info:            m.info,
 				Servers:         jsoniter.RawMessage(serversJSON),
 				AutoSelect:      autoSelect,
-				DecryptPassword: decryptPassword,
+				DecryptPassword: m.decryptPassword,
 				Extra:           jsoniter.RawMessage(extraJSON),
 			}
 			b, err := jsoniter.Marshal(result)
@@ -364,69 +394,98 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 			}
 			list = append(list, b)
 		}
-		return list, rows.Err()
+		return list, nil
 
 	default:
 		return nil, fmt.Errorf("ListGetAll: unsupported bucket/key: %s/%s", bucket, key)
 	}
 }
 
-// ListRemove removes elements at specified indexes from a list.
-func ListRemove(bucket, key string, indexes []int) error {
+func listRemoveTx(tx *sql.Tx, bucket, key string, indexes []int) error {
 	if len(indexes) == 0 {
-		return fmt.Errorf("ListRemove: nothing to remove")
+		return nil
 	}
-
-	db := GetDB()
-
 	switch bucket + "/" + key {
 	case "touch/servers":
 		for _, idx := range indexes {
-			_, err := db.Exec("DELETE FROM servers WHERE type = 'server' AND sort = ?", idx)
-			if err != nil {
+			if _, err := tx.Exec("DELETE FROM servers WHERE type = 'server' AND sort = ?", idx); err != nil {
 				return err
 			}
 		}
 		// Reorder remaining servers
-		_, err := db.Exec(`
-			UPDATE servers SET sort = (
-				SELECT COUNT(*) FROM servers s2 
-				WHERE s2.type = 'server' AND s2.sort < servers.sort
-			) WHERE type = 'server'
+		_, err := tx.Exec(`
+			WITH positions AS MATERIALIZED (
+				SELECT id, ROW_NUMBER() OVER (ORDER BY sort, id) - 1 AS new_sort
+				FROM servers WHERE type = 'server'
+			)
+			UPDATE servers SET sort = positions.new_sort
+			FROM positions WHERE servers.id = positions.id
 		`)
 		return err
 
 	case "touch/subscriptions":
 		for _, idx := range indexes {
 			var subID int64
-			err := db.QueryRow("SELECT id FROM subscriptions WHERE sort = ?", idx).Scan(&subID)
+			err := tx.QueryRow("SELECT id FROM subscriptions WHERE sort = ?", idx).Scan(&subID)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					continue
 				}
 				return err
 			}
-			_, err = db.Exec("DELETE FROM servers WHERE type = 'subscription_server' AND sub_id = ?", subID)
-			if err != nil {
+			if _, err := tx.Exec("DELETE FROM servers WHERE type = 'subscription_server' AND sub_id = ?", subID); err != nil {
 				return err
 			}
-			_, err = db.Exec("DELETE FROM subscriptions WHERE id = ?", subID)
-			if err != nil {
+			if _, err := tx.Exec("DELETE FROM subscriptions WHERE id = ?", subID); err != nil {
 				return err
 			}
 		}
 		// Reorder remaining subscriptions
-		_, err := db.Exec(`
-			UPDATE subscriptions SET sort = (
-				SELECT COUNT(*) FROM subscriptions s2 
-				WHERE s2.sort < subscriptions.sort
+		_, err := tx.Exec(`
+			WITH positions AS MATERIALIZED (
+				SELECT id, ROW_NUMBER() OVER (ORDER BY sort, id) - 1 AS new_sort FROM subscriptions
 			)
+			UPDATE subscriptions SET sort = positions.new_sort
+			FROM positions WHERE subscriptions.id = positions.id
 		`)
 		return err
 
 	default:
 		return fmt.Errorf("ListRemove: unsupported bucket/key: %s/%s", bucket, key)
 	}
+}
+
+// ListRemove removes elements at specified indexes from a list atomically.
+func ListRemove(bucket, key string, indexes []int) error {
+	if len(indexes) == 0 {
+		return fmt.Errorf("ListRemove: nothing to remove")
+	}
+	switch bucket + "/" + key {
+	case "touch/servers", "touch/subscriptions":
+		return ReadModifyWrite(func(tx *sql.Tx) error {
+			return listRemoveTx(tx, bucket, key, indexes)
+		})
+	default:
+		return fmt.Errorf("ListRemove: unsupported bucket/key: %s/%s", bucket, key)
+	}
+}
+
+// RemoveTouchAndSetState removes the specified subscription and server indexes
+// and writes any updated system_config entries within a single transaction.
+func RemoveTouchAndSetState(subscriptionIndexes, serverIndexes []int, state map[string]any) error {
+	return ReadModifyWrite(func(tx *sql.Tx) error {
+		if len(subscriptionIndexes) > 0 {
+			if err := listRemoveTx(tx, "touch", "subscriptions", subscriptionIndexes); err != nil {
+				return err
+			}
+		}
+		if len(serverIndexes) > 0 {
+			if err := listRemoveTx(tx, "touch", "servers", serverIndexes); err != nil {
+				return err
+			}
+		}
+		return putState(tx, state)
+	})
 }
 
 // ListLen returns the length of a list.

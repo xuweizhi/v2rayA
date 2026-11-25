@@ -197,6 +197,7 @@ export default {
      * by changing the type and focus the input right away.
      */
     togglePasswordVisibility() {
+      if (!this.passwordReveal) return;
       this.isPasswordVisible = !this.isPasswordVisible;
       this.newType = this.isPasswordVisible ? "text" : "password";
 

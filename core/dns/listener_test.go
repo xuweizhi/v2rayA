@@ -162,7 +162,7 @@ type textRecordHandler struct{}
 
 func (textRecordHandler) HandleQuery(_ context.Context, q *DnsQuery) (*DnsResponse, error) {
 	m := new(dns.Msg).SetReply(upstreamQuestion(q))
-	m.Answer = []dns.RR{&dns.TXT{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 60}, Txt: []string{strings.Repeat("a", 220), strings.Repeat("b", 220), strings.Repeat("c", 220)}}}
+	m.Answer = []dns.RR{&dns.TXT{Hdr: dns.RR_Header{Name: dns.Fqdn(q.Name), Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 60}, Txt: []string{strings.Repeat("a", 220), strings.Repeat("b", 220), strings.Repeat("c", 220)}}}
 	return &DnsResponse{RawMsg: m}, nil
 }
 

@@ -17,6 +17,8 @@ import (
 // NoticeURL is the remote notice feed.
 const NoticeURL = "https://raw.githubusercontent.com/xuweizhi/v2rayA/main/notice.json"
 
+var noticeURL = NoticeURL
+
 // noticeRefreshInterval is how often the notice feed is polled.
 const noticeRefreshInterval = 3 * time.Hour
 
@@ -68,9 +70,10 @@ func MarkNoticesRead(ids []string) error {
 // RefreshNotices downloads the remote notice feed, merges it into the local
 // store and prunes expired entries.
 func RefreshNotices() error {
-	c := httpClient.GetHttpClientAutomatically()
-	c.Timeout = 30 * time.Second
-	res, err := httpClient.HttpGetUsingSpecificClientWithUA(c, NoticeURL, "v2rayA/"+confVersion())
+	baseClient := httpClient.GetHttpClientAutomatically()
+	client := *baseClient
+	client.Timeout = 30 * time.Second
+	res, err := httpClient.HttpGetUsingSpecificClientWithUA(&client, noticeURL, "v2rayA/"+confVersion())
 	if err != nil {
 		return fmt.Errorf("fetch notices: %w", err)
 	}

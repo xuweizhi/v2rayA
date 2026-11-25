@@ -59,12 +59,21 @@ func ParseTuicURL(link string) (data *Tuic, err error) {
 		alpn = "h3"
 	}
 
+	uuid := ""
+	password := ""
+	if u.User != nil {
+		uuid = u.User.Username()
+		if pw, ok := u.User.Password(); ok {
+			password = pw
+		}
+	}
+
 	data = &Tuic{
 		Name:                 u.Fragment,
 		Server:               u.Hostname(),
 		Port:                 port,
-		UUID:                 u.User.Username(),
-		Password:             u.User.String(),
+		UUID:                 uuid,
+		Password:             password,
 		Sni:                  u.Query().Get("sni"),
 		DisableSni:           u.Query().Get("disable_sni") == "true" || u.Query().Get("disable_sni") == "1",
 		AllowInsecure:        u.Query().Get("allow_insecure") == "true" || u.Query().Get("allow_insecure") == "1",
@@ -75,28 +84,22 @@ func ParseTuicURL(link string) (data *Tuic, err error) {
 		VerifyPeerCertByName: u.Query().Get("verifyPeerCertByName"),
 		Protocol:             "tuic",
 	}
-	if data.Password != "" && strings.Contains(data.Password, ":") {
-		data.Password = strings.SplitN(data.Password, ":", 2)[1]
-	} else if data.Password != "" {
-		// handle case where password might be just the password part if user:pass was not used
-		// but typically u.User.String() is user:pass or user
-	}
 	return data, nil
 }
 
 // tuicSettings mirrors hint/proxy/tuic.ClientConfig JSON tags for serialization.
 type tuicSettings struct {
-	Address                          string   `json:"address"`
-	UUID                             string   `json:"uuid"`
-	Password                         string   `json:"password"`
-	Sni                              string   `json:"sni,omitempty"`
-	CongestionControl                string   `json:"congestion_control,omitempty"`
-	UdpRelayMode                     string   `json:"udp_relay_mode,omitempty"`
-	Alpn                             []string `json:"alpn,omitempty"`
-	DisableSni                       bool     `json:"disable_sni,omitempty"`
-	AllowInsecure                    bool     `json:"allow_insecure,omitempty"`
-	PinnedPeerCertificateChainSha256 string   `json:"pinned_peer_certificate_chain_sha256,omitempty"`
-	VerifyPeerCertByName             string   `json:"verifyPeerCertByName,omitempty"`
+	Address              string   `json:"address"`
+	UUID                 string   `json:"uuid"`
+	Password             string   `json:"password"`
+	Sni                  string   `json:"sni,omitempty"`
+	CongestionControl    string   `json:"congestion_control,omitempty"`
+	UdpRelayMode         string   `json:"udp_relay_mode,omitempty"`
+	Alpn                 []string `json:"alpn,omitempty"`
+	DisableSni           bool     `json:"disable_sni,omitempty"`
+	AllowInsecure        bool     `json:"allow_insecure,omitempty"`
+	PinnedPeerCertSha256 string   `json:"pinned_peer_cert_sha256,omitempty"`
+	VerifyPeerCertByName string   `json:"verify_peer_cert_by_name,omitempty"`
 }
 
 func (s *Tuic) Configuration(info PriorInfo) (c Configuration, err error) {
@@ -106,17 +109,17 @@ func (s *Tuic) Configuration(info PriorInfo) (c Configuration, err error) {
 	}
 
 	settingsJSON, err := json.Marshal(tuicSettings{
-		Address:                          net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
-		UUID:                             s.UUID,
-		Password:                         s.Password,
-		Sni:                              s.Sni,
-		CongestionControl:                s.CongestionControl,
-		UdpRelayMode:                     s.UdpRelayMode,
-		Alpn:                             alpn,
-		DisableSni:                       s.DisableSni,
-		AllowInsecure:                    s.AllowInsecure,
-		PinnedPeerCertificateChainSha256: s.PinnedPeerCertSha256,
-		VerifyPeerCertByName:             s.VerifyPeerCertByName,
+		Address:              net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
+		UUID:                 s.UUID,
+		Password:             s.Password,
+		Sni:                  s.Sni,
+		CongestionControl:    s.CongestionControl,
+		UdpRelayMode:         s.UdpRelayMode,
+		Alpn:                 alpn,
+		DisableSni:           s.DisableSni,
+		AllowInsecure:        s.AllowInsecure,
+		PinnedPeerCertSha256: s.PinnedPeerCertSha256,
+		VerifyPeerCertByName: s.VerifyPeerCertByName,
 	})
 	if err != nil {
 		return c, fmt.Errorf("tuic: marshal settings: %w", err)

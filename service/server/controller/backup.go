@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"mime"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/server/service"
@@ -32,10 +35,18 @@ func PostBackup(ctx *gin.Context) {
 
 // GetBackupDownload serves a backup file by name.
 func GetBackupDownload(ctx *gin.Context) {
-	path, err := service.BackupPath(ctx.Query("filename"))
+	name := ctx.Query("filename")
+	file, err := service.OpenBackup(name)
 	if err != nil {
 		common.ResponseError(ctx, logError(err))
 		return
 	}
-	ctx.FileAttachment(path, ctx.Query("filename"))
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		common.ResponseError(ctx, logError(err))
+		return
+	}
+	ctx.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+	http.ServeContent(ctx.Writer, ctx.Request, name, info.ModTime(), file)
 }

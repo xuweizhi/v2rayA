@@ -116,7 +116,12 @@
       <button class="button" type="button" @click="$parent.close()">
         {{ $t("operations.cancel") }}
       </button>
-      <button class="button is-primary" @click="handleClickSubmit">
+      <button
+        class="button is-primary"
+        :class="{ 'is-loading': submitting }"
+        :disabled="submitting"
+        @click="handleClickSubmit"
+      >
         {{ $t("operations.saveApply") }}
       </button>
     </footer>
@@ -139,16 +144,24 @@ export default {
   },
   data() {
     const source = this.which || {};
+    const sourceExtra = source.extra || {};
     return {
       protocols: ['vmess', 'vless', 'trojan', 'shadowsocks', 'shadowsocksr', 'hysteria2', 'tuic', 'anytls', 'mieru', 'wireguard', 'shadowtls', 'juicity', 'socks5', 'http'],
       ageCredential: "",
       clearAgeCredential: false,
       previewLoading: false,
       previewText: '',
-      nodeDNSText: ((source.extra || {}).nodeDNS || []).join('\n'),
+      submitting: false,
+      nodeDNSText: (sourceExtra.nodeDNS || []).join('\n'),
       form: {
         ...source,
-        extra: { filterField: "name", includeProtocols: [], preferNodeDNS: false, ...(source.extra || {}) },
+        extra: {
+          filterField: "name",
+          preferNodeDNS: false,
+          ...sourceExtra,
+          includeProtocols: [...(sourceExtra.includeProtocols || [])],
+          nodeDNS: [...(sourceExtra.nodeDNS || [])],
+        },
       },
     };
   },
@@ -158,6 +171,10 @@ export default {
     },
   },
   methods: {
+    normalizeUpdateIntervalHour(v) {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+    },
     isProtocolSelected(protocol) {
       return Array.isArray(this.extra.includeProtocols) && this.extra.includeProtocols.includes(protocol);
     },
@@ -173,15 +190,66 @@ export default {
       }
     },
     async previewFilters() {
+      if (this.previewLoading) {
+        return;
+      }
       this.previewLoading = true;
+      const payloadExtra = {
+        ...this.extra,
+        updateIntervalHour: this.normalizeUpdateIntervalHour(this.extra.updateIntervalHour),
+      };
       try {
-        const res = await this.$axios.post(apiRoot + '/subscriptionFilterPreview', { id: this.form.id, extra: this.extra });
-        handleResponse(res, this, () => { this.previewText = this.$t('subscription.previewResult', res.data.data); });
-      } finally { this.previewLoading = false; }
+        const res = await this.$axios.post(apiRoot + "/subscriptionFilterPreview", {
+          id: this.form.id,
+          extra: payloadExtra,
+        });
+        handleResponse(
+          res,
+          this,
+          () => {
+            this.previewText = this.$t("subscription.previewResult", res.data.data);
+          },
+          () => {
+            this.previewText = "";
+            this.$buefy.toast.open({
+              message: res.data?.message || this.$t("common.fail"),
+              type: "is-warning",
+              position: "is-top",
+              duration: 5000,
+              queue: false,
+            });
+          }
+        );
+      } catch (err) {
+        this.previewText = "";
+      } finally {
+        this.previewLoading = false;
+      }
     },
     handleClickSubmit() {
-      this.form.extra.nodeDNS = this.nodeDNSText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-      this.$emit("submit", { ...this.form, agePassword: this.clearAgeCredential ? "" : (this.ageCredential || undefined) });
+      if (this.submitting) {
+        return;
+      }
+      this.form.extra.nodeDNS = this.nodeDNSText
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      this.form.extra.updateIntervalHour = this.normalizeUpdateIntervalHour(
+        this.form.extra.updateIntervalHour
+      );
+      this.submitting = true;
+      this.$emit(
+        "submit",
+        {
+          ...this.form,
+          agePassword: this.clearAgeCredential
+            ? ""
+            : this.ageCredential || undefined,
+        },
+        () => {
+          this.submitting = false;
+        }
+      );
     },
   },
 };

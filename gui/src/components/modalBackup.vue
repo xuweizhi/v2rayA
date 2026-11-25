@@ -39,6 +39,7 @@
             size="is-small"
             type="is-danger"
             outlined
+            :disabled="restoring"
             @click="handleRestore('local', p.row.name)"
           >
             {{ $t("backup.restore") }}
@@ -72,13 +73,13 @@
         </b-select>
       </b-field>
       <div class="backup-toolbar">
-        <b-button size="is-small" @click="handleSaveWebdav">
+        <b-button size="is-small" :loading="saving" :disabled="remoteBusy" @click="handleSaveWebdav">
           {{ $t("backup.saveWebdav") }}
         </b-button>
-        <b-button size="is-small" type="is-primary" :loading="uploading" :disabled="!webdav.url" @click="handleUpload">
+        <b-button size="is-small" type="is-primary" :loading="uploading" :disabled="!webdav.url || remoteBusy" @click="handleUpload">
           {{ $t("backup.uploadLatest") }}
         </b-button>
-        <b-button size="is-small" :loading="listing" :disabled="!webdav.url" @click="handleListRemote">
+        <b-button size="is-small" :loading="listing" :disabled="!webdav.url || remoteBusy" @click="handleListRemote">
           {{ $t("backup.refreshRemote") }}
         </b-button>
       </div>
@@ -102,6 +103,7 @@
             size="is-small"
             type="is-danger"
             outlined
+            :disabled="remoteBusy"
             @click="handleRestore('webdav', p.row.name)"
           >
             {{ $t("backup.restore") }}
@@ -124,10 +126,18 @@ export default {
     remoteItems: [],
     listed: false,
     creating: false,
+    saving: false,
+    restoring: false,
+    savedWebdav: null,
     uploading: false,
     listing: false,
     webdav: { url: "", username: "", password: "", connectionMode: "followSubscription" },
   }),
+  computed: {
+    remoteBusy() {
+      return !this.savedWebdav || this.saving || this.uploading || this.listing || this.restoring;
+    },
+  },
   created() {
     this.load();
     this.$axios({ url: apiRoot + "/setting", method: "get" }).then((res) => {
@@ -137,6 +147,7 @@ export default {
         this.webdav.username = s.webdavUsername || "";
         this.webdav.password = s.webdavPassword || "";
         this.webdav.connectionMode = s.webdavConnectionMode || "followSubscription";
+        this.savedWebdav = { ...this.webdav };
       }
     });
   },
@@ -153,6 +164,7 @@ export default {
       });
     },
     handleCreate() {
+      if (this.creating) return;
       this.creating = true;
       this.$axios({ url: apiRoot + "/backup", method: "post" })
         .then((res) => {
@@ -172,7 +184,8 @@ export default {
         });
     },
     saveWebdavConfig() {
-      // PUT the whole setting object with the webdav fields patched in.
+      const config = { ...this.webdav };
+      if (Object.keys(config).every(key => config[key] === this.savedWebdav[key])) return Promise.resolve();
       return this.$axios({ url: apiRoot + "/setting", method: "get" }).then((res) => {
         if (
           !res.data ||
@@ -183,15 +196,18 @@ export default {
           return Promise.reject(new Error("failed to load setting"));
         }
         const s = Object.assign({}, res.data.data.setting);
-        s.webdavUrl = this.webdav.url;
-        s.webdavUsername = this.webdav.username;
-        s.webdavPassword = this.webdav.password;
-        s.webdavConnectionMode = this.webdav.connectionMode;
+        s.webdavUrl = config.url;
+        s.webdavUsername = config.username;
+        s.webdavPassword = config.password;
+        s.webdavConnectionMode = config.connectionMode;
         return this.$axios({ url: apiRoot + "/setting", method: "put", data: s });
       }).then((res) => {
         if (!res.data || res.data.code !== "SUCCESS") {
           throw new Error(res.data?.message || this.$t("common.fail"));
         }
+        this.remoteItems = [];
+        this.listed = false;
+        this.savedWebdav = config;
         return res;
       });
     },
@@ -205,6 +221,8 @@ export default {
       });
     },
     handleSaveWebdav() {
+      if (this.remoteBusy) return;
+      this.saving = true;
       this.saveWebdavConfig()
         .then(() => {
           this.$buefy.toast.open({
@@ -215,9 +233,11 @@ export default {
             queue: false,
           });
         })
-        .catch((err) => this.showWebdavError(err));
+        .catch(this.showWebdavError)
+        .finally(() => { this.saving = false; });
     },
     handleUpload() {
+      if (this.remoteBusy) return;
       this.uploading = true;
       this.saveWebdavConfig()
         .then(() => this.$axios({ url: apiRoot + "/webdavBackup", method: "post" }))
@@ -230,28 +250,34 @@ export default {
               duration: 3000,
               queue: false,
             });
-            this.handleListRemote();
           });
+          if (res.data.code === "SUCCESS") return this.listRemote();
         })
         .catch((err) => this.showWebdavError(err))
         .finally(() => {
           this.uploading = false;
+          this.load();
         });
     },
     handleListRemote() {
+      if (this.remoteBusy) return;
       this.listing = true;
-      this.$axios({ url: apiRoot + "/webdavBackups", method: "get" })
+      this.saveWebdavConfig().then(this.listRemote)
+        .catch(this.showWebdavError)
+        .finally(() => { this.listing = false; });
+    },
+    listRemote() {
+      return this.$axios({ url: apiRoot + "/webdavBackups", method: "get" })
         .then((res) => {
           handleResponse(res, this, () => {
             this.remoteItems = res.data.data.webdavBackups || [];
             this.listed = true;
           });
-        })
-        .finally(() => {
-          this.listing = false;
         });
     },
     handleRestore(source, name) {
+      if (this.restoring) return;
+      this.restoring = true;
       this.$buefy.dialog.confirm({
         title: this.$t("backup.restore"),
         message: this.$t("backup.restoreConfirm"),
@@ -259,6 +285,7 @@ export default {
         cancelText: this.$t("operations.cancel"),
         type: "is-danger",
         hasIcon: true,
+        onCancel: () => { this.restoring = false; },
         onConfirm: () => {
           this.$axios({
             url: apiRoot + "/backupRestore",
@@ -267,14 +294,14 @@ export default {
           }).then((res) => {
             handleResponse(res, this, () => {
               this.$buefy.toast.open({
-                message: this.$t("backup.restoring"),
+                message: this.$t(res.data.data?.restartRequired ? "backup.restartRequired" : "backup.restoring"),
                 type: "is-success",
                 position: "is-top",
                 duration: 3000,
                 queue: false,
               });
             });
-          });
+          }).catch(this.showWebdavError).finally(() => { this.restoring = false; });
         },
       });
     },

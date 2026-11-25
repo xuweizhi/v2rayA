@@ -18,9 +18,9 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/v2rayA/v2rayA/conf"
+	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/kernel/v2ray/asset"
 	"github.com/v2rayA/v2rayA/kernel/v2ray/where"
-	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 )
 
@@ -153,6 +153,7 @@ var tinytunDefaultSkipNetworks = []string{
 // tinyTunState tracks the running TinyTun process.
 var tinyTunState struct {
 	cancel   context.CancelFunc
+	setting  *configure.Setting
 	done     chan struct{} // closed by the monitor goroutine when cmd.Wait() returns
 	mu       sync.Mutex
 	stopping int32 // atomic; 1 while stopTinyTun is in progress
@@ -423,34 +424,6 @@ func collectExcludeProcesses(customRaw string) []string {
 	return dedupeStrings(processes)
 }
 
-// normalizeTinyTunServerAddr converts a v2rayA DNS server string to a plain "IP:port" address
-// for use in TinyTun's UDP protocol groups. Returns "" for servers with non-UDP schemes
-// (https://, tls://, tcp://), for "localhost", "fakedns", or for domain-based addresses.
-// Note: TinyTun v0.0.1-beta.4 supports DoT/DoH/DoQ, but v2rayA DNS config does not distinguish
-// protocol types, so we only emit plain UDP groups here.
-func normalizeTinyTunServerAddr(server string) string {
-	if strings.HasPrefix(server, "https://") ||
-		strings.HasPrefix(server, "tcp://") ||
-		strings.HasPrefix(server, "tls://") ||
-		server == "localhost" ||
-		server == "fakedns" {
-		return ""
-	}
-	host, port, err := net.SplitHostPort(server)
-	if err != nil {
-		// No port — must be a plain IP address.
-		if net.ParseIP(server) != nil {
-			return server + ":53"
-		}
-		// Domain-based address: not resolvable at config time for TinyTun direct mode.
-		return ""
-	}
-	if net.ParseIP(host) == nil {
-		return ""
-	}
-	return host + ":" + port
-}
-
 // domainPatternToYamlRule converts a v2rayA domain pattern and routing action into a TinyTun
 // YAML compact routing rule string: "match(<condition>),<action>".
 //
@@ -508,93 +481,78 @@ func domainPatternToYamlRule(pattern, geositePath, action string) (string, bool)
 	return fmt.Sprintf("match(%s),%s", condition, action), true
 }
 
-// buildTinyTunDNSConfig translates v2rayA DNS rules into a TinyTun DNS configuration.
-// TinyTun v0.0.1-beta.8 handles DNS routing natively using two upstream groups
-// ("direct" for plain UDP and "proxy" for DNS-over-TCP via SOCKS5); v2ray only forwards.
-func buildTinyTunDNSConfig() tinytunDnsConf {
-	rules := configure.GetDnsRulesNotNil()
-
-	// Resolve the geosite.dat path once; used for every geosite: pattern.
-	// Normalize to forward slashes so the path is valid YAML on Windows.
+// TinyTun selects upstreams by group. Keep independently routed resolvers in
+// separate groups, even when they share the same outbound.
+func buildTinyTunDNSConfigFromRules(rawRules []configure.DnsRule) (tinytunDnsConf, error) {
 	geositePath, _ := asset.GetV2rayLocationAsset("geosite.dat")
-	geositePath = strings.ReplaceAll(geositePath, "\\", "/")
-
-	var (
-		directServers []string
-		proxyServers  []string
-		routingRules  []string
-		fallbackGroup = "proxy"
-	)
-
-	for _, rule := range rules {
-		if rule.Server == "" {
+	geositePath = filepath.ToSlash(geositePath)
+	var routingRules []string
+	var groups []tinytunDnsGroupConf
+	fallbackGroup := ""
+	groupsByEndpoint := make(map[[3]string]string)
+	for i, rule := range configure.MigrateDnsRules(rawRules) {
+		if rule.IP != "" || rule.ClientIP != "" || (rule.QueryType != "" && rule.QueryType != "*") {
+			return tinytunDnsConf{}, fmt.Errorf("TinyTun DNS rule %q: IP, client IP and query type filters require the core DNS module", rule.RuleID)
+		}
+		action := "reject"
+		if rule.Action != "reject" && rule.Outbound != "block" {
+			upstream := rule.Outbound
+			if rule.Action == "bypass" {
+				upstream = "direct"
+			}
+			if upstream != "proxy" && upstream != "direct" {
+				return tinytunDnsConf{}, fmt.Errorf("TinyTun DNS rule %q: unsupported outbound %q", rule.RuleID, upstream)
+			}
+			server := rule.Upstream
+			if server == "localhost" {
+				server = "127.0.0.1"
+			}
+			protocol, addr, _, err := parseDNSUpstream(server)
+			if err != nil {
+				return tinytunDnsConf{}, fmt.Errorf("TinyTun DNS rule %q: %w", rule.RuleID, err)
+			}
+			switch protocol {
+			case "tcp-tls":
+				protocol = "dot"
+			case "https":
+				protocol = "doh"
+			case "quic":
+				protocol = "doq"
+			}
+			endpoint := [3]string{protocol, upstream, addr}
+			action = groupsByEndpoint[endpoint]
+			if action == "" {
+				action = fmt.Sprintf("dns-%d", i+1)
+				groups = append(groups, tinytunDnsGroupConf{Name: action, Servers: []string{addr}, Upstream: upstream, Protocol: protocol, Strategy: "sequential"})
+				groupsByEndpoint[endpoint] = action
+			}
+		}
+		domain := strings.TrimSpace(rule.Domain)
+		if domain == "" {
+			if action == "reject" {
+				routingRules = append(routingRules, "match(*),reject")
+			} else {
+				fallbackGroup = action
+			}
 			continue
 		}
-
-		// Map outbound to TinyTun upstream type.
-		upstream := "proxy" // non-direct, non-block → proxy
-		switch rule.Outbound {
-		case "direct":
-			upstream = "direct"
-		case "block":
-			upstream = "block"
-		}
-
-		// Collect server addresses per upstream group (skip unsupported formats).
-		if upstream != "block" {
-			if addr := normalizeTinyTunServerAddr(rule.Server); addr != "" {
-				if upstream == "direct" {
-					directServers = append(directServers, addr)
-				} else {
-					proxyServers = append(proxyServers, addr)
-				}
-			}
-		}
-
-		// Build routing rules from domain patterns.
-		action := upstream // "direct" or "proxy"; "block" becomes "reject"
-		if upstream == "block" {
-			action = "reject"
-		}
-		domains := strings.Split(strings.TrimSpace(rule.Domains), "\n")
-		hasValidDomains := false
-		for _, d := range domains {
-			d = strings.TrimSpace(d)
-			if d == "" {
+		for _, pattern := range strings.FieldsFunc(domain, func(r rune) bool { return r == '\n' || r == ',' }) {
+			pattern = strings.TrimSpace(pattern)
+			if pattern == "" {
 				continue
 			}
-			ruleStr, ok := domainPatternToYamlRule(d, geositePath, action)
-			if !ok {
-				continue
-			}
-			hasValidDomains = true
-			routingRules = append(routingRules, ruleStr)
-		}
-
-		// Rules without domains act as the fallback DNS server.
-		if !hasValidDomains && strings.TrimSpace(rule.Domains) == "" {
-			switch upstream {
-			case "direct":
-				fallbackGroup = "direct"
-			case "proxy":
-				fallbackGroup = "proxy"
-				// "block" as fallback is unusual; leave fallbackGroup unchanged.
+			if expression, ok := domainPatternToYamlRule(pattern, geositePath, action); ok {
+				routingRules = append(routingRules, expression)
+			} else {
+				return tinytunDnsConf{}, fmt.Errorf("TinyTun DNS rule %q: unavailable domain matcher %q", rule.RuleID, pattern)
 			}
 		}
 	}
-
-	// Fill in default servers if none were collected for a group.
-	// These defaults mirror TinyTun's own built-in defaults.
-	if len(directServers) == 0 {
-		directServers = []string{"223.5.5.5:53", "114.114.114.114:53"}
-	}
-	if len(proxyServers) == 0 {
-		proxyServers = []string{"8.8.8.8:53", "1.1.1.1:53"}
-	}
-
-	groups := []tinytunDnsGroupConf{
-		{Name: "direct", Servers: dedupeStrings(directServers), Strategy: "concurrent", Upstream: "direct", Protocol: "udp"},
-		{Name: "proxy", Servers: dedupeStrings(proxyServers), Strategy: "concurrent", Upstream: "proxy", Protocol: "udp"},
+	if fallbackGroup == "" {
+		if len(groups) == 0 {
+			groups = append(groups, tinytunDnsGroupConf{Name: "proxy", Servers: []string{"1.0.0.1:53"}, Upstream: "proxy", Protocol: "udp"})
+		}
+		fallbackGroup = groups[0].Name
 	}
 
 	return tinytunDnsConf{
@@ -614,12 +572,16 @@ func buildTinyTunDNSConfig() tinytunDnsConf {
 			EnableCache:   true,
 			CacheCapacity: 4096,
 		},
-	}
+	}, nil
 }
 
 // generateTinyTunConfig generates a TinyTun YAML config file and returns its path.
 func generateTinyTunConfig(tmpl *Template) (string, error) {
-	setting := configure.GetSettingNotNil()
+	setting := tmpl.Setting
+	dns, err := buildTinyTunDNSConfigFromRules(configure.GetDnsRulesNotNil())
+	if err != nil {
+		return "", err
+	}
 	skipIPs := dedupeStrings(append([]string{"127.0.0.1", "::1", tinytunTunIPv4}, collectNodeIPs(tmpl)...))
 	skipNetworks := dedupeStrings(append(append([]string{}, tinytunDefaultSkipNetworks...), collectBypassInterfaceNetworks(setting.TunBypassInterfaces)...))
 
@@ -643,7 +605,7 @@ func generateTinyTunConfig(tmpl *Template) (string, error) {
 			Address: fmt.Sprintf("127.0.0.1:%d", tinytunSocksPort),
 		},
 		Proxies: nil,
-		DNS:     buildTinyTunDNSConfig(),
+		DNS:     dns,
 		Filtering: tinytunFilteringConf{
 			SkipIPs:          skipIPs,
 			SkipNetworks:     skipNetworks,
@@ -719,11 +681,10 @@ func resolveShellInfo(shellType, shellPath string) (shellInfo, error) {
 
 // runTinyTunScript writes the given script to a temp file and executes it
 // with the configured shell.  stage is only used for logging.
-func runTinyTunScript(stage, script string) error {
+func runTinyTunScript(setting *configure.Setting, stage, script string) error {
 	if strings.TrimSpace(script) == "" {
 		return nil
 	}
-	setting := configure.GetSettingNotNil()
 	si, err := resolveShellInfo(setting.TunRouteShellType, setting.TunRouteShellPath)
 	if err != nil {
 		return fmt.Errorf("tinytun route script (%s): %w", stage, err)
@@ -805,6 +766,10 @@ func (w tinytunLineWriter) Write(p []byte) (n int, err error) {
 
 // startTinyTun generates the TinyTun config and starts the TinyTun process.
 func startTinyTun(tmpl *Template) error {
+	// Ensure any previous TinyTun instance is stopped and has exited before
+	// starting a new one (prevents tun device conflicts and orphaned processes).
+	stopTinyTun()
+
 	binPath, err := GetTinyTunBinPath()
 	if err != nil {
 		return err
@@ -818,10 +783,11 @@ func startTinyTun(tmpl *Template) error {
 	log.Info("Starting TinyTun from %v with config %v", binPath, configPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	setting := configure.GetSettingNotNil()
+	setting := tmpl.Setting
 
 	cmdArgs := []string{"run", "--config", configPath}
 	cmd := exec.CommandContext(ctx, binPath, cmdArgs...)
+	cmd.WaitDelay = 3 * time.Second
 	cmd.Stdout = tinytunLineWriter{}
 	cmd.Stderr = tinytunLineWriter{}
 
@@ -842,14 +808,9 @@ func startTinyTun(tmpl *Template) error {
 	doneCh := make(chan struct{})
 
 	tinyTunState.mu.Lock()
-	if tinyTunState.cancel != nil {
-		tinyTunState.cancel()
-	}
-	// Set the new cancel function before resetting the stopping flag so that
-	// any concurrent stopTinyTun that reads stopping==0 already sees the new
-	// cancel and will correctly cancel the new process.
 	tinyTunState.cancel = cancel
 	tinyTunState.done = doneCh
+	tinyTunState.setting = setting
 	atomic.StoreInt32(&tinyTunState.stopping, 0)
 	tinyTunState.mu.Unlock()
 
@@ -869,13 +830,21 @@ func startTinyTun(tmpl *Template) error {
 		if atomic.LoadInt32(&tinyTunState.stopping) != 0 {
 			return
 		}
-		log.Warn("tinytun: process exited unexpectedly, stopping proxy")
-		ProcessManager.Stop(true)
+		ProcessManager.lifecycle.Lock()
+		defer ProcessManager.lifecycle.Unlock()
+		tinyTunState.mu.Lock()
+		current := tinyTunState.done == doneCh
+		tinyTunState.mu.Unlock()
+		if current && ProcessManager.GetRunningTemplate() == tmpl {
+			log.Warn("tinytun: process exited unexpectedly, stopping proxy")
+			ProcessManager.stop(true)
+			_ = configure.SetLastKernelExitStatus(configure.LastKernelExitCrashed)
+		}
 	}()
 
 	// Run user-defined setup script when auto_route is disabled.
 	if !setting.TunAutoRoute {
-		if err = runTinyTunScript("setup", setting.TunSetupScript); err != nil {
+		if err = runTinyTunScript(setting, "setup", setting.TunSetupScript); err != nil {
 			log.Warn("tinytun setup script error: %v", err)
 		}
 	}
@@ -885,35 +854,34 @@ func startTinyTun(tmpl *Template) error {
 
 // stopTinyTun stops the running TinyTun process if one is active.
 func stopTinyTun() {
-	// Run user-defined teardown script when auto_route is disabled.
-	setting := configure.GetSettingNotNil()
-	if !setting.TunAutoRoute {
-		if err := runTinyTunScript("teardown", setting.TunTeardownScript); err != nil {
-			log.Warn("tinytun teardown script error: %v", err)
-		}
-	}
-
 	tinyTunState.mu.Lock()
-	// Signal the unexpected-exit monitor that this is an intentional stop
-	// before cancelling the context, to close the race window between the
-	// process exiting and ctx.Done() being observable.
-	atomic.StoreInt32(&tinyTunState.stopping, 1)
+	wasRunning := tinyTunState.cancel != nil
+	if wasRunning {
+		// Signal the unexpected-exit monitor that this is an intentional stop
+		// before cancelling the context, to close the race window between the
+		// process exiting and ctx.Done() being observable.
+		atomic.StoreInt32(&tinyTunState.stopping, 1)
+	}
 	cancel := tinyTunState.cancel
 	doneCh := tinyTunState.done
+	setting := tinyTunState.setting
+	tinyTunState.setting = nil
 	tinyTunState.cancel = nil
+	tinyTunState.done = nil
 	tinyTunState.mu.Unlock()
 
-	if cancel != nil {
-		log.Info("Stopping TinyTun")
-		cancel()
-		// Wait for the process to exit (cmd.Wait in the monitor goroutine closes
-		// doneCh).  A 5-second timeout prevents an indefinite hang on a stuck process.
-		if doneCh != nil {
-			select {
-			case <-doneCh:
-			case <-time.After(5 * time.Second):
-				log.Warn("tinytun: process did not exit within 5 seconds after stop")
-			}
+	if !wasRunning {
+		return
+	}
+
+	log.Info("Stopping TinyTun")
+	cancel()
+	// CommandContext kills the child, and WaitDelay bounds inherited pipe waits.
+	<-doneCh
+
+	if !setting.TunAutoRoute {
+		if err := runTinyTunScript(setting, "teardown", setting.TunTeardownScript); err != nil {
+			log.Warn("tinytun teardown script error: %v", err)
 		}
 	}
 }

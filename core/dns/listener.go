@@ -33,6 +33,7 @@ type DnsListener struct {
 	config  *DnsListenerConfig
 	handler Handler
 	servers []serverPair
+	mu      sync.RWMutex
 	wg      sync.WaitGroup
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -58,7 +59,9 @@ func (l *DnsListener) Start() error {
 		return fmt.Errorf("dns listener: invalid config: %w", err)
 	}
 
+	l.mu.Lock()
 	l.ctx, l.cancel = context.WithCancel(context.Background())
+	l.mu.Unlock()
 
 	// Collect all listen addresses (primary + extras).
 	allAddrs := []string{l.config.ListenAddr}
@@ -71,7 +74,9 @@ func (l *DnsListener) Start() error {
 			l.Stop()
 			return fmt.Errorf("dns listener: %s: %w", addr, err)
 		}
+		l.mu.Lock()
 		l.servers = append(l.servers, *pair)
+		l.mu.Unlock()
 	}
 
 	return nil
@@ -169,12 +174,18 @@ func (l *DnsListener) activateServer(server *dns.Server) error {
 
 // Stop gracefully shuts down all listeners.
 func (l *DnsListener) Stop() error {
-	if l.cancel != nil {
-		l.cancel()
+	l.mu.Lock()
+	cancel := l.cancel
+	servers := l.servers
+	l.servers = nil
+	l.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
 	}
 
 	var lastErr error
-	for _, pair := range l.servers {
+	for _, pair := range servers {
 		if pair.udp != nil {
 			if err := pair.udp.Shutdown(); err != nil {
 				log.Printf("[dns] UDP shutdown error: %v", err)
@@ -190,7 +201,6 @@ func (l *DnsListener) Stop() error {
 	}
 
 	l.wg.Wait()
-	l.servers = nil
 
 	if lastErr != nil {
 		return fmt.Errorf("dns listener: shutdown error: %w", lastErr)
@@ -201,6 +211,10 @@ func (l *DnsListener) Stop() error {
 // handlePacket is the callback invoked by miekg/dns for each incoming query.
 func (l *DnsListener) handlePacket(w dns.ResponseWriter, msg *dns.Msg) {
 	if msg == nil {
+		return
+	}
+	if msg.Response {
+		log.Printf("[dns] ignoring DNS response packet (QR=1) from %s", w.RemoteAddr())
 		return
 	}
 	if len(msg.Question) == 0 {
@@ -222,9 +236,20 @@ func (l *DnsListener) handlePacket(w dns.ResponseWriter, msg *dns.Msg) {
 		return
 	}
 
+	qclass := q.Qclass
+	if qclass == 0 {
+		qclass = dns.ClassINET
+	}
+	dnssecOK := false
+	if opt := msg.IsEdns0(); opt != nil {
+		dnssecOK = opt.Do()
+	}
+
 	query := &DnsQuery{
-		Name:  q.Name,
-		QType: QueryType(q.Qtype),
+		Name:     normalizeDomain(q.Name),
+		QType:    QueryType(q.Qtype),
+		QClass:   qclass,
+		DNSSECOK: dnssecOK,
 	}
 
 	switch addr := clientAddr.(type) {
@@ -236,7 +261,13 @@ func (l *DnsListener) handlePacket(w dns.ResponseWriter, msg *dns.Msg) {
 
 	dnsLogf("[dns] query: %s %s from %s", dns.Type(q.Qtype).String(), q.Name, clientAddr.String())
 
-	ctx, cancel := context.WithTimeout(l.ctx, time.Duration(l.config.Timeout)*time.Second)
+	l.mu.RLock()
+	baseCtx := l.ctx
+	l.mu.RUnlock()
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(baseCtx, time.Duration(l.config.Timeout)*time.Second)
 	defer cancel()
 
 	resp, err := l.handler.HandleQuery(ctx, query)
@@ -311,11 +342,15 @@ func (l *DnsListener) handlePacket(w dns.ResponseWriter, msg *dns.Msg) {
 
 // Healthy returns true if all listeners are active.
 func (l *DnsListener) Healthy() bool {
-	if len(l.servers) == 0 {
+	l.mu.RLock()
+	hasServers := len(l.servers) > 0
+	ctx := l.ctx
+	l.mu.RUnlock()
+	if !hasServers || ctx == nil {
 		return false
 	}
 	select {
-	case <-l.ctx.Done():
+	case <-ctx.Done():
 		return false
 	default:
 		return true

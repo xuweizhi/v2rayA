@@ -24,4 +24,8 @@ message ClientConfig {
   bool disable_sni = 9;
   // Pinned peer certificate chain SHA256 hash. Accepts hex or base64.
   string pinned_peer_certificate_chain_sha256 = 10;
+  // Verify peer certificate against these DNS names (comma-separated).
+  string verify_peer_cert_by_name = 11;
+  // Individual certificate SHA-256 pins (comma-separated).
+  string pinned_peer_cert_sha256 = 12;
 }

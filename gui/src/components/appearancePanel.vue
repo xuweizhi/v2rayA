@@ -620,6 +620,7 @@ export default {
       this.customFontPresets = defaults.customFontPresets;
       this.fontSize = defaults.fontSize;
       this.layoutWidth = defaults.layoutWidth;
+      this.selectColorMode("auto");
       this.closeCreator();
       this.$buefy.toast.open({
         message: this.$t("appearance.resetSuccess"),

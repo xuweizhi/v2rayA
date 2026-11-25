@@ -24,6 +24,8 @@ import (
 const HttpTestURL = "https://gstatic.com/generate_204"
 
 func Ping(which []*configure.Which, timeout time.Duration) (_ []*configure.Which, err error) {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
 	var whiches = configure.NewWhiches(which)
 	// Deduplicate whiches to Ping
 	which = whiches.GetNonDuplicated()
@@ -289,7 +291,11 @@ func httpLatency(which *configure.Which, port string, timeout time.Duration, cus
 	if len(customTestUrl) != 0 {
 		testUrl = customTestUrl
 	}
-	req, _ := http.NewRequest("GET", testUrl, nil)
+	req, err := http.NewRequest("GET", testUrl, nil)
+	if err != nil {
+		which.Latency = "INVALID URL"
+		return
+	}
 	//req, _ := http.NewRequest("GET", "http://www.gstatic.com/generate_204", nil)
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Cache-Control", "no-cache")
@@ -297,6 +303,9 @@ func httpLatency(which *configure.Which, port string, timeout time.Duration, cus
 	req.Header.Set("Connection", "close")
 	req.Header.Set("User-Agent", "curl/7.70.0")
 	resp, err := c.Do(req)
+	if resp != nil && resp.Body != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		if err != nil {
 			var netErr net.Error
@@ -319,7 +328,6 @@ func httpLatency(which *configure.Which, port string, timeout time.Duration, cus
 		}
 		return
 	}
-	_ = resp.Body.Close()
 	which.Latency = fmt.Sprintf("%.0fms", time.Since(t).Seconds()*1000)
 }
 

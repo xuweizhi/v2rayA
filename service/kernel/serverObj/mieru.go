@@ -114,7 +114,7 @@ func (s *Mieru) Configuration(info PriorInfo) (c Configuration, err error) {
 
 func (s *Mieru) ExportToURL() string {
 	if s.Link != "" {
-		return s.Link
+		return updateLinkFragment(s.Link, s.Name)
 	}
 	u := url.URL{
 		Scheme:   "mieru",
@@ -158,4 +158,5 @@ func (s *Mieru) GetName() string {
 
 func (s *Mieru) SetName(name string) {
 	s.Name = name
+	s.Link = updateLinkFragment(s.Link, name)
 }

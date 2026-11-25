@@ -17,6 +17,14 @@ import (
 // Timer refreshes bypass the HTTP controller's update guard.
 var membershipMu sync.Mutex
 
+// WithMembershipLock runs fn while holding membershipMu so DB mutations and
+// core reloads are serialized across HTTP controllers and background watchers.
+func WithMembershipLock(fn func() error) error {
+	membershipMu.Lock()
+	defer membershipMu.Unlock()
+	return fn()
+}
+
 type SubscriptionSource struct {
 	ID    int64  `json:"id"`
 	Label string `json:"label"`

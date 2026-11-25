@@ -39,35 +39,40 @@ func (t *Template) SetOutboundSockopt() {
 		t.checkAndSetMark(&t.Outbounds[i], mark)
 	}
 }
+
+var isIPv6Supported = iptables.IsIPv6Supported
+
 func (t *Template) setDualStack() {
 	const (
 		tag4Suffix = "_ipv4"
 		tag6Suffix = "_ipv6"
 	)
+	v6Supported := isIPv6Supported()
 	tagMap := make(map[string]struct{})
 	inbounds6 := deepcopy.Copy(t.Inbounds).([]coreObj.Inbound)
 
-	// Add ::1 twins for every inbound that listens on a 127.x loopback address.
-	// Inbounds on 0.0.0.0 (LAN-shared) are not duplicated.
+	// Add ::1 twins for every inbound that listens on a 127.x loopback address
+	// (including transparent Redirect and TProxy when PortSharing is off).
+	// For PortSharing-enabled transparent inbounds on 0.0.0.0, upgrade to dual-stack "::"
+	// when IPv6 is supported so both IPv4 and IPv6 redirected/tproxied traffic are accepted.
 	// Special exclusions:
-	//   transparent+Redirect  – kernel REDIRECT requires 0.0.0.0
-	//   dns-in                – receives the 127.2.0.17 treatment below
+	//   dns-in – receives the 127.2.0.17 treatment below
 	for i := range t.Inbounds {
 		tag := t.Inbounds[i].Tag
-		if tag == "transparent" && t.Setting.TransparentType == configure.TransparentRedirect {
-			// https://ipset.netfilter.org/iptables-extensions.man.html#lbDK
-			// REDIRECT rewrites the destination to the primary address of the incoming interface,
-			// so the inbound must stay at 0.0.0.0.
-			inbounds6[i].Tag = "THIS_IS_A_DROPPED_TAG"
-			continue
-		}
 		if tag == "dns-in" {
 			// Handled separately — skip generic duplication.
 			inbounds6[i].Tag = "THIS_IS_A_DROPPED_TAG"
 			continue
 		}
+		if tag == "transparent" && t.Inbounds[i].Listen == "0.0.0.0" {
+			if v6Supported {
+				t.Inbounds[i].Listen = "::"
+			}
+			inbounds6[i].Tag = "THIS_IS_A_DROPPED_TAG"
+			continue
+		}
 		if !strings.HasPrefix(t.Inbounds[i].Listen, "127.") {
-			// 0.0.0.0 or other non-loopback address — no ::1 twin needed.
+			// 0.0.0.0, ::, or other non-loopback address — no ::1 twin needed.
 			inbounds6[i].Tag = "THIS_IS_A_DROPPED_TAG"
 			continue
 		}
@@ -85,7 +90,7 @@ func (t *Template) setDualStack() {
 		}
 	}
 
-	if iptables.IsIPv6Supported() {
+	if v6Supported {
 		t.Inbounds = append(t.Inbounds, inbounds6...)
 	}
 
@@ -98,7 +103,7 @@ func (t *Template) setDualStack() {
 				tag6 = append(tag6, tag+tag6Suffix)
 			}
 		}
-		if v6supported := iptables.IsIPv6Supported(); len(tag6) > 0 && v6supported {
+		if len(tag6) > 0 && v6Supported {
 			t.Routing.Rules[i].InboundTag = append(t.Routing.Rules[i].InboundTag, tag6...)
 		}
 	}
@@ -110,12 +115,12 @@ func (t *Template) setDualStack() {
 		if t.Inbounds[i].Tag != "dns-in" {
 			continue
 		}
-		if !t.Setting.PortSharing {
+		if t.Setting == nil || !t.Setting.PortSharing {
 			// PortSharing off: move the single dns-in inbound to loopback-only.
 			t.Inbounds[i].Listen = "127.2.0.17"
 		} else {
 			// PortSharing on: keep 0.0.0.0 for LAN; also add a local copy.
-			if couldListenLocalhost, e := CouldLocalDnsListen(); couldListenLocalhost && e != nil {
+			if couldListenLocalhost, e := couldLocalDnsListen(); couldListenLocalhost && e != nil {
 				// Port 53 is already in use on localhost; only listen on the special address.
 				t.Inbounds[i].Listen = "127.2.0.17"
 			} else {
@@ -220,7 +225,6 @@ func (t *Template) resolveOutbounds(
 	type _outbound struct {
 		weight   int
 		outbound coreObj.OutboundObject
-		balancer bool
 	}
 	serverInfo2Index := make(map[*serverInfo]int)
 	for i := range serverData.ServerInfos {
@@ -232,99 +236,44 @@ func (t *Template) resolveOutbounds(
 	var outbounds []_outbound
 	setting := configure.GetSettingNotNil()
 	for obj, sInfos := range serverData.ServerObj2ServerInfos() {
-		var (
-			usedByBalancer bool
-		)
-		// an vmessInfo(server template) may be used by multiple serverInfos(a connected server)
-
-		// outbound name is not just v2ray outbound tag, it may be a balancer
-		type balancer struct {
-			name       string
-			serverInfo *serverInfo
-		}
-		var balancers []balancer
-		for _, sInfo := range sInfos {
-			if len(serverData.OutboundName2ServerObjs[sInfo.OutboundName]) > 1 {
-				// balancer
-				if !usedByBalancer {
-					usedByBalancer = true
-				}
-				balancers = append(balancers, balancer{
-					name:       sInfo.OutboundName,
-					serverInfo: sInfo,
-				})
-			} else {
-				// pure outbound
-				outboundTag := sInfo.OutboundName
-				c, err := obj.Configuration(serverObj.PriorInfo{
-					Variant:     t.Variant,
-					CoreVersion: t.CoreVersion,
-					Tag:         outboundTag,
-					PluginPort:  sInfo.PluginPort,
-					Backend:     resolveEffectiveBackend(obj, setting),
-				})
-				if err != nil {
-					return nil, nil, err
-				}
-				// Store server info for this outbound
-				t.serverInfoMap[outboundTag] = sInfo
-				extraOutbounds = append(extraOutbounds, c.ExtraOutbounds...)
-				outbounds = append(outbounds, _outbound{
-					weight:   serverInfo2Index[sInfo],
-					outbound: c.CoreOutbound,
-					balancer: false,
-				})
-				outboundTags[serverInfo2Index[sInfo]] = outboundTag
-				supportUDP[sInfo.OutboundName] = c.UDPSupport
+		balancedGroups := 0
+		for _, info := range sInfos {
+			if len(serverData.OutboundName2ServerObjs[info.OutboundName]) > 1 {
+				balancedGroups++
 			}
 		}
-		if usedByBalancer {
-			// the v2ray outbound is shared by balancers
-			outboundTag := GroupWrapper(obj.GetName())
+		for _, info := range sInfos {
+			group := info.OutboundName
+			idx := serverInfo2Index[info]
+			balanced := len(serverData.OutboundName2ServerObjs[group]) > 1
+			tag := group
+			if balanced {
+				tag = GroupWrapper(obj.GetName())
+				if balancedGroups > 1 {
+					// Xray's balancer reads aggregate observations by outbound tag.
+					// Give each group's probe an independent target and result.
+					tag = fmt.Sprintf("%s.%d.%s", internalGroupTag("member", group), idx, tag)
+				}
+			}
 			c, err := obj.Configuration(serverObj.PriorInfo{
-				Variant:     t.Variant,
-				CoreVersion: t.CoreVersion,
-				Tag:         outboundTag,
-				PluginPort:  0,
-				Backend:     resolveEffectiveBackend(obj, setting),
+				Variant: t.Variant, CoreVersion: t.CoreVersion, Tag: tag,
+				PluginPort: info.PluginPort, Backend: resolveEffectiveBackend(obj, setting),
 			})
 			if err != nil {
-				// Store server info for balancer outbound (use first balancer's info)
-				if len(balancers) > 0 {
-					t.serverInfoMap[outboundTag] = balancers[0].serverInfo
-				}
 				return nil, nil, err
 			}
+			if balanced {
+				c.CoreOutbound.Balancers = []string{group}
+			}
+			if c.PluginManagerServerLink != "" {
+				t.pluginManagers = append(t.pluginManagers, pluginManagerNode{c.PluginManagerServerLink, info.PluginPort})
+			}
+			outboundTags[idx] = tag
+			t.serverInfoMap[tag] = info
 			extraOutbounds = append(extraOutbounds, c.ExtraOutbounds...)
-			for _, v := range balancers {
-				c.CoreOutbound.Balancers = append(c.CoreOutbound.Balancers, v.name)
-			}
-			// we use the lowest serverInfo index as the order weight of the balancer outbound
-			weight := -1
-			for _, v := range balancers {
-				index := serverInfo2Index[v.serverInfo]
-				if weight == -1 || weight > index {
-					weight = index
-				}
-				// tag
-				outboundTags[index] = outboundTag
-			}
-			outbounds = append(outbounds, _outbound{
-				weight:   weight,
-				outbound: c.CoreOutbound,
-				balancer: true,
-			})
-
-			// if any node does not support UDP, the outbound should be tagged as UDP unsupported
-			for _, outboundName := range c.CoreOutbound.Balancers {
-				_supportUDP := c.UDPSupport
-				if _, ok := supportUDP[outboundName]; !ok {
-					supportUDP[outboundName] = _supportUDP
-				}
-				if supportUDP[outboundName] && !_supportUDP {
-					supportUDP[outboundName] = false
-				}
-			}
+			outbounds = append(outbounds, _outbound{weight: idx, outbound: c.CoreOutbound})
+			previous, known := supportUDP[group]
+			supportUDP[group] = (!known || previous) && c.UDPSupport
 		}
 	}
 	sort.Slice(outbounds, func(i, j int) bool {
@@ -384,6 +333,9 @@ func (t *Template) InsertMappingOutbound(o serverObj.ServerObj, inboundPort stri
 	})
 	if err != nil {
 		return err
+	}
+	if c.PluginManagerServerLink != "" {
+		t.pluginManagers = append(t.pluginManagers, pluginManagerNode{c.PluginManagerServerLink, pluginPort})
 	}
 	var mark = 0x80
 	t.checkAndSetMark(&c.CoreOutbound, mark)

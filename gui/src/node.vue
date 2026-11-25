@@ -163,6 +163,8 @@
             size="is-small"
             type="is-info"
             icon-left="access-point-network"
+            :loading="latencyTesting"
+            :disabled="latencyTesting"
             @click="handleClickLatency(true)"
           >
             PING
@@ -173,6 +175,8 @@
             type="is-info"
             outlined
             icon-left="web"
+            :loading="latencyTesting"
+            :disabled="latencyTesting"
             @click="handleClickLatency(false)"
           >
             HTTP
@@ -200,6 +204,8 @@
             type="is-danger"
             outlined
             icon-left="delete-outline"
+            :loading="deletingSelected"
+            :disabled="deletingSelected"
             @click="handleClickDelete"
           >
             {{ $t("operations.delete") }}
@@ -457,6 +463,8 @@
                     icon-left="sync"
                     outlined
                     type="is-warning"
+                    :loading="!!updatingSubscriptions[props.row.id]"
+                    :disabled="!!updatingSubscriptions[props.row.id]"
                     @click="handleClickUpdateSubscription(props.row)"
                   >
                     {{ $t("operations.update") }}
@@ -1153,9 +1161,14 @@ export default {
       connectedServerInfo: [],
       overHeight: false,
       scrollTimer: null,
+      loadTouchTimer: null,
       windowScrollHandler: null,
       coreVersionValid: true,
       coreVersionErr: "",
+      latencyTesting: false,
+      disconnecting: false,
+      deletingSelected: false,
+      updatingSubscriptions: {},
     };
   },
   computed: {
@@ -1209,7 +1222,7 @@ export default {
             (x._type === CONST.ServerType ||
               x._type === CONST.SubscriptionServerType)
         )
-        .map((row) => this.getTouchFromCheckedRow(row));
+        .map((row) => this.getTouchFromCheckedRow(row)).filter(Boolean);
     },
     hasConnectedCheckedRows() {
       const group = this.outbound || "proxy";
@@ -1234,6 +1247,30 @@ export default {
     },
   },
   watch: {
+    tab(index) {
+      this.checkedRows = [];
+      if (index < 2) this.hideDisabled = false;
+    },
+    nodeSearch() {
+      this.checkedRows = [];
+      this.resetCurrentPages();
+    },
+    subSearch() {
+      this.checkedRows = [];
+      this.resetCurrentPages();
+    },
+    quickFilter() {
+      this.checkedRows = [];
+      this.resetCurrentPages();
+    },
+    protocolFilter() {
+      this.checkedRows = [];
+      this.resetCurrentPages();
+    },
+    hideDisabled() {
+      this.checkedRows = [];
+      this.resetCurrentPages();
+    },
     "runningState.running"() {
       this.updateConnectView();
     },
@@ -1285,6 +1322,7 @@ export default {
     },
   },
   created() {
+    this._nodeDestroyed = false;
     if (localStorage["token"]) {
       this.loadNoviceMode();
     }
@@ -1292,25 +1330,43 @@ export default {
     this.coreVersionErr = localStorage["coreVersionErr"] || "";
     if (!localStorage["token"]) return; // Not authenticated yet — skip to avoid spurious 401 modals
     const loadTouch = (retries = 3) => {
+      if (this._nodeDestroyed) return;
       this.$axios({
         url: apiRoot + "/touch",
       }).then((res) => {
+        if (this._nodeDestroyed) return;
         if (res.data && res.data.code === "SUCCESS") {
           this.refreshTableData(res.data.data.touch, res.data.data.running, res.data.data.networkPaused);
           this.updateConnectView();
-          this.locateTabToConnected();
+          const maxTab = 1 + (this.tableData.subscriptions?.length || 0);
+          const savedTab =
+            localStorage.lastNodeTab !== undefined
+              ? parseInt(localStorage.lastNodeTab, 10)
+              : NaN;
+          if (!Number.isNaN(savedTab) && savedTab >= 0 && savedTab <= maxTab) {
+            this.tab = savedTab;
+          } else {
+            this.locateTabToConnected();
+          }
           this.ready = true;
         } else if (retries > 0) {
           // Non-SUCCESS response (e.g. server busy) — retry after a short delay
-          setTimeout(() => loadTouch(retries - 1), 2000);
+          this.loadTouchTimer = setTimeout(() => {
+            this.loadTouchTimer = null;
+            loadTouch(retries - 1);
+          }, 2000);
         } else {
           // Give up retrying; unblock the UI so the user isn't stuck on a spinner
           this.ready = true;
         }
       }).catch(() => {
+        if (this._nodeDestroyed) return;
         // Network error (can happen during Tun route setup on Windows) — retry
         if (retries > 0) {
-          setTimeout(() => loadTouch(retries - 1), 2000);
+          this.loadTouchTimer = setTimeout(() => {
+            this.loadTouchTimer = null;
+            loadTouch(retries - 1);
+          }, 2000);
         } else {
           this.ready = true;
         }
@@ -1319,6 +1375,11 @@ export default {
     loadTouch();
   },
   beforeDestroy() {
+    this._nodeDestroyed = true;
+    if (this.loadTouchTimer) {
+      clearTimeout(this.loadTouchTimer);
+      this.loadTouchTimer = null;
+    }
     if (this.windowScrollHandler) {
       window.removeEventListener("scroll", this.windowScrollHandler);
     }
@@ -1337,7 +1398,10 @@ export default {
     // if lastNodeTab in the local storage, set it as the current tab.
     const { lastNodeTab } = localStorage;
     if (lastNodeTab !== undefined) {
-      this.tab = parseInt(lastNodeTab);
+      const parsed = parseInt(lastNodeTab, 10);
+      if (!Number.isNaN(parsed) && parsed >= 0) {
+        this.tab = parsed;
+      }
     }
   },
   methods: {
@@ -1386,6 +1450,15 @@ export default {
     },
     getFilteredSubServers(sub, subi) {
       return this.filterNodeList(sub ? sub.servers : [], subi);
+    },
+    resetCurrentPages() {
+      this.$set(this.currentPage, "servers", 1);
+      this.$set(this.currentPage, "subscriptions", 1);
+      if (Array.isArray(this.tableData?.subscriptions)) {
+        for (const sub of this.tableData.subscriptions) {
+          this.$set(this.currentPage, sub.id, 1);
+        }
+      }
     },
     resetFilters() {
       this.nodeSearch = "";
@@ -1482,6 +1555,7 @@ export default {
           v.connected = false;
         });
       });
+      this.checkedRows = [];
       this.tableData = touch;
       if (running !== undefined) {
         Object.assign(this.runningState, {
@@ -1530,11 +1604,14 @@ export default {
       this.resetFilters();
       this.locateTabToConnected(which);
       let tabIndex = -1;
+      let targetPageKey = null;
+      let targetPageNum = 1;
       if (which._type === "server") {
         tabIndex = 1;
         const idx = this.tableData.servers.findIndex((s) => s.id === which.id);
         if (idx >= 0) {
-          this.$set(this.currentPage, "servers", Math.floor(idx / 100) + 1);
+          targetPageKey = "servers";
+          targetPageNum = Math.floor(idx / 100) + 1;
         }
       } else {
         tabIndex = 2 + which.sub;
@@ -1542,9 +1619,15 @@ export default {
         if (sub) {
           const idx = sub.servers.findIndex((s) => s.id === which.id);
           if (idx >= 0) {
-            this.$set(this.currentPage, sub.id, Math.floor(idx / 100) + 1);
+            targetPageKey = sub.id;
+            targetPageNum = Math.floor(idx / 100) + 1;
           }
         }
+      }
+      if (targetPageKey !== null) {
+        this.$nextTick(() => {
+          this.$set(this.currentPage, targetPageKey, targetPageNum);
+        });
       }
       let tryCnt = 0;
       const maxTry = 5;
@@ -1665,25 +1748,28 @@ export default {
     updateConnectView() {
       let connectedServer = this.runningState.connectedServer;
       // associate outbounds and servers
-      this.runningState.outboundToServerName = {};
-      this.runningState.connectedServer?.forEach((cs) => {
-        const server = locateServer(this.tableData, cs);
-        if (
-          this.runningState.outboundToServerName[cs.outbound] &&
-          typeof this.runningState.outboundToServerName[cs.outbound] !==
-            "number"
-        ) {
-          this.runningState.outboundToServerName[cs.outbound] = 1;
-        }
-        if (
-          typeof this.runningState.outboundToServerName[cs.outbound] ===
-          "number"
-        ) {
-          this.runningState.outboundToServerName[cs.outbound]++;
-        } else {
-          this.runningState.outboundToServerName[cs.outbound] = server.name;
-        }
-      });
+      const outboundMap = {};
+      if (Array.isArray(this.runningState.connectedServer)) {
+        this.runningState.connectedServer.forEach((cs) => {
+          const server = locateServer(this.tableData, cs);
+          if (!server) {
+            return;
+          }
+          const outboundKey = cs.outbound || "proxy";
+          if (
+            Object.prototype.hasOwnProperty.call(outboundMap, outboundKey) &&
+            typeof outboundMap[outboundKey] !== "number"
+          ) {
+            outboundMap[outboundKey] = 1;
+          }
+          if (typeof outboundMap[outboundKey] === "number") {
+            outboundMap[outboundKey]++;
+          } else {
+            outboundMap[outboundKey] = server.name || server.address || "";
+          }
+        });
+      }
+      this.runningState.outboundToServerName = outboundMap;
 
       connectedServer = this.filterConnectedServer(connectedServer);
       // clear connected state
@@ -1695,28 +1781,25 @@ export default {
           v.connected && (v.connected = false);
         });
       });
+      this.connectedServerInfo = [];
       if (connectedServer) {
-        let server = locateServer(this.tableData, connectedServer);
-        if (server instanceof Array) {
-          for (const s of server) {
-            s.connected = true;
+        const connectedList = Array.isArray(connectedServer)
+          ? connectedServer
+          : [connectedServer];
+        for (const which of connectedList) {
+          const server = locateServer(this.tableData, which);
+          if (!server) {
+            continue;
           }
-        } else {
           server.connected = true;
-          server = [server];
-        }
-        this.connectedServerInfo = [];
-        for (const i in server) {
           let subscription_name = null;
-          if (connectedServer[i]._type === "subscriptionServer") {
-            subscription_name =
-              this.tableData.subscriptions[
-                connectedServer[i].sub
-              ].host.toUpperCase();
+          if (which._type === "subscriptionServer") {
+            const subObj = this.tableData.subscriptions?.[which.sub];
+            subscription_name = subObj?.host ? subObj.host.toUpperCase() : null;
           }
           this.connectedServerInfo.push({
             info: {
-              ...server[i],
+              ...server,
               subscription_name,
               alive: null,
               delay: null,
@@ -1725,36 +1808,36 @@ export default {
               last_error_reason: null,
               last_try_time: null,
             },
-            which: connectedServer[i],
+            which,
             showContent: true,
             selected: false,
           });
         }
-      } else {
-        this.connectedServerInfo = [];
       }
 
-      this.connectedServerInfo.sort((x, y) => {
-        return x.info.name > y.info.name;
-      });
+      this.connectedServerInfo.sort((x, y) =>
+        (x.info.name || "").localeCompare(y.info.name || "")
+      );
 
+      const nextSubFlags = new Array(this.tableData.subscriptions.length).fill(false);
       this.connectedServerInTab.server = false;
-      for (const i in this.connectedServerInTab.subscriptionServer) {
-        this.connectedServerInTab.subscriptionServer[i] = false;
-      }
       if (connectedServer) {
-        let servers = connectedServer;
-        if (!(connectedServer instanceof Array)) {
-          servers = [connectedServer];
-        }
-        for (const s of servers) {
+        const connectedList = Array.isArray(connectedServer)
+          ? connectedServer
+          : [connectedServer];
+        for (const s of connectedList) {
           if (s._type === "server") {
             this.connectedServerInTab.server = true;
-          } else if (s._type === "subscriptionServer") {
-            this.connectedServerInTab.subscriptionServer[s.sub] = true;
+          } else if (
+            s._type === "subscriptionServer" &&
+            typeof s.sub === "number" &&
+            s.sub >= 0
+          ) {
+            nextSubFlags[s.sub] = true;
           }
         }
       }
+      this.$set(this.connectedServerInTab, "subscriptionServer", nextSubFlags);
       this.$emit("input", this.runningState);
     },
     // notifyStopped is called by the parent (App.vue) when a WebSocket
@@ -1829,6 +1912,10 @@ export default {
       this.showModalImport = true;
     },
     deleteSelectedServers() {
+      if (this.deletingSelected || !this.checkedRows.length) {
+        return;
+      }
+      this.deletingSelected = true;
       this.$axios({
         url: apiRoot + "/touch",
         method: "delete",
@@ -1840,20 +1927,25 @@ export default {
             };
           }),
         },
-      }).then((res) => {
-        if (res.data.code === "SUCCESS") {
-          this.checkedRows = [];
-          this.syncLatestNodeOverview();
-        } else {
-          this.$buefy.toast.open({
-            message: res.data.message,
-            type: "is-warning",
-            position: "is-top",
-            duration: 5000,
-            queue: false,
-          });
-        }
-      });
+      })
+        .then((res) => {
+          if (res.data.code === "SUCCESS") {
+            this.checkedRows = [];
+            this.syncLatestNodeOverview();
+          } else {
+            this.$buefy.toast.open({
+              message: res.data.message,
+              type: "is-warning",
+              position: "is-top",
+              duration: 5000,
+              queue: false,
+            });
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.deletingSelected = false;
+        });
     },
     handleClickDelete() {
       this.$buefy.dialog.confirm({
@@ -1875,6 +1967,10 @@ export default {
         this.connectToProxyGroup(row, sub, this.outbound);
         return;
       }
+      if (this.disconnecting) {
+        return;
+      }
+      this.disconnecting = true;
       this.$axios({
         url: apiRoot + "/connection",
         method: "delete",
@@ -1884,27 +1980,40 @@ export default {
           sub: sub,
           outbound: this.outbound,
         },
-      }).then((res) => {
-        if (res.data.code === "SUCCESS") {
-          row.connected = false;
-          Object.assign(this.runningState, {
-            status: this.getRunningStatusKey(res.data.data.running, res.data.data.networkPaused),
-            running: this.getRunningLabel(res.data.data.running, res.data.data.networkPaused),
-            networkPaused: !!res.data.data.networkPaused,
-            connectedServer: res.data.data.touch.connectedServer,
-          });
-          this.updateConnectView();
-          this.syncLatestNodeOverview();
-        } else {
+      })
+        .then((res) => {
+          if (res.data.code === "SUCCESS") {
+            row.connected = false;
+            Object.assign(this.runningState, {
+              status: this.getRunningStatusKey(res.data.data.running, res.data.data.networkPaused),
+              running: this.getRunningLabel(res.data.data.running, res.data.data.networkPaused),
+              networkPaused: !!res.data.data.networkPaused,
+              connectedServer: res.data.data.touch.connectedServer,
+            });
+            this.updateConnectView();
+            this.syncLatestNodeOverview();
+          } else {
+            this.$buefy.toast.open({
+              message: res.data.message,
+              type: "is-warning",
+              position: "is-top",
+              duration: 5000,
+              queue: false,
+            });
+          }
+        })
+        .catch((err) => {
           this.$buefy.toast.open({
-            message: res.data.message,
+            message: err?.response?.data?.message || err?.message || this.$t("common.fail"),
             type: "is-warning",
             position: "is-top",
             duration: 5000,
             queue: false,
           });
-        }
-      });
+        })
+        .finally(() => {
+          this.disconnecting = false;
+        });
     },
     normalizeProxyGroups(groups) {
       const seen = new Set();
@@ -1914,12 +2023,11 @@ export default {
           if (typeof group !== "string") {
             continue;
           }
-          const name = group.trim();
-          if (!name || seen.has(name)) {
+          if (!group || seen.has(group)) {
             continue;
           }
-          seen.add(name);
-          normalized.push(name);
+          seen.add(group);
+          normalized.push(group);
         }
       }
       if (!seen.has("proxy")) {
@@ -2106,21 +2214,15 @@ export default {
       });
     },
     handleClickLatency(ping) {
-      let touches = JSON.stringify(
-        this.checkedRows.map((x) => {
-          // iterate through subscriptions
-          let sub = this.tableData.subscriptions.findIndex((subscription) =>
-            subscription.servers.some((y) => x === y)
-          );
-          return {
-            id: x.id,
-            _type: x._type,
-            sub: sub === -1 ? null : sub,
-          };
-        })
-      );
-      this.checkedRows.forEach((x) => (x.pingLatency = "testing...")); //refresh
-      // this.checkedRows = [];
+      if (this.latencyTesting) {
+        return;
+      }
+      const table = this.tableData;
+      const touches = this.connectableCheckedTouches;
+      if (!touches.length) return;
+      const targets = touches.map(which => locateServer(table, which)).filter(Boolean);
+      this.latencyTesting = true;
+      targets.forEach((x) => this.$set(x, "pingLatency", "testing..."));
       let timerTip = setTimeout(() => {
         this.$buefy.toast.open({
           message: this.$t("latency.message"),
@@ -2130,10 +2232,17 @@ export default {
           queue: false,
         });
       }, 10 * 1200);
+      const resetTargets = () => {
+        targets.forEach((x) => {
+          if (x.pingLatency === "testing...") {
+            this.$set(x, "pingLatency", "");
+          }
+        });
+      };
       this.$axios({
         url: apiRoot + (ping ? "/pingLatency" : "/httpLatency"),
         params: {
-          whiches: touches,
+          whiches: JSON.stringify(touches),
         },
         timeout: 0,
       })
@@ -2142,10 +2251,13 @@ export default {
             res,
             this,
             () => {
-              res.data.data.whiches.forEach((x) => {
-                let server = locateServer(this.tableData, x);
-                server.pingLatency = x.pingLatency;
+              (res.data.data.whiches || []).forEach((x) => {
+                const server = locateServer(table, x);
+                if (server) {
+                  this.$set(server, "pingLatency", x.pingLatency);
+                }
               });
+              resetTargets();
               this.updateConnectView();
             },
             () => {
@@ -2156,12 +2268,16 @@ export default {
                 queue: false,
                 duration: 5000,
               });
-              this.checkedRows.forEach((x) => (x.pingLatency = ""));
+              resetTargets();
             }
           );
         })
+        .catch(() => {
+          resetTargets();
+        })
         .finally(() => {
           clearTimeout(timerTip);
+          this.latencyTesting = false;
         });
     },
     // eslint-disable-next-line no-unused-vars
@@ -2170,6 +2286,7 @@ export default {
       localStorage.lastNodeTab = index;
       this.checkedRows = [];
       this.protocolFilter = "";
+      this.hideDisabled = false;
       if (index < 2 && this.quickFilter === "fav") {
         this.quickFilter = "all";
       }
@@ -2393,20 +2510,16 @@ export default {
       return this.checkedRows.length > 0;
     },
     getTouchFromCheckedRow(row) {
-      let sub = this.tableData.subscriptions.findIndex((subscription) =>
-        subscription.servers.some((server) => server === row)
-      );
-      if (sub === -1 && row._type === CONST.SubscriptionServerType && this.tab >= 2) {
-        sub = this.tab - 2;
+      const { id, _type } = row;
+      if (_type === CONST.SubscriptionServerType) {
+        const sub = this.tableData.subscriptions.findIndex(subscription => subscription.servers?.[id - 1] === row);
+        return sub < 0 ? null : { id, _type, sub };
       }
-      return {
-        id: row.id,
-        _type: row._type,
-        sub: sub === -1 ? null : sub,
-      };
+      const list = _type === CONST.SubscriptionType ? this.tableData.subscriptions : this.tableData.servers;
+      return list[id - 1] === row ? { id, _type, sub: null } : null;
     },
     async collectSelectedSharingAddresses() {
-      const touches = this.checkedRows.map((row) => this.getTouchFromCheckedRow(row));
+      const touches = this.checkedRows.map((row) => this.getTouchFromCheckedRow(row)).filter(Boolean);
       const requests = touches.map((touch) =>
         this.$axios({
           url: apiRoot + "/sharingAddress",
@@ -2515,6 +2628,10 @@ export default {
       });
     },
     handleClickUpdateSubscription(row) {
+      if (this.updatingSubscriptions[row.id]) {
+        return;
+      }
+      this.$set(this.updatingSubscriptions, row.id, true);
       this.$axios({
         url: apiRoot + "/subscription",
         method: "put",
@@ -2522,18 +2639,23 @@ export default {
           id: row.id,
           _type: row._type,
         },
-      }).then((res) => {
-        handleResponse(res, this, () => {
-          this.syncLatestNodeOverview();
-          this.$buefy.toast.open({
-            message: this.$t("common.success"),
-            type: "is-success",
-            position: "is-top",
-            duration: 5000,
-            queue: false,
+      })
+        .then((res) => {
+          handleResponse(res, this, () => {
+            this.syncLatestNodeOverview();
+            this.$buefy.toast.open({
+              message: this.$t("common.success"),
+              type: "is-success",
+              position: "is-top",
+              duration: 5000,
+              queue: false,
+            });
           });
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.$delete(this.updatingSubscriptions, row.id);
         });
-      });
     },
     handleClickCreate() {
       this.modalServerReadOnly = false;
@@ -2551,7 +2673,7 @@ export default {
       this.which = { ...row, sub };
       this.showModalServer = true;
     },
-    handleModalServerSubmit(url) {
+    handleModalServerSubmit(url, done) {
       this.$axios({
         url: apiRoot + "/import",
         method: "post",
@@ -2560,19 +2682,26 @@ export default {
           which: this.which,
         },
         timeout: 0,
-      }).then((res) => {
-        handleResponse(res, this, () => {
-          this.$buefy.toast.open({
-            message: this.$t("common.success"),
-            type: "is-success",
-            position: "is-top",
-            duration: 3000,
-            queue: false,
+      })
+        .then((res) => {
+          handleResponse(res, this, () => {
+            this.$buefy.toast.open({
+              message: this.$t("common.success"),
+              type: "is-success",
+              position: "is-top",
+              duration: 3000,
+              queue: false,
+            });
+            this.showModalServer = false;
+            this.syncLatestNodeOverview();
           });
-          this.showModalServer = false;
-          this.syncLatestNodeOverview();
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (typeof done === "function") {
+            done();
+          }
         });
-      });
     },
     handleClickModifySubscription(row) {
       this.which = Object.assign({}, row);
@@ -2580,26 +2709,33 @@ export default {
       this.which.extra = Object.assign({}, row.extra || {});
       this.showModalSubscription = true;
     },
-    handleModalSubscriptionSubmit(subscription) {
+    handleModalSubscriptionSubmit(subscription, done) {
       this.$axios({
         url: apiRoot + "/subscription",
         method: "patch",
         data: {
           subscription,
         },
-      }).then((res) => {
-        handleResponse(res, this, () => {
-          this.$buefy.toast.open({
-            message: this.$t("common.success"),
-            type: "is-success",
-            position: "is-top",
-            duration: 3000,
-            queue: false,
+      })
+        .then((res) => {
+          handleResponse(res, this, () => {
+            this.$buefy.toast.open({
+              message: this.$t("common.success"),
+              type: "is-success",
+              position: "is-top",
+              duration: 3000,
+              queue: false,
+            });
+            this.showModalSubscription = false;
+            this.syncLatestNodeOverview();
           });
-          this.showModalSubscription = false;
-          this.syncLatestNodeOverview();
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (typeof done === "function") {
+            done();
+          }
         });
-      });
     },
     formatBytes(bytes) {
       if (!bytes || bytes <= 0) return "0B";
@@ -2626,8 +2762,8 @@ export default {
     updateSubscriptionExtra(subi, mutator) {
       const sub = this.tableData.subscriptions[subi];
       if (!sub) return;
-      if (!sub.extra) sub.extra = {};
-      mutator(sub.extra);
+      const clonedExtra = JSON.parse(JSON.stringify(sub.extra || {}));
+      mutator(clonedExtra);
       this.$axios({
         url: apiRoot + "/subscription",
         method: "patch",
@@ -2639,14 +2775,17 @@ export default {
             remarks: sub.remarks,
             autoSelect: sub.autoSelect,
             decryptPassword: sub.decryptPassword,
-            extra: sub.extra,
+            extra: clonedExtra,
           },
         },
-      }).then((res) => {
-        handleResponse(res, this, () => {
-          this.syncLatestNodeOverview();
-        });
-      });
+      })
+        .then((res) => {
+          handleResponse(res, this, () => {
+            this.$set(sub, "extra", clonedExtra);
+            this.syncLatestNodeOverview();
+          });
+        })
+        .catch(() => {});
     },
     toggleNodeFav(row, subi) {
       this.updateSubscriptionExtra(subi, (extra) => {

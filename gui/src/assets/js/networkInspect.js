@@ -1,57 +1,66 @@
 import axios from "../../plugins/axios";
 import { handleResponse } from "./utils";
 
-// 如果节点已连接，reload页面
+// Poll /touch until backend reports running state or the main request settles
 function waitingConnected(promise, interval, cancel, timeout) {
-  let timer = setInterval(() => {
+  let stopped = false;
+  let timer = null;
+  let timeoutTimer = null;
+
+  const cleanup = () => {
+    stopped = true;
+    if (timer !== null) {
+      clearInterval(timer);
+      timer = null;
+    }
+    if (timeoutTimer !== null) {
+      clearTimeout(timeoutTimer);
+      timeoutTimer = null;
+    }
+  };
+
+  timer = setInterval(() => {
+    if (stopped) {
+      return;
+    }
     axios({
       url: apiRoot + "/touch",
       timeout: interval,
     })
       .then((res) => {
+        if (stopped) {
+          return;
+        }
         handleResponse(
           res,
           null,
           () => {
-            if (res.data.data.running && res.data.data.touch.connectedServer) {
-              clearInterval(timer);
-              cancel && cancel();
-              // Do NOT call $remount() here — it recreates the whole App and can
-              // trigger spurious "create account" modals. The connection state is
-              // already updated in connectToProxyGroup's .then() handler.
+            if (res.data.data?.running && res.data.data?.touch?.connectedServer) {
+              cleanup();
+              // Do NOT call cancel() here — cancelling rejects the caller's promise
+              // and skips its .then() handler. Let the main request complete normally.
             }
           },
           () => {
-            if (res.data.message !== "the last request is being processed") {
-              this.$buefy.toast.open({
-                message: res.data.message,
-                type: "is-warning",
-                position: "is-top",
-                queue: false,
-                duration: 5000,
-              });
-            }
+            // Skip toast in standalone poller; the main request handles error reporting.
           }
         );
       })
       .catch((err) => {
         if (err.response?.status === 401) {
-          clearInterval(timer);
+          cleanup();
           cancel && cancel();
         }
       });
   }, interval);
-  // weird cancelable promise, can not use Promise.race directly
-  promise.then(() => {
-    Promise.race([
-      promise,
-      new Promise((resolve) => {
-        setTimeout(resolve, timeout ? timeout : 30 * 1000);
-      }),
-    ]).finally(() => {
-      clearInterval(timer);
-    });
-  });
+
+  timeoutTimer = setTimeout(() => {
+    cleanup();
+  }, timeout || 30 * 1000);
+
+  if (promise && typeof promise.finally === "function") {
+    promise.finally(cleanup).catch(() => {});
+  }
 }
 
 export { waitingConnected };

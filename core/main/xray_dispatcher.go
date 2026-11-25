@@ -5,8 +5,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/net/cnc"
@@ -83,9 +86,134 @@ func (a *xrayDispatcherAdapter) Dispatch(ctx context.Context, network, addr, pro
 		return nil, fmt.Errorf("xray dispatch: %w", err)
 	}
 
-	// Wrap the transport link into a standard net.Conn.
-	return cnc.NewConnection(
+	// Wrap the transport link into a standard net.Conn with real deadline and
+	// context-cancellation enforcement (xray's cnc.Connection has no-op SetDeadline).
+	rawConn := cnc.NewConnection(
 		cnc.ConnectionInputMulti(link.Writer),
 		cnc.ConnectionOutputMulti(link.Reader),
-	), nil
+	)
+	return newDeadlineConn(ctx, rawConn), nil
+}
+
+// deadlineConn wraps a net.Conn (such as xray's cnc.Connection whose
+// SetDeadline/SetReadDeadline/SetWriteDeadline are no-ops) and actively closes
+// the underlying connection when a deadline expires or ctx is cancelled,
+// ensuring stalled proxied DNS exchanges abort promptly.
+type deadlineConn struct {
+	net.Conn
+	mu           sync.Mutex
+	closed       bool
+	timedOut     bool
+	readTimer    *time.Timer
+	writeTimer   *time.Timer
+	stopCtxWatch func() bool
+}
+
+func newDeadlineConn(ctx context.Context, inner net.Conn) net.Conn {
+	c := &deadlineConn{Conn: inner}
+	if ctx != nil {
+		c.mu.Lock()
+		c.stopCtxWatch = context.AfterFunc(ctx, func() {
+			_ = c.closeOnce(ctx.Err() == context.DeadlineExceeded)
+		})
+		c.mu.Unlock()
+	}
+	return c
+}
+
+func (c *deadlineConn) isTimedOut() bool {
+	c.mu.Lock()
+	timedOut := c.timedOut
+	c.mu.Unlock()
+	return timedOut
+}
+
+func (c *deadlineConn) closeOnce(timeout bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closeLocked(timeout)
+}
+
+func (c *deadlineConn) closeLocked(timeout bool) error {
+	if c.closed {
+		return nil
+	}
+	c.closed, c.timedOut = true, timeout
+	if c.readTimer != nil {
+		c.readTimer.Stop()
+	}
+	if c.writeTimer != nil {
+		c.writeTimer.Stop()
+	}
+	if c.stopCtxWatch != nil {
+		c.stopCtxWatch()
+	}
+	return c.Conn.Close()
+}
+
+func (c *deadlineConn) setTimer(slot **time.Timer, t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if *slot != nil {
+		(*slot).Stop()
+		*slot = nil
+	}
+	if c.closed || t.IsZero() {
+		return
+	}
+	if time.Until(t) <= 0 {
+		_ = c.closeLocked(true)
+		return
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(time.Until(t), func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if *slot == timer {
+			_ = c.closeLocked(true)
+		}
+	})
+	*slot = timer
+}
+
+func (c *deadlineConn) Read(b []byte) (int, error) {
+	if c.isTimedOut() {
+		return 0, os.ErrDeadlineExceeded
+	}
+	n, err := c.Conn.Read(b)
+	if err != nil && c.isTimedOut() {
+		return n, os.ErrDeadlineExceeded
+	}
+	return n, err
+}
+
+func (c *deadlineConn) Write(b []byte) (int, error) {
+	if c.isTimedOut() {
+		return 0, os.ErrDeadlineExceeded
+	}
+	n, err := c.Conn.Write(b)
+	if err != nil && c.isTimedOut() {
+		return n, os.ErrDeadlineExceeded
+	}
+	return n, err
+}
+
+func (c *deadlineConn) SetDeadline(t time.Time) error {
+	c.setTimer(&c.readTimer, t)
+	c.setTimer(&c.writeTimer, t)
+	return c.Conn.SetDeadline(t)
+}
+
+func (c *deadlineConn) SetReadDeadline(t time.Time) error {
+	c.setTimer(&c.readTimer, t)
+	return c.Conn.SetReadDeadline(t)
+}
+
+func (c *deadlineConn) SetWriteDeadline(t time.Time) error {
+	c.setTimer(&c.writeTimer, t)
+	return c.Conn.SetWriteDeadline(t)
+}
+
+func (c *deadlineConn) Close() error {
+	return c.closeOnce(false)
 }

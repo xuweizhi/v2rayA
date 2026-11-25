@@ -16,6 +16,8 @@ type CacheKey struct {
 	ProxyTag     string    // 代理渠道标签
 	Name         string    // 查询域名（小写）
 	QType        QueryType // 查询类型
+	QClass       uint16    // 查询类别（如 IN=1, CH=3）
+	DNSSECOK     bool      // 客户端是否请求 DNSSEC OK (DO=1)
 }
 
 // CacheEntry 缓存条目
@@ -408,6 +410,39 @@ func shouldPrefetch(entry *CacheEntry, config *CacheConfig) bool {
 	}
 
 	return false
+}
+
+// NegativeCacheEnabled reports whether negative response caching is enabled.
+func (c *DnsCache) NegativeCacheEnabled() bool {
+	if c == nil || c.config == nil {
+		return false
+	}
+	return c.config.NegativeCache
+}
+
+// TryStartPrefetch atomically checks whether key is eligible for prefetching
+// and marks it as in-progress under a single lock, avoiding TOCTOU races.
+func (c *DnsCache) TryStartPrefetch(key CacheKey) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	elem, ok := c.entries[key]
+	if !ok {
+		return false
+	}
+
+	entry, ok := elem.Value.(*CacheEntry)
+	if !ok {
+		return false
+	}
+
+	if !shouldPrefetch(entry, c.config) {
+		return false
+	}
+
+	entry.Prefetching = true
+	c.stats.PrefetchCnt++
+	return true
 }
 
 // SetPrefetching 设置条目的预取状态

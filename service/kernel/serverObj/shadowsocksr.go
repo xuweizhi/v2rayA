@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/v2rayA/v2rayA/common"
+	"github.com/v2rayA/v2rayA/conf"
 )
 
 func init() {
@@ -63,7 +64,7 @@ func ParseSSRURL(u string) (data *ShadowsocksR, err error) {
 			return v, false
 		}
 		pswd, _ := common.Base64URLDecode(pre[5])
-		add, _ := common.Base64URLDecode(pre[0])
+		add := strings.TrimPrefix(strings.TrimSuffix(pre[0], "]"), "[")
 		remarks, _ := common.Base64URLDecode(q.Get("remarks"))
 		protoparam, _ := common.Base64URLDecode(q.Get("protoparam"))
 		obfsparam, _ := common.Base64URLDecode(q.Get("obfsparam"))
@@ -84,6 +85,9 @@ func ParseSSRURL(u string) (data *ShadowsocksR, err error) {
 			Protocol:   "shadowsocksr",
 		}
 		return v, true
+	}
+	if !strings.HasPrefix(u, "ssr://") {
+		return nil, fmt.Errorf("%w: unrecognized ssr address", ErrInvalidParameter)
 	}
 	content := u[6:]
 	var (
@@ -110,37 +114,32 @@ func ParseSSRURL(u string) (data *ShadowsocksR, err error) {
 }
 
 func (s *ShadowsocksR) Configuration(info PriorInfo) (c Configuration, err error) {
-	socks5 := url.URL{
-		Scheme: "socks5",
-		Host:   net.JoinHostPort("127.0.0.1", strconv.Itoa(info.PluginPort)),
+	if conf.GetEnvironmentConfig().PluginManager == "" {
+		return c, fmt.Errorf("ShadowsocksR requires an external plugin manager with SSR support")
 	}
-	chain := []string{socks5.String(), s.ExportToURL()}
-	return Configuration{
-		CoreOutbound: info.PluginObj(),
-		PluginChain:  strings.Join(chain, ","),
-		UDPSupport:   false,
-	}, nil
+	plugin := &Plugin{Link: s.ExportToURL()}
+	return plugin.Configuration(info)
 }
 
 func (s *ShadowsocksR) ExportToURL() string {
 	/* ssr://server:port:proto:method:obfs:URLBASE64(password)/?remarks=URLBASE64(remarks)&protoparam=URLBASE64(protoparam)&obfsparam=URLBASE64(obfsparam)) */
-	return fmt.Sprintf("ssr://%v", strings.TrimSuffix(base64.URLEncoding.EncodeToString([]byte(
+	return fmt.Sprintf("ssr://%v", base64.RawURLEncoding.EncodeToString([]byte(
 		fmt.Sprintf(
 			"%v:%v:%v:%v:%v/?remarks=%v&protoparam=%v&obfsparam=%v",
 			net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
 			s.Proto,
 			s.Cipher,
 			s.Obfs,
-			base64.URLEncoding.EncodeToString([]byte(s.Password)),
-			base64.URLEncoding.EncodeToString([]byte(s.Name)),
-			base64.URLEncoding.EncodeToString([]byte(s.ProtoParam)),
-			base64.URLEncoding.EncodeToString([]byte(s.ObfsParam)),
+			base64.RawURLEncoding.EncodeToString([]byte(s.Password)),
+			base64.RawURLEncoding.EncodeToString([]byte(s.Name)),
+			base64.RawURLEncoding.EncodeToString([]byte(s.ProtoParam)),
+			base64.RawURLEncoding.EncodeToString([]byte(s.ObfsParam)),
 		),
-	)), "="))
+	)))
 }
 
 func (s *ShadowsocksR) NeedPluginPort() bool {
-	return true
+	return conf.GetEnvironmentConfig().PluginManager != ""
 }
 
 func (s *ShadowsocksR) ProtoToShow() string {

@@ -53,7 +53,9 @@ func GetDnsRulesNotNil() []DnsRule {
 			return rules
 		}
 	}
-	return DefaultDnsRules
+	out := make([]DnsRule, len(DefaultDnsRules))
+	copy(out, DefaultDnsRules)
+	return out
 }
 
 // SetDnsRules 将 DNS 规则持久化到数据库。

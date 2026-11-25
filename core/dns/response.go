@@ -33,11 +33,15 @@ func (b *ResponseBuilder) BuildResponse(query *DnsQuery, upstreamResp *DnsRespon
 	m.SetReply(upstreamResp.RawMsg)
 
 	// Ensure the question matches the original query.
+	qclass := query.QClass
+	if qclass == 0 {
+		qclass = dns.ClassINET
+	}
 	m.Question = []dns.Question{
 		{
 			Name:   dns.Fqdn(query.Name),
 			Qtype:  uint16(query.QType),
-			Qclass: query.QClass,
+			Qclass: qclass,
 		},
 	}
 
@@ -165,11 +169,40 @@ func ecsPrefix(ip net.IP) netip.Prefix {
 	return netip.PrefixFrom(addr, bits).Masked()
 }
 
+var nonPublicECSPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),      // RFC 1122 "this network"
+	netip.MustParsePrefix("100.64.0.0/10"),  // RFC 6598 Shared Address Space (CGNAT)
+	netip.MustParsePrefix("192.0.0.0/24"),   // RFC 6890 IETF Protocol Assignments
+	netip.MustParsePrefix("198.18.0.0/15"),  // RFC 2544 Benchmarking / FakeIP
+	netip.MustParsePrefix("240.0.0.0/4"),    // RFC 1112 Reserved
+	netip.MustParsePrefix("100::/64"),       // RFC 6666 Discard-Only
+	netip.MustParsePrefix("64:ff9b::/96"),   // RFC 6052 Well-Known NAT64
+	netip.MustParsePrefix("64:ff9b:1::/48"), // RFC 8215 Local-Use NAT64
+	netip.MustParsePrefix("2001:2::/48"),    // RFC 5180 Benchmarking
+	netip.MustParsePrefix("fec0::/10"),      // RFC 3879 Deprecated Site-Local
+}
+
 func upstreamClientSubnet(ip net.IP) netip.Prefix {
-	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
 		return netip.Prefix{}
 	}
-	return ecsPrefix(ip)
+	addr = addr.Unmap()
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() ||
+		addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() ||
+		addr.IsInterfaceLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified() {
+		return netip.Prefix{}
+	}
+	for _, prefix := range nonPublicECSPrefixes {
+		if prefix.Contains(addr) {
+			return netip.Prefix{}
+		}
+	}
+	bits := 48
+	if addr.Is4() {
+		bits = 24
+	}
+	return netip.PrefixFrom(addr, bits).Masked()
 }
 
 func (b *ResponseBuilder) addECS(m *dns.Msg, prefix netip.Prefix) {

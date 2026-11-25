@@ -21,7 +21,6 @@
         size="is-small"
         :active="true"
         closable
-        @close="hasInboundDef = false"
       >
         {{ $t("routingA.inboundDeprecated") }}
       </b-message>

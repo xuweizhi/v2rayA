@@ -30,13 +30,32 @@ var NoConnectedServerErr = fmt.Errorf("no selected servers")
 // Process is a v2ray-core process
 type Process struct {
 	// mutex protect the proc
-	mutex          sync.Mutex
-	proc           *os.Process
-	procCancel     func() // cancel func for proc
-	template       *Template
-	tag2WhichIndex map[string]int
-	done           chan struct{}
-	expectedStop   atomic.Bool
+	mutex               sync.Mutex
+	proc                *os.Process
+	cmd                 *exec.Cmd
+	procCancel          func() // cancel func for proc
+	template            *Template
+	tag2WhichIndex      map[string]int
+	groupTag2WhichIndex map[string]int
+	done                chan struct{}
+	expectedStop        atomic.Bool
+}
+
+func (p *Process) lookupWhichIndex(outboundName, outboundTag string) (int, bool) {
+	if p == nil {
+		return 0, false
+	}
+	if p.groupTag2WhichIndex != nil && outboundName != "" {
+		if idx, ok := p.groupTag2WhichIndex[outboundName+"\x00"+outboundTag]; ok {
+			return idx, true
+		}
+	}
+	if p.tag2WhichIndex != nil {
+		if idx, ok := p.tag2WhichIndex[outboundTag]; ok {
+			return idx, true
+		}
+	}
+	return 0, false
 }
 
 func NewProcess(tmpl *Template,
@@ -61,13 +80,18 @@ func NewProcess(tmpl *Template,
 		log.Info("DNS module config written to v2raya-core config")
 	}
 	if tmpl.MultiObservatory != nil {
-		// NOTICE: tag2WhichIndex is reliable because once connected servers are changed when v2ray is running,
-		// the func UpdateV2RayConfig should be invoked and tag2WhichIndex will be regenerated.
-		tag2WhichIndex := make(map[string]int)
+		// NOTICE: tag2WhichIndex / groupTag2WhichIndex are reliable because once connected servers
+		// are changed when v2ray is running, UpdateV2RayConfig is invoked and they are regenerated.
+		tag2WhichIndex := make(map[string]int, len(tmpl.OutboundTags))
+		groupTag2WhichIndex := make(map[string]int, len(tmpl.OutboundTags))
 		for i, tag := range tmpl.OutboundTags {
 			tag2WhichIndex[tag] = i
+			if i < len(tmpl.outboundNames) && tmpl.outboundNames[i] != "" {
+				groupTag2WhichIndex[tmpl.outboundNames[i]+"\x00"+tag] = i
+			}
 		}
 		process.tag2WhichIndex = tag2WhichIndex
+		process.groupTag2WhichIndex = groupTag2WhichIndex
 	}
 	err = WriteV2rayConfig(tmpl.ToConfigBytes())
 	if err != nil {
@@ -83,42 +107,72 @@ func NewProcess(tmpl *Template,
 		}
 	}()
 	if tmpl.API == nil {
-		log.Fatal("unexpected tmpl.API == nil")
+		return nil, fmt.Errorf("missing core API configuration")
 	}
 	process.procCancel = cancel
 	if err = prestart(); err != nil {
 		return nil, err
 	}
-	proc, err := StartCoreProcess(pCtx)
+	if err := tmpl.startPluginManagers(pCtx); err != nil {
+		return nil, err
+	}
+	cmd, lw, err := startCoreProcessCmd(pCtx)
 	if err != nil {
 		return nil, err
 	}
+	process.cmd = cmd
+	process.proc = cmd.Process
 	rollbackStage = 1 // xray 已启动
 	if err = poststart(); err != nil {
+		// Kill and reap immediately so no zombie or os/exec pipe FD is leaked.
+		process.expectedStop.Store(true)
+		process.procCancel = nil
+		cancel()
+		_ = cmd.Wait()
+		lw.Flush()
+		close(process.done)
+		rollbackStage = 0
 		return nil, err
 	}
-	process.proc = proc
-	var unexpectedExiting atomic.Bool
+
+	const (
+		startupStateStarting    = int32(0)
+		startupStateRunning     = int32(1)
+		startupStateExitedEarly = int32(2)
+	)
+	var startupState atomic.Int32
 	go func() {
-		defer close(process.done)
-		p, e := proc.Wait()
+		waitErr := cmd.Wait()
+		cancel()
+		lw.Flush()
+		exitedBeforeReady := startupState.CompareAndSwap(startupStateStarting, startupStateExitedEarly)
+		close(process.done)
 		if process.expectedStop.Load() {
 			// canceled by v2rayA
 			return
 		}
-		defer postUnexpectedStop(process)
 		var t []string
-		if p != nil {
-			if p.Success() {
+		if cmd.ProcessState != nil {
+			if cmd.ProcessState.Success() {
+				if exitedBeforeReady {
+					log.Warn("v2ray-core: exited with status 0 during startup")
+				}
+				if !exitedBeforeReady && postUnexpectedStop != nil {
+					postUnexpectedStop(process)
+				}
 				return
 			}
-			t = append(t, p.String())
+			t = append(t, cmd.ProcessState.String())
 		}
-		if e != nil {
-			t = append(t, e.Error())
+		if waitErr != nil {
+			t = append(t, waitErr.Error())
 		}
-		log.Warn("v2ray-core: %v", strings.Join(t, ": "))
-		unexpectedExiting.Store(true)
+		if len(t) > 0 {
+			log.Warn("v2ray-core: %v", strings.Join(t, ": "))
+		}
+		if !exitedBeforeReady && postUnexpectedStop != nil {
+			postUnexpectedStop(process)
+		}
 	}()
 	// ports to check
 	portList := []string{strconv.Itoa(tmpl.ApiPort)}
@@ -126,13 +180,13 @@ func NewProcess(tmpl *Template,
 	startTime := time.Now()
 	startTimeOut := time.Duration(conf.GetEnvironmentConfig().CoreStartupTimeout) * time.Second
 	for i := 0; i < len(portList); {
-		conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", portList[i]))
-		if err == nil {
-			conn.Close()
+		conn, dialErr := net.Dial("tcp", net.JoinHostPort("127.0.0.1", portList[i]))
+		if dialErr == nil {
+			_ = conn.Close()
 			i++
 			continue
 		}
-		if unexpectedExiting.Load() {
+		if startupState.Load() == startupStateExitedEarly {
 			if log.Log.GetLevel() > log.ParseLevel("info") {
 				log.Error("some critical information may lost due to your log level")
 			}
@@ -140,71 +194,110 @@ func NewProcess(tmpl *Template,
 		}
 		if time.Since(startTime) > startTimeOut {
 			log.Info("Attempting to terminate timed-out process with SIGTERM")
-			_ = proc.Signal(syscall.SIGTERM)
+			if cmd.Process != nil {
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+			}
 			return nil, fmt.Errorf("timeout: check the log for more information")
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+	if !startupState.CompareAndSwap(startupStateStarting, startupStateRunning) {
+		return nil, fmt.Errorf("unexpected exiting: check the log for more information")
 	}
 	log.Trace("Cost of waiting for v2ray-core: %v", time.Since(startTime).String())
 	return process, nil
 }
 
+const maxLogInfoPendingBytes = 64 * 1024
+
 type logInfoWriter struct {
+	mu      sync.Mutex
+	pending string
 }
 
-func (w logInfoWriter) Write(p []byte) (n int, err error) {
-	s := string(p)
-	// trim the ending \n
-	length := len(s)
-	if s[length-1] == '\n' {
-		s = s[:length-1]
+func (w *logInfoWriter) Write(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
 	}
-	// print each line separately
-	lines := strings.Split(s, "\n")
-	for _, line := range lines {
-		// remove timestamp
-		fields := strings.SplitN(line, " ", 3)
-		if len(fields) >= 3 {
-			if _, err := time.Parse("2006/01/02 15:04:05", fields[0]+" "+fields[1]); err == nil {
-				recordConnectionLine(fields[2])
-				log.Info("%v", fields[2])
-			} else {
-				recordConnectionLine(line)
-				log.Info("%v", line)
-			}
-		} else {
-			recordConnectionLine(line)
-			log.Info("%v", line)
+	w.mu.Lock()
+	data := w.pending + string(p)
+	var lines []string
+	for {
+		idx := strings.IndexByte(data, '\n')
+		if idx < 0 {
+			break
 		}
+		lines = append(lines, strings.TrimSuffix(data[:idx], "\r"))
+		data = data[idx+1:]
+	}
+	if len(data) > maxLogInfoPendingBytes {
+		lines = append(lines, strings.TrimSuffix(data, "\r"))
+		data = ""
+	}
+	w.pending = data
+	w.mu.Unlock()
 
+	for _, line := range lines {
+		w.emitLine(line)
 	}
 	return len(p), nil
 }
 
-var logWriter logInfoWriter
+func (w *logInfoWriter) Flush() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	rem := strings.TrimSuffix(w.pending, "\r")
+	w.pending = ""
+	w.mu.Unlock()
+	if rem != "" {
+		w.emitLine(rem)
+	}
+}
+
+func (w *logInfoWriter) emitLine(line string) {
+	// remove timestamp
+	fields := strings.SplitN(line, " ", 3)
+	if len(fields) >= 3 {
+		if _, err := time.Parse("2006/01/02 15:04:05", fields[0]+" "+fields[1]); err == nil {
+			recordConnectionLine(fields[2])
+			log.Info("%v", fields[2])
+			return
+		}
+	}
+	recordConnectionLine(line)
+	log.Info("%v", line)
+}
+
+var logWriter = &logInfoWriter{}
 
 func (p *Process) Close() error {
+	if p == nil {
+		return nil
+	}
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
+	p.expectedStop.Store(true)
 	// 停止 xray 进程（v2raya-core 内部会同时关闭 DNS 模块）
+	// 进程回收统一由唯一的 reaper goroutine (cmd.Wait) 完成，绝不在此重复 Wait。
 	if p.procCancel != nil {
 		cancel := p.procCancel
-		p.expectedStop.Store(true)
 		p.procCancel = nil
 		cancel()
-		err := p.template.Close()
-		if err != nil {
+	} else if p.proc != nil {
+		_ = p.proc.Kill()
+	}
+	if p.template != nil {
+		if err := p.template.Close(); err != nil {
 			return err
 		}
-	} else {
-		_, err := p.proc.Wait()
-		return err
 	}
 	return nil
 }
 
 func (p *Process) WaitUntilExit(ctx context.Context) error {
-	if p == nil {
+	if p == nil || p.done == nil {
 		return nil
 	}
 	if ctx == nil {
@@ -219,24 +312,35 @@ func (p *Process) WaitUntilExit(ctx context.Context) error {
 	}
 }
 
-func RunWithLog(ctx context.Context, name string, argv []string, dir string, env []string) (*os.Process, error) {
+func runWithLogCmd(ctx context.Context, name string, argv []string, dir string, env []string) (*exec.Cmd, *logInfoWriter, error) {
+	lw := &logInfoWriter{}
 	cmd := exec.CommandContext(ctx, name)
+	cmd.WaitDelay = 3 * time.Second
 	cmd.Args = argv
 	cmd.Dir = dir
 	cmd.Env = env
-	cmd.Stdout = logWriter
-	cmd.Stderr = logWriter
+	cmd.Stdout = lw
+	cmd.Stderr = lw
 	err := cmd.Start()
+	if err != nil {
+		return nil, nil, err
+	}
+	return cmd, lw, nil
+}
+
+func RunWithLog(ctx context.Context, name string, argv []string, dir string, env []string) (*os.Process, error) {
+	cmd, lw, err := runWithLogCmd(ctx, name, argv, dir, env)
 	if err != nil {
 		return nil, err
 	}
+	go func() { _ = cmd.Wait(); lw.Flush() }()
 	return cmd.Process, nil
 }
 
-func StartCoreProcess(ctx context.Context) (*os.Process, error) {
+func startCoreProcessCmd(ctx context.Context) (*exec.Cmd, *logInfoWriter, error) {
 	v2rayBinPath, err := where.GetV2rayBinPath()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	dir := filepath.Dir(v2rayBinPath)
 	var arguments = []string{
@@ -280,11 +384,20 @@ func StartCoreProcess(ctx context.Context) (*os.Process, error) {
 	}
 
 	log.Debug(strings.Join(arguments, " "))
-	proc, err := RunWithLog(ctx, v2rayBinPath, arguments, dir, env)
+	cmd, lw, err := runWithLogCmd(ctx, v2rayBinPath, arguments, dir, env)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cmd, lw, nil
+}
+
+func StartCoreProcess(ctx context.Context) (*os.Process, error) {
+	cmd, lw, err := startCoreProcessCmd(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return proc, nil
+	go func() { _ = cmd.Wait(); lw.Flush() }()
+	return cmd.Process, nil
 }
 
 func findAvailablePluginPorts(vms []serverObj.ServerObj) (pluginPortMap map[int]int, err error) {
@@ -390,9 +503,14 @@ func UpdateV2RayConfig() (err error) {
 func (p *Process) rollback(stage int) {
 	if stage == 1 {
 		// xray 已启动 → 回滚
-		if p.procCancel != nil {
-			p.procCancel()
-			p.procCancel = nil
+		p.mutex.Lock()
+		p.expectedStop.Store(true)
+		cancel := p.procCancel
+		p.procCancel = nil
+		p.mutex.Unlock()
+		if cancel != nil {
+			cancel()
 		}
+		<-p.done
 	}
 }

@@ -10,9 +10,10 @@
       ></button>
     </header>
     <section class="modal-card-body lazy" style="text-align: center">
-      <div class="qrcode-frame">
+      <div v-show="!qrFailed" class="qrcode-frame">
         <canvas ref="canvas" class="qrcode"></canvas>
       </div>
+      <p v-if="qrFailed" class="help">{{ $t("operations.qrTooLong") }}</p>
       <div class="sharing-desc">{{ shortDesc }}</div>
       <div class="sharing-link-row">
         <code class="sharing-link-text" :title="sharingAddress">{{ sharingAddress }}</code>
@@ -62,12 +63,12 @@ export default {
   },
   data: () => ({
     clipboard: null,
-    showCopyCover: false,
+    qrFailed: false,
   }),
   beforeDestroy() {
     if (this.clipboard) this.clipboard.destroy();
   },
-  mounted() {
+  async mounted() {
     this.clipboard = new ClipboardJS(
       this.$el.querySelectorAll(".sharingAddressTag")
     );
@@ -80,9 +81,9 @@ export default {
       });
       e.clearSelection();
     });
-    this.clipboard.on("error", (e) => {
+    this.clipboard.on("error", () => {
       this.$buefy.toast.open({
-        message: this.$t("common.fail") + ", error:" + e.toLocaleString(),
+        message: this.$t("common.fail"),
         type: "is-warning",
         position: "is-top",
         queue: false,
@@ -93,15 +94,16 @@ export default {
     if (this.type === CONST.SubscriptionType) {
       add = "sub://" + Base64.encode(add);
     }
-    QRCode.toCanvas(
-      this.$refs.canvas,
-      add,
-      { errorCorrectionLevel: "H" },
-      function (error) {
-        if (error) console.error(error);
-        // console.log("QRCode has been generated successfully!");
+    const canvas = this.$refs.canvas;
+    try {
+      await QRCode.toCanvas(canvas, add, { errorCorrectionLevel: "H" });
+    } catch {
+      try {
+        await QRCode.toCanvas(canvas, add, { errorCorrectionLevel: "L" });
+      } catch {
+        this.qrFailed = true;
       }
-    );
+    }
   },
 };
 </script>

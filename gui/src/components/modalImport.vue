@@ -74,8 +74,9 @@ export default {
     busy() { return this.reading || this.sending; },
     needsReview() {
       const text = this.source.trim();
+      if (this.reviewed || this.fileName || /\s/.test(text)) return false;
       if (/^(karing|clash|sing-box):\/\//i.test(text)) return true;
-      if (this.reviewed || this.fileName || !/^https:\/\//i.test(text) || /\s/.test(text)) return false;
+      if (!/^https:\/\//i.test(text)) return false;
       try { return new URL(text).searchParams.has("outbound-dns"); }
       catch { return false; }
     },
@@ -86,6 +87,10 @@ export default {
   mounted() { this.$refs.source.focus(); },
   methods: {
     sourceEdited() {
+      this.reviewed = false;
+      this.hadLinkDNS = false;
+      this.remarks = "";
+      this.dns = "";
       this.fileName = "";
       this.error = "";
     },

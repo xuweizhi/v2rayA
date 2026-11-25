@@ -18,21 +18,21 @@ func init() {
 }
 
 type WireGuard struct {
-	Name        string `json:"name"`
-	Server      string `json:"server"`
-	Port        int    `json:"port"`
-	PublicKey   string `json:"publicKey"`
-	SecretKey   string `json:"secretKey"`
-	Address     string `json:"address"`
-	PrivateKey  string `json:"privateKey"`
+	Name         string `json:"name"`
+	Server       string `json:"server"`
+	Port         int    `json:"port"`
+	PublicKey    string `json:"publicKey"`
+	SecretKey    string `json:"secretKey"`
+	Address      string `json:"address"`
+	PrivateKey   string `json:"privateKey"`
 	PreSharedKey string `json:"preSharedKey"`
-	AllowedIPs  string `json:"allowedIPs"`
-	KeepAlive   int    `json:"keepAlive"`
-	Workers     int    `json:"workers"`
-	Mtu         int    `json:"mtu"`
-	Reserved    string `json:"reserved"`
-	KernelMode  bool   `json:"kernelMode"`
-	Protocol    string `json:"protocol"`
+	AllowedIPs   string `json:"allowedIPs"`
+	KeepAlive    int    `json:"keepAlive"`
+	Workers      int    `json:"workers"`
+	Mtu          int    `json:"mtu"`
+	Reserved     string `json:"reserved"`
+	KernelMode   bool   `json:"kernelMode"`
+	Protocol     string `json:"protocol"`
 }
 
 func NewWireGuard(link string) (ServerObj, error) {
@@ -78,9 +78,24 @@ func ParseWireGuardURL(link string) (data *WireGuard, err error) {
 
 func (s *WireGuard) Configuration(info PriorInfo) (c Configuration, err error) {
 	// Parse AllowedIPs
-	allowedIPs := strings.Split(s.AllowedIPs, ",")
-	if len(allowedIPs) == 0 || s.AllowedIPs == "" {
+	var allowedIPs []string
+	for _, entry := range strings.Split(s.AllowedIPs, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry != "" {
+			allowedIPs = append(allowedIPs, entry)
+		}
+	}
+	if len(allowedIPs) == 0 {
 		allowedIPs = []string{"0.0.0.0/0", "::/0"}
+	}
+
+	// Parse Address (comma-separated, trimmed, omitting empties; nil lets Xray use its default)
+	var addresses []string
+	for _, entry := range strings.Split(s.Address, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry != "" {
+			addresses = append(addresses, entry)
+		}
 	}
 
 	// Parse Reserved
@@ -98,8 +113,7 @@ func (s *WireGuard) Configuration(info PriorInfo) (c Configuration, err error) {
 
 	// Build WireGuard settings
 	settings := coreObj.WireGuardSettings{
-		SecretKey: s.PrivateKey,
-		Address:   []string{s.Address},
+		SecretKey: s.privateKey(),
 		Peers: []coreObj.WireGuardPeer{{
 			Endpoint:     net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
 			PublicKey:    s.PublicKey,
@@ -107,10 +121,11 @@ func (s *WireGuard) Configuration(info PriorInfo) (c Configuration, err error) {
 			AllowedIPs:   allowedIPs,
 			KeepAlive:    s.KeepAlive,
 		}},
+		NoKernelTun: !s.KernelMode,
 	}
 
-	if s.Workers > 0 {
-		settings.Workers = s.Workers
+	if len(addresses) > 0 {
+		settings.Address = addresses
 	}
 	if s.Mtu > 0 {
 		settings.Mtu = s.Mtu
@@ -118,7 +133,6 @@ func (s *WireGuard) Configuration(info PriorInfo) (c Configuration, err error) {
 	if len(reserved) > 0 {
 		settings.Reserved = reserved
 	}
-	settings.KernelMode = s.KernelMode
 
 	settingsJSON, err := json.Marshal(settings)
 	if err != nil {
@@ -133,6 +147,13 @@ func (s *WireGuard) Configuration(info PriorInfo) (c Configuration, err error) {
 		},
 		UDPSupport: true,
 	}, nil
+}
+
+func (s *WireGuard) privateKey() string {
+	if s.PrivateKey != "" {
+		return s.PrivateKey
+	}
+	return s.SecretKey
 }
 
 func (s *WireGuard) ExportToURL() string {
@@ -159,7 +180,7 @@ func (s *WireGuard) ExportToURL() string {
 
 	u := url.URL{
 		Scheme:   "wireguard",
-		User:     url.User(s.PrivateKey),
+		User:     url.User(s.privateKey()),
 		Host:     net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
 		RawQuery: query.Encode(),
 		Fragment: s.Name,

@@ -38,16 +38,25 @@ func parseConnectionLine(line string) (ev ConnectionEvent, ok bool) {
 	}
 	ev.Source = rest[:idx]
 	tail := rest[idx+len(" accepted "):]
+	if emailIdx := strings.LastIndex(tail, " email: "); emailIdx >= 0 {
+		tail = tail[:emailIdx]
+	}
 	bracket := strings.LastIndex(tail, " [")
 	if bracket < 0 || !strings.HasSuffix(tail, "]") {
 		return ev, false
 	}
 	dest := tail[:bracket]
 	tags := tail[bracket+2 : len(tail)-1]
-	if arrow := strings.Index(tags, " -> "); arrow > 0 {
-		ev.Inbound = tags[:arrow]
-		ev.Outbound = tags[arrow+4:]
-	} else {
+	parsedDetour := false
+	for _, sep := range []string{" -> ", " >> ", " ==> "} {
+		if arrow := strings.Index(tags, sep); arrow > 0 {
+			ev.Inbound = tags[:arrow]
+			ev.Outbound = tags[arrow+len(sep):]
+			parsedDetour = true
+			break
+		}
+	}
+	if !parsedDetour {
 		ev.Inbound = tags
 	}
 	// Extract the network from the destination prefix like "tcp:" / "udp:".

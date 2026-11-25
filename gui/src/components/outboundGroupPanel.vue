@@ -200,7 +200,7 @@
           </span>
           <div class="ogp-picker-actions">
             <b-button @click="showPicker = false">{{ $t("operations.close") }}</b-button>
-            <b-button type="is-primary" :loading="saving" @click="savePickerChanges">
+            <b-button type="is-primary" :loading="saving" :disabled="loadingNodes || saving" @click="savePickerChanges">
               {{ isCoreRunning ? $t("proxyGroupExtra.saveAndReconnect") : $t("operations.save") }}
             </b-button>
           </div>
@@ -234,7 +234,15 @@ export default {
       nodeSearch: "",
       loadingNodes: false,
       saving: false,
+      disconnectingKey: null,
     };
+  },
+  watch: {
+    showPicker(val) {
+      if (!val) {
+        this._pickerRequestId = (this._pickerRequestId || 0) + 1;
+      }
+    },
   },
   computed: {
     selectedDraftCount() {
@@ -390,14 +398,19 @@ export default {
       });
     },
     async fetchTouchData() {
+      const requestId = (this._touchRequestId || 0) + 1;
+      this._touchRequestId = requestId;
       try {
         const res = await this.$axios({ url: apiRoot + "/touch" });
-        if (res.data.code === "SUCCESS") {
+        if (requestId === this._touchRequestId && res.data?.code === "SUCCESS" && res.data.data?.touch) {
           this.touchData = res.data.data.touch;
           this.isCoreRunning = !!res.data.data.running;
+          return true;
         }
+        return false;
       } catch (err) {
         console.debug("Unable to refresh proxy group state", err);
+        return false;
       }
     },
     toggleMenu() {
@@ -414,7 +427,6 @@ export default {
       }
     },
     handleClickGroup(outbound) {
-      this.$emit("select", outbound);
       this.expandedGroup = this.expandedGroup === outbound ? null : outbound;
     },
     async activateGroup(outbound) {
@@ -438,24 +450,39 @@ export default {
         this.switchingGroup = null;
       }
     },
-    openNodePicker(outbound) {
+    async openNodePicker(outbound) {
+      const requestId = (this._pickerRequestId = (this._pickerRequestId || 0) + 1);
       this.pickerGroup = outbound;
       this.nodeSearch = "";
+      this.draftSelectionMap = {};
       this.loadingNodes = true;
       this.showPicker = true;
       this.menuOpen = false;
-      this.fetchTouchData().finally(() => {
-        this.initDraftSelection(outbound);
-        this.loadingNodes = false;
-      });
+      const ok = await this.fetchTouchData();
+      if (requestId !== this._pickerRequestId) {
+        return;
+      }
+      this.loadingNodes = false;
+      if (!ok) {
+        this.showPicker = false;
+        this.$buefy.toast.open({
+          message: this.$t("common.fail"),
+          type: "is-warning",
+          position: "is-top",
+          duration: 5000,
+          queue: false,
+        });
+        return;
+      }
+      this.initDraftSelection(outbound);
     },
     toggleNode(node) {
-      if (!this.pickerGroup || this.saving) return;
+      if (!this.pickerGroup || this.saving || this.loadingNodes) return;
       const key = this.whichKey(node);
       this.$set(this.draftSelectionMap, key, !this.draftSelectionMap[key]);
     },
     async savePickerChanges() {
-      if (!this.pickerGroup || this.saving) {
+      if (!this.pickerGroup || this.saving || this.loadingNodes) {
         return;
       }
       const previousSet = new Set(
@@ -479,7 +506,6 @@ export default {
         this.showPicker = false;
         return;
       }
-      const restartAfterSave = this.isCoreRunning;
       this.saving = true;
       try {
         const selectedNodes = this.allNodes.filter((node) => {
@@ -500,16 +526,6 @@ export default {
             touches,
           },
         }, this.$t("common.fail"));
-        if (restartAfterSave) {
-          await this.requestSuccess({
-            url: apiRoot + "/v2ray",
-            method: "delete",
-          }, this.$t("common.fail"));
-          await this.requestSuccess({
-            url: apiRoot + "/v2ray",
-            method: "post",
-          }, this.$t("common.fail"));
-        }
         await this.fetchTouchData();
         this.$emit("changed");
         this.showPicker = false;
@@ -533,17 +549,24 @@ export default {
       }
     },
     async disconnectNode(node) {
+      if (this.saving || this.disconnectingKey) {
+        return;
+      }
+      this.disconnectingKey = node.key;
       try {
-        await this.$axios({
-          url: apiRoot + "/connection",
-          method: "delete",
-          data: {
-            id: node.id,
-            _type: node._type,
-            sub: node.sub,
-            outbound: this.expandedGroup,
+        await this.requestSuccess(
+          {
+            url: apiRoot + "/connection",
+            method: "delete",
+            data: {
+              id: node.id,
+              _type: node._type,
+              sub: node.sub,
+              outbound: this.expandedGroup,
+            },
           },
-        });
+          this.$t("common.fail")
+        );
         await this.fetchTouchData();
         this.$emit("changed");
       } catch (err) {
@@ -554,6 +577,8 @@ export default {
           duration: 5000,
           queue: false,
         });
+      } finally {
+        this.disconnectingKey = null;
       }
     },
     confirmDeleteGroup(outbound) {
@@ -580,6 +605,8 @@ export default {
             this.expandedGroup = null;
           }
           this.$emit("groups-updated", res.data.data);
+          await this.fetchTouchData();
+          this.$emit("changed");
           this.$buefy.toast.open({
             message: this.$t("common.success"),
             type: "is-success",

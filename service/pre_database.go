@@ -46,6 +46,18 @@ func initializeEmptyDatabase() error {
 	return nil
 }
 
+// openMigratedDatabase is shared by startup and offline account reset.
+func openMigratedDatabase() error {
+	err := db.Open()
+	if errors.Is(err, db.ErrNeedMigration) {
+		if err := db.MigrateFromBoltDB(); err != nil {
+			return err
+		}
+		return db.Open()
+	}
+	return err
+}
+
 func initConfigure() {
 	// initialize configuration
 	jsonIteratorExtra.RegisterFuzzyDecoders()
@@ -55,29 +67,18 @@ func initConfigure() {
 		log.Error("failed to apply pending database restore: %v", err)
 	}
 
-	err := db.Open()
-	switch {
-	case errors.Is(err, db.ErrNeedMigration):
-		log.Warn("Detected legacy BoltDB database, migrating to SQLite...")
-		if err := db.MigrateFromBoltDB(); err != nil {
-			log.Fatal("Database migration failed: %v", err)
-		}
-		if err := db.Open(); err != nil {
-			log.Fatal("Failed to initialize SQLite after migration: %v", err)
-		}
-	case err != nil:
+	if err := openMigratedDatabase(); err != nil {
 		log.Fatal("Failed to initialize database: %v", err)
-	default:
-		if err := initializeEmptyDatabase(); err != nil {
-			log.Fatal("First-run configuration: %v", err)
-		}
+	}
+	if err := initializeEmptyDatabase(); err != nil {
+		log.Fatal("First-run configuration: %v", err)
 	}
 	if err := configure.InitDefaultOutbound(); err != nil {
 		log.Warn("initDefaultOutbound: %v", err)
 	}
 
-	if len(configure.GetTproxyWhiteIpGroups().CountryCodes) == 0 {
-		configure.SetTproxyWhiteIpGroups([]string{"PRIVATE"}, []string{})
+	if groups := configure.GetTproxyWhiteIpGroups(); len(groups.CountryCodes) == 0 && len(groups.CustomIps) == 0 {
+		_ = configure.SetTproxyWhiteIpGroups([]string{"PRIVATE"}, []string{})
 	}
 
 	// check if config.json exists

@@ -51,6 +51,9 @@
               custom-class="code-font"
             />
           </b-field>
+          <b-field :label="$t('routingRules.ips')" label-position="on-border">
+            <b-input v-model="rule.ipText" type="textarea" rows="2" placeholder="192.0.2.0/24" custom-class="code-font" />
+          </b-field>
           <div class="columns">
             <div class="column is-5">
               <b-field :label="$t('connections.outbound')" label-position="on-border">
@@ -80,13 +83,13 @@
           </div>
         </div>
       </div>
-      <b-button size="is-small" type="is-primary" @click="addRule">+ {{ $t("dns.addRule") }}</b-button>
+      <b-button size="is-small" type="is-primary" :disabled="!loaded" @click="addRule">+ {{ $t("dns.addRule") }}</b-button>
     </section>
     <footer class="modal-card-foot flex-end">
       <button class="button" type="button" @click="$parent.close()">
         {{ $t("operations.cancel") }}
       </button>
-      <button class="button is-primary" @click="handleSave">
+      <button class="button is-primary" :disabled="!loaded || saving" @click="handleSave">
         {{ $t("operations.saveApply") }}
       </button>
     </footer>
@@ -99,27 +102,30 @@ export default {
   name: "ModalRoutingRules",
   data: () => ({
     rules: [],
-    outbounds: ["proxy"],
+    outbounds: [],
+    loaded: false,
+    saving: false,
   }),
   created() {
     this.$axios({ url: apiRoot + "/outbounds", method: "get" }).then((res) => {
       if (res.data && res.data.code === "SUCCESS" && res.data.data) {
         this.outbounds = (res.data.data.outbounds || []).filter(
-          (o) => o !== "direct" && o !== "block"
+          (o) => !["proxy", "direct", "block"].includes(o)
         );
       }
     });
     this.$axios({ url: apiRoot + "/setting", method: "get" }).then((res) => {
-      if (res.data && res.data.code === "SUCCESS" && res.data.data) {
+      handleResponse(res, this, () => {
         const rules = res.data.data.setting.routingRules || [];
         this.rules = rules.map((r) => ({
           outbound: r.outbound || "proxy",
           domainText: (r.domain || []).join("\n"),
-          ip: r.ip || [],
+          ipText: (r.ip || []).join("\n"),
           port: r.port || "",
           network: r.network || "",
         }));
-      }
+        this.loaded = true;
+      });
     });
   },
   methods: {
@@ -127,7 +133,7 @@ export default {
       this.rules.push({
         outbound: "proxy",
         domainText: "",
-        ip: [],
+        ipText: "",
         port: "",
         network: "",
       });
@@ -139,7 +145,8 @@ export default {
       this.rules.splice(index, 1);
       this.rules.splice(target, 0, item);
     },
-    handleSave() {
+    async handleSave() {
+      if (!this.loaded || this.saving) return;
       const routingRules = [];
       let skippedEmpty = 0;
       for (const rule of this.rules) {
@@ -149,38 +156,35 @@ export default {
           .filter(Boolean);
         const item = { outbound: rule.outbound || "proxy" };
         if (domains.length) item.domain = domains;
-        if ((rule.ip || []).length) item.ip = rule.ip;
+        const ips = rule.ipText.split(/[\n,]/).map(ip => ip.trim()).filter(Boolean);
+        if (ips.length) item.ip = ips;
         if (rule.port) item.port = rule.port;
         if (rule.network) item.network = rule.network;
-        if (!item.domain && !item.ip && !item.port) {
+        if (!item.domain && !item.ip && !item.port && !item.network) {
           skippedEmpty++;
           continue;
         }
         routingRules.push(item);
       }
-      this.$axios({ url: apiRoot + "/setting", method: "get" }).then((res) => {
-        const s = Object.assign({}, res.data.data.setting);
-        s.routingRules = routingRules;
-        this.$axios({
-          url: apiRoot + "/setting",
-          method: "put",
-          data: s,
-        }).then((res2) => {
-          handleResponse(res2, this, () => {
-            this.$buefy.toast.open({
-              message:
-                skippedEmpty > 0
-                  ? `${this.$t("common.success")} — ${this.$t("ruleOrder.skippedEmpty", { count: skippedEmpty })}`
-                  : this.$t("common.success"),
-              type: skippedEmpty > 0 ? "is-warning" : "is-success",
-              position: "is-top",
-              duration: 3500,
-              queue: false,
-            });
-            this.$parent.close();
+      this.saving = true;
+      try {
+        const { data } = await this.$axios.get(apiRoot + "/setting");
+        if (data.code !== "SUCCESS" || !data.data?.setting) {
+          throw new Error(data.message || this.$t("common.fail"));
+        }
+        const res = await this.$axios.put(apiRoot + "/setting", { ...data.data.setting, routingRules });
+        handleResponse(res, this, () => {
+          this.$buefy.toast.open({
+            message: skippedEmpty ? this.$t("ruleOrder.skippedEmpty", { count: skippedEmpty }) : this.$t("common.success"),
+            type: skippedEmpty ? "is-warning" : "is-success",
           });
+          this.$parent.close();
         });
-      });
+      } catch (err) {
+        this.$buefy.toast.open({ message: err.message, type: "is-warning" });
+      } finally {
+        this.saving = false;
+      }
     },
   },
 };

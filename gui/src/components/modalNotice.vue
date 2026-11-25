@@ -52,13 +52,13 @@ export default {
         handleResponse(res, this, () => {
           const data = res.data.data;
           this.notices = data.notices || [];
-          const ids = {};
-          // Mark everything as read on open; fetch read state first.
-          this.$axios({ url: apiRoot + "/noticesRead", method: "post", data: { ids: this.notices.map((n) => n.id) } });
-          this.notices.forEach((n) => {
-            ids[n.id] = true;
-          });
-          this.readIds = ids;
+          this.readIds = data.readIds || {};
+          const ids = this.notices.map(n => n.id).filter(id => !this.readIds[id]);
+          if (ids.length) {
+            this.$axios.post(apiRoot + "/noticesRead", { ids }).then((res) => {
+              handleResponse(res, this, () => this.$emit("read"));
+            });
+          }
         });
       });
     },
